@@ -5,7 +5,7 @@ import json
 from maas.ids import generate_id
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_session_failed_alerts
-from maas.services.failure_memory import resolve_repeated_failure_alerts
+from maas.services.failure_memory import resolve_repeated_failure_alerts, restore_quarantined_session_artifacts
 from maas.services.security import (
     TASK_EXECUTION_CAPABILITIES,
     ensure_board_action_allowed,
@@ -330,6 +330,58 @@ def resolve_task_repeated_failures(connection, task_id, actor_id):
         "resolved_alert_ids": resolved_alert_ids,
         "resolved_count": len(resolved_alert_ids),
         "status": task["status"],
+    }
+
+
+def restore_failure_artifacts(connection, project_paths, failure_id, actor_id):
+    failure = connection.execute(
+        """
+        SELECT failure_id, project_id, task_id, session_id
+        FROM failure_log
+        WHERE failure_id = ?
+        """,
+        (failure_id,),
+    ).fetchone()
+    if failure is None:
+        raise ValueError("Failure not found")
+    ensure_board_action_allowed(
+        connection,
+        actor_id,
+        failure["project_id"],
+        "restore_failure_artifacts",
+        "failure",
+        failure_id,
+    )
+    if failure["session_id"] is None:
+        raise ValueError("Failure is not linked to a session")
+
+    restored_artifacts = restore_quarantined_session_artifacts(connection, project_paths, failure["session_id"])
+    if not restored_artifacts:
+        raise ValueError("Failure has no quarantined artifacts to restore")
+
+    _audit(
+        connection,
+        failure["project_id"],
+        actor_id,
+        "restore_failure_artifacts",
+        "failure",
+        failure_id,
+        {"session_id": failure["session_id"], "restored_count": len(restored_artifacts)},
+    )
+    _activity(
+        connection,
+        failure["project_id"],
+        actor_id,
+        failure["task_id"],
+        "artifacts_restored",
+        "Quarantined artifacts restored to the active artifact workspace.",
+    )
+    connection.commit()
+    return {
+        "failure_id": failure_id,
+        "session_id": failure["session_id"],
+        "restored_artifacts": restored_artifacts,
+        "restored_count": len(restored_artifacts),
     }
 
 

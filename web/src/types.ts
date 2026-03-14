@@ -173,6 +173,13 @@ export interface FailuresResponse {
   };
 }
 
+export interface RestoreFailureArtifactsResponse {
+  failure_id: string;
+  session_id: string;
+  restored_artifacts: QuarantinedArtifactItem[];
+  restored_count: number;
+}
+
 export interface GoalTreeNode {
   goal_id: string;
   parent_goal_id?: string | null;

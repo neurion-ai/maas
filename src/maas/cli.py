@@ -20,6 +20,7 @@ from maas.services.steering import (
     recover_and_requeue_task,
     recover_task,
     resolve_task_repeated_failures,
+    restore_failure_artifacts,
 )
 from maas.supervisor import run_supervisor_once
 
@@ -98,6 +99,11 @@ def build_parser():
     failure_list_parser = failure_subparsers.add_parser("list")
     failure_list_parser.add_argument("--project-root", default=".")
     failure_list_parser.add_argument("--limit", type=int, default=20)
+
+    failure_restore_parser = failure_subparsers.add_parser("restore-artifacts")
+    failure_restore_parser.add_argument("--project-root", default=".")
+    failure_restore_parser.add_argument("--failure-id", required=True)
+    failure_restore_parser.add_argument("--actor-id", required=True)
 
     escalation_parser = subparsers.add_parser("escalation")
     escalation_subparsers = escalation_parser.add_subparsers(dest="escalation_command", required=True)
@@ -273,6 +279,8 @@ def command_failure(args):
     try:
         if args.failure_command == "list":
             print(json.dumps(fetch_failure_log(connection, limit=args.limit), indent=2))
+        elif args.failure_command == "restore-artifacts":
+            print(json.dumps(restore_failure_artifacts(connection, paths, args.failure_id, args.actor_id), indent=2))
     finally:
         connection.close()
 

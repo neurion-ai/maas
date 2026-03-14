@@ -8,6 +8,7 @@ import type {
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  RestoreFailureArtifactsResponse,
   SupervisorRunResponse
 } from "../types";
 
@@ -212,6 +213,13 @@ export function fetchEscalations() {
 
 export function fetchFailures() {
   return fetchJson<FailuresResponse>("/api/failures", FAILURES_FALLBACK);
+}
+
+export async function restoreFailureArtifacts(failureId: string) {
+  const payload = await postJson<RestoreFailureArtifactsResponse>(`/api/failures/${failureId}/actions/restore-artifacts`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as RestoreFailureArtifactsResponse;
 }
 
 export function fetchLiveSnapshot() {

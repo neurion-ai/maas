@@ -191,7 +191,7 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
                 "Agent {0} stopped heartbeating for task {1}.".format(row["agent_id"], row["task_id"]),
             ),
         )
-        record_failure(
+        failure_id = record_failure(
             connection,
             row["project_id"],
             "session_timed_out",
@@ -212,6 +212,9 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
             project_paths,
             row["session_id"],
             reason="session_timed_out",
+            project_id=row["project_id"],
+            task_id=row["task_id"],
+            failure_id=failure_id,
         )
         connection.execute(
             """

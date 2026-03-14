@@ -122,6 +122,59 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
             self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
+    def test_quarantine_api_lists_open_entries_for_failed_sessions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Queue API Test",
+                description="Quarantine queue api test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine queue api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-queue-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("queue me\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure queued for quarantine review",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            quarantine_payload = client.get("/api/quarantine").json()
+            queue_entry = quarantine_payload["entries"][0]
+
+            self.assertEqual(quarantine_payload["summary"]["open"], 1)
+            self.assertEqual(queue_entry["status"], "open")
+            self.assertEqual(queue_entry["artifact_count"], 1)
+            self.assertEqual(queue_entry["failure_type"], "session_failed")
+            self.assertEqual(queue_entry["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
+
     def test_failures_api_exposes_retry_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Failure Retry API Test", description="Failure retry api test", project_type="custom")
@@ -164,6 +217,87 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["retry_count"], 1)
             self.assertEqual(recent_failure["last_retry_reason"], "session_timed_out")
             self.assertIsNotNone(recent_failure["last_retry_at"])
+
+    def test_quarantine_restore_action_restores_quarantined_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Restore API Test",
+                description="Quarantine restore api test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine restore api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-restore-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("restore queue entry\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with queue restore coverage",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queue_entry = client.get("/api/quarantine").json()["entries"][0]
+            restore_response = client.post(
+                "/api/quarantine/{0}/actions/restore".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(restore_response.status_code, 200)
+            self.assertEqual(restore_response.json()["status"], "restored")
+            self.assertEqual(restore_response.json()["restored_count"], 1)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                artifact = connection.execute(
+                    """
+                    SELECT path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id = ?
+                    """,
+                    (artifact_id,),
+                ).fetchone()
+                queue_row = connection.execute(
+                    """
+                    SELECT status, resolved_at
+                    FROM quarantine_queue
+                    WHERE queue_id = ?
+                    """,
+                    (queue_entry["queue_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            metadata = json.loads(artifact["metadata_json"] or "{}")
+            self.assertEqual(artifact["path"], artifact_path)
+            self.assertTrue(metadata["restored_from_quarantine"])
+            self.assertEqual(queue_row["status"], "restored")
+            self.assertIsNotNone(queue_row["resolved_at"])
+            self.assertTrue(os.path.exists(artifact_path))
 
     def test_restore_failure_artifacts_action_restores_quarantined_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -268,6 +402,14 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     """,
                     (task_id,),
                 ).fetchone()
+                queue_row = connection.execute(
+                    """
+                    SELECT status, resolved_at
+                    FROM quarantine_queue
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
             finally:
                 connection.close()
 
@@ -281,6 +423,89 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertTrue(os.path.exists(artifact_path))
             self.assertFalse(os.path.exists(quarantine_path))
             self.assertEqual(restore_activity["action"], "artifacts_restored")
+            self.assertEqual(queue_row["status"], "restored")
+            self.assertIsNotNone(queue_row["resolved_at"])
+
+    def test_quarantine_dismiss_action_marks_entry_dismissed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Dismiss API Test",
+                description="Quarantine dismiss api test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine dismiss api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-dismiss-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("dismiss queue entry\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with queue dismiss coverage",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queue_entry = client.get("/api/quarantine").json()["entries"][0]
+            dismiss_response = client.post(
+                "/api/quarantine/{0}/actions/dismiss".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(dismiss_response.status_code, 200)
+            self.assertEqual(dismiss_response.json()["status"], "dismissed")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                artifact = connection.execute(
+                    """
+                    SELECT path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id = ?
+                    """,
+                    (artifact_id,),
+                ).fetchone()
+                queue_row = connection.execute(
+                    """
+                    SELECT status, resolution_note, resolved_at
+                    FROM quarantine_queue
+                    WHERE queue_id = ?
+                    """,
+                    (queue_entry["queue_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            metadata = json.loads(artifact["metadata_json"] or "{}")
+            self.assertTrue(metadata["quarantined"])
+            self.assertEqual(queue_row["status"], "dismissed")
+            self.assertEqual(queue_row["resolution_note"], "quarantine_dismissed")
+            self.assertIsNotNone(queue_row["resolved_at"])
+            self.assertTrue(os.path.exists(artifact["path"]))
+            self.assertFalse(os.path.exists(artifact_path))
 
     def test_restore_failure_artifacts_action_rejects_existing_destination(self):
         with tempfile.TemporaryDirectory() as tmpdir:

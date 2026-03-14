@@ -2,15 +2,15 @@
 
 import argparse
 import json
-import os
 import time
 
 import uvicorn
 
 from maas.api import create_app
 from maas.db import connect, project_paths, run_migrations
-from maas.services.bootstrap import bootstrap_project
 from maas.services.board import fetch_board
+from maas.services.bootstrap import bootstrap_project
+from maas.services.provider_runtime import run_provider_task
 from maas.services.failure_memory import fetch_failure_log
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -205,41 +205,28 @@ def command_failure(args):
 
 def command_worker(args):
     paths = project_paths(args.project_root)
-    artifact_path = os.path.join(paths.root, args.artifact_path)
-    os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
-    with open(artifact_path, "w", encoding="utf-8") as handle:
-        handle.write("MAAS worker artifact for task {0}\n".format(args.task_id))
-
     connection = connect(paths)
     try:
-        session_id = start_session(
+        result = run_provider_task(
             connection,
+            project_paths=paths,
             project_id=args.project_id,
             agent_id=args.agent_id,
             task_id=args.task_id,
             provider_type=args.provider_type,
-            status_message="Worker started",
+            artifact_path=args.artifact_path,
         )
-        heartbeat(connection, session_id, 50, "Halfway through simulated work")
-        produce_artifact(
-            connection,
-            project_id=args.project_id,
-            session_id=session_id,
-            task_id=args.task_id,
-            artifact_type="text",
-            path=artifact_path,
+        print(
+            json.dumps(
+                {
+                    "session_id": result["session_id"],
+                    "artifact_id": result["artifact_id"],
+                    "artifact_path": result["artifact_path"],
+                    "provider": result["provider"],
+                },
+                indent=2,
+            )
         )
-        log_activity(
-            connection,
-            project_id=args.project_id,
-            agent_id=args.agent_id,
-            task_id=args.task_id,
-            action="worker_completed",
-            category="runtime",
-            description="Simulated worker completed task output.",
-        )
-        end_session(connection, session_id, "completed", "Worker completed successfully")
-        print(json.dumps({"session_id": session_id, "artifact_path": artifact_path}, indent=2))
     finally:
         connection.close()
 

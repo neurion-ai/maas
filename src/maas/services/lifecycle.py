@@ -3,11 +3,13 @@
 import json
 
 from maas.ids import generate_id
+from maas.providers import get_provider
 from maas.services.failure_memory import maybe_raise_repeated_failure_alert, record_failure
 from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
 
 
 def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
+    get_provider(provider_type)
     agent_row = connection.execute(
         """
         SELECT agent_id, project_id, status, current_task_id

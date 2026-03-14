@@ -9,13 +9,13 @@ from pydantic import BaseModel
 
 from maas.db import connect, project_paths
 from maas.paths import ProjectPaths
-from maas.providers import list_providers
 from maas.services.alerts import fetch_alerts, update_alert_status
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.failure_memory import fetch_failure_log
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
+from maas.services.provider_runtime import list_provider_runtime_status, run_provider_task
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import halt_task, pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
@@ -94,6 +94,13 @@ class AllocateTasksRequest(BaseModel):
 
 class SupervisorRunRequest(BaseModel):
     allocate_limit: int = None
+
+
+class ProviderRunRequest(BaseModel):
+    project_id: str
+    agent_id: str
+    task_id: str
+    artifact_path: Optional[str] = None
 
 
 def create_app(project_root="."):
@@ -243,7 +250,27 @@ def create_app(project_root="."):
 
     @app.get("/api/providers")
     def providers():
-        return {"providers": list_providers()}
+        return {"providers": list_provider_runtime_status()}
+
+    @app.post("/api/providers/{provider_id}/actions/run-task")
+    def provider_run_task_action(provider_id: str, payload: ProviderRunRequest):
+        connection = connect(paths)
+        try:
+            return run_provider_task(
+                connection,
+                project_paths=paths,
+                project_id=payload.project_id,
+                agent_id=payload.agent_id,
+                task_id=payload.task_id,
+                provider_type=provider_id,
+                artifact_path=payload.artifact_path,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
 
     @app.post("/api/lifecycle/start")
     def lifecycle_start(payload: StartSessionRequest):

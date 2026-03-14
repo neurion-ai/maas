@@ -46,6 +46,7 @@ The system is best described as **an operational prototype with real infrastruct
   - `produce_artifact`
   - `end_session`
 - simulated worker path for local execution
+- provider-dispatched worker/runtime path for `python_script`, `claude_code`, and `openai_codex`
 - steering actions:
   - review approve/reject
   - reprioritize
@@ -88,8 +89,9 @@ The system is best described as **an operational prototype with real infrastruct
 ### Providers
 
 - provider registry exists
-- local simulation exists
-- real Claude Code / OpenAI Codex runtime execution is not complete yet
+- concrete local simulation exists for Python Script, Claude Code, and OpenAI Codex adapters
+- provider-specific activity and artifact output now flow through the shared lifecycle contract
+- real external Claude Code / OpenAI Codex integrations are still not complete yet
 
 ### Supervisor and resilience
 
@@ -128,6 +130,7 @@ Current work is moving deeper into the goal/task engine with:
 - board-side steering controls for reprioritize, reassign, and halt
 - permission-gated steering and alert actions
 - failure-memory logging and repeated-failure surfacing
+- provider adapter execution through the runtime layer
 
 If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
 
@@ -144,7 +147,8 @@ The project is roughly in the **late Batch 2 through Batch 6 foundation zone** o
 
 - Batches 1 and 4 are effectively in place.
 - Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
-- Batches 3, 5, and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
+- Batch 3 now includes concrete simulated provider adapters routed through the lifecycle contract.
+- Batches 5 and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
 - Batch 6 now also includes task-scoped execution grants tied to task assignment.
 - Batch 7 now has its first real failure-memory foundation, but most recovery automation is still ahead of us.
 - Batch 8 is still mostly ahead of us.

@@ -12,7 +12,7 @@ This roadmap now needs to be read alongside the actual implementation status:
 |---|---|---|
 | 1. Core kernel and scaffold | Implemented | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
 | 2. Goal/task engine | Partial | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
-| 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, simulated worker path |
+| 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, and concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex |
 | 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
 | 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, and task-scoped execution grants |
@@ -21,12 +21,12 @@ This roadmap now needs to be read alongside the actual implementation status:
 
 ## In-Flight Work
 
-The current development branch is extending the resilience layer from stale-session handling into reusable failure memory:
+The current development branch is extending the runtime layer from generic worker plumbing into concrete provider adapters:
 
-- failure-log storage
-- failed/timed-out session recording
-- repeated-failure alerting
-- board/overview/live visibility for unhealthy work
+- provider-dispatched worker execution
+- provider-specific activity and artifact generation
+- provider validation on lifecycle starts
+- runtime-facing provider API/CLI execution paths
 
 Until that branch merges, treat those items as in progress rather than shipped.
 
@@ -63,6 +63,7 @@ This repository now includes:
 - role-baseline permission enforcement for steering and alert actions
 - task capability grant storage plus lifecycle enforcement for start, heartbeat, activity, artifact, and end-session actions
 - failure-log storage plus read models for recent failures and repeated-failure tasks
+- concrete simulated provider adapters for Python Script, Claude Code, and OpenAI Codex
 - lifecycle API/CLI surface
 - a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, and Activity views
 

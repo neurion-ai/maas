@@ -64,6 +64,7 @@
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
 - [x] Operator recovery for failure-blocked tasks
+- [x] Operator recovery for agents left in `error`
 
 ## Still To Do On `main`
 
@@ -81,7 +82,6 @@
 
 ### Resilience and recovery
 
-- [ ] Operator recovery for agents left in `error`
 - [ ] Automated restart and retry policies
 - [ ] DLQ and quarantine workflows
 - [ ] Failure-specific resolution flows beyond generic alert acknowledge/resolve

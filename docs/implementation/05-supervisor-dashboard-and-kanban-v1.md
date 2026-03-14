@@ -1,47 +1,50 @@
 # Batch 5: Supervisor, Dashboard, and Kanban V1
 
-## Scope
+## Status On `main`
 
-- supervisor one-shot loop for stale heartbeats, ready refresh, and idle-agent allocation
-- alert creation for stale sessions
-- task-first `/api/board` response
-- React board shell as the primary operator view
-- supporting reads for goals, agents, activity, alerts, and providers
-- operator controls for manual supervisor runs and assign-next actions
+- [ ] Batch 5 is only partially shipped on `main`.
 
-## Board Contract
+## Shipped On `main`
 
-Each board column should include:
+- [x] Supervisor one-shot loop for stale heartbeats, ready refresh, and idle-agent allocation
+- [x] Alert creation for stale sessions
+- [x] Task-first `/api/board` response
+- [x] React board shell as the primary operator view
+- [x] Supporting reads for goals, agents, activity, alerts, and providers
+- [x] Operator controls for manual supervisor runs and assign-next actions
+- [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 
-- `key`
-- `title`
-- `tasks`
+## Still To Do On `main`
 
-Current implementation also includes a `cancelled` column so halted work remains visible to operators.
+- [ ] Production websocket transport
+- [ ] Multi-project board routing
+- [ ] Artifact browser polish
 
-Each task card should include:
+## Board Contract Checklist
 
-- `task_id`
-- `title`
-- `status`
-- `priority`
-- `progress_pct`
-- `heartbeat_age_seconds`
-- `age_hours`
-- `review_state`
-- linked goal
-- assigned agent
+### Column shape
 
-## Non-Goals
+- [x] `key`
+- [x] `title`
+- [x] `tasks`
 
-- production websockets
-- multi-project board routing
-- artifact browser polish
+### Task card shape
 
-## Acceptance Tests
+- [x] `task_id`
+- [x] `title`
+- [x] `status`
+- [x] `priority`
+- [x] `progress_pct`
+- [x] `heartbeat_age_seconds`
+- [x] `age_hours`
+- [x] `review_state`
+- [x] Linked goal
+- [x] Assigned agent
 
-- board response groups tasks server-side
-- board summary includes active agents, blocked tasks, and review tasks
-- stale supervisor findings create alerts and block affected in-progress work
-- overview can trigger a supervisor pass and show structured results
-- agent roster can assign the next ready task to an idle agent
+## Acceptance Checklist
+
+- [x] Board response groups tasks server-side
+- [x] Board summary includes active agents, blocked tasks, and review tasks
+- [x] Stale supervisor findings create alerts and block affected in-progress work
+- [x] Overview can trigger a supervisor pass and show structured results
+- [x] Agent roster can assign the next ready task to an idle agent

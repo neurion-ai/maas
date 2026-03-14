@@ -256,6 +256,96 @@ class BoardApiActionsTest(unittest.TestCase):
             )
             self.assertEqual(recover_response.status_code, 400)
 
+    def test_recover_task_resolves_matching_repeated_failure_alerts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Recover Alert Resolution Test",
+                description="Resolve repeated failure alert when recovering task",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                other_task = connection.execute(
+                    "SELECT task_id, title FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES ('alert_other_task', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task {0} ({1}) has failed 2 times. Latest failure: refer to {2}".format(
+                            other_task["task_id"],
+                            other_task["title"],
+                            task_id,
+                        ),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, failure_type, summary, detail_json
+                    ) VALUES ('fail_previous', ?, ?, 'session_failed', 'Earlier failure', '{}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting repeated failure test",
+                )
+                end_session(connection, session_id, "failed", "Repeated failure")
+
+                repeated_alerts = [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT alert_id, description, status
+                        FROM alerts
+                        WHERE title = 'Repeated task failures'
+                        ORDER BY created_at ASC
+                        """
+                    ).fetchall()
+                ]
+                primary_alert = [
+                    alert for alert in repeated_alerts if alert["description"].startswith("Task {0} (".format(task_id))
+                ][0]
+                other_alert = [
+                    alert
+                    for alert in repeated_alerts
+                    if alert["description"].startswith("Task {0} (".format(other_task["task_id"]))
+                ][0]
+            finally:
+                connection.close()
+
+            self.assertEqual(primary_alert["status"], "open")
+            self.assertEqual(other_alert["status"], "open")
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+
+            alerts_payload = client.get("/api/alerts").json()
+            matching_primary = [alert for alert in alerts_payload["alerts"] if alert["alert_id"] == primary_alert["alert_id"]][0]
+            matching_other = [alert for alert in alerts_payload["alerts"] if alert["alert_id"] == other_alert["alert_id"]][0]
+            self.assertEqual(matching_primary["status"], "resolved")
+            self.assertEqual(matching_other["status"], "open")
+
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Pause Halt Test", description="Pause then halt", project_type="custom")

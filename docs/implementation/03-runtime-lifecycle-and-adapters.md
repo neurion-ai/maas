@@ -1,23 +1,22 @@
 # Batch 3: Runtime Lifecycle and Adapters
 
-## Scope
+## Status On `main`
 
-- lifecycle operations:
-  - `start_session`
-  - `heartbeat`
-  - `log_activity`
-  - `produce_artifact`
-  - `end_session`
-- CLI and API entrypoints for lifecycle
-- provider registry for Claude Code, OpenAI Codex, and Python Script
-- simulated worker path for local validation
+- [ ] Batch 3 is only partially shipped on `main`.
 
-## Current Implementation Notes
+## Shipped On `main`
 
-- provider execution now routes through concrete local adapters for `python_script`, `claude_code`, and `openai_codex`
-- adapter runs create provider-specific activity entries and artifacts while still using the shared lifecycle contract
-- lifecycle starts now validate `provider_type` against the provider registry
-- live external provider APIs and CLI integrations are still ahead of the current implementation
+- [x] Lifecycle operations: `start_session`, `heartbeat`, `log_activity`, `produce_artifact`, `end_session`
+- [x] CLI and API entrypoints for lifecycle
+- [x] Provider registry for Claude Code, OpenAI Codex, and Python Script
+- [x] Simulated worker path for local validation
+- [x] Provider execution routed through concrete local adapters for `python_script`, `claude_code`, and `openai_codex`
+- [x] Provider runs create provider-specific activity entries and artifacts while still using the shared lifecycle contract
+- [x] Lifecycle starts validate `provider_type` against the provider registry
+
+## Still To Do On `main`
+
+- [ ] Live external provider APIs and CLI integrations
 
 ## Non-Goals
 
@@ -25,14 +24,14 @@
 - advanced provider failover
 - credential management
 
-## Interface Notes
+## Interface Checklist
 
-- lifecycle operations are idempotent at the service level where feasible
-- board state should update based on session and task transitions
+- [x] Lifecycle operations are idempotent at the service level where feasible
+- [x] Board state updates based on session and task transitions
 
-## Acceptance Tests
+## Acceptance Checklist
 
-- starting a session marks the agent running
-- heartbeats update task progress
-- ending a completed session moves `in_progress` work to `review`
-- one task can be executed end-to-end by each simulated provider adapter and leave consistent session/artifact/activity state behind
+- [x] Starting a session marks the agent running
+- [x] Heartbeats update task progress
+- [x] Ending a completed session moves `in_progress` work to `review`
+- [x] Simulated provider adapters can execute a task end-to-end and leave consistent session, artifact, and activity state behind

@@ -1,3 +1,5 @@
+import json
+import os
 import tempfile
 import unittest
 
@@ -8,7 +10,7 @@ from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
 from maas.ids import generate_id
 from maas.services.alerts import fetch_alerts
-from maas.services.lifecycle import heartbeat
+from maas.services.lifecycle import heartbeat, produce_artifact
 from maas.supervisor import run_supervisor_once
 
 
@@ -385,6 +387,75 @@ class SupervisorApiTest(unittest.TestCase):
 
             stale_alert = [alert for alert in alert_payload["alerts"] if alert["title"] == "Stale agent heartbeat"][0]
             self.assertNotIn("operator_action", stale_alert)
+
+    def test_supervisor_quarantines_artifacts_for_timed_out_sessions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Quarantine Test",
+                description="Supervisor quarantine test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                ).fetchone()["session_id"]
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "stale-session-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("stale artifact\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(
+                    connection,
+                    stale_after_seconds=90,
+                    allocate_limit=0,
+                    project_paths=result["paths"],
+                )
+                artifact = connection.execute(
+                    """
+                    SELECT path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id = ?
+                    """,
+                    (artifact_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            metadata = json.loads(artifact["metadata_json"])
+            self.assertEqual(len(supervisor_result["stale_sessions"]), 1)
+            self.assertEqual(len(supervisor_result["stale_sessions"][0]["quarantined_artifacts"]), 1)
+            self.assertFalse(os.path.exists(artifact_path))
+            self.assertTrue(os.path.exists(artifact["path"]))
+            self.assertTrue(
+                os.path.commonpath([os.path.abspath(result["paths"].quarantine_dir), os.path.abspath(artifact["path"])])
+                == os.path.abspath(result["paths"].quarantine_dir)
+            )
+            self.assertTrue(metadata["quarantined"])
+            self.assertEqual(metadata["quarantine_reason"], "session_timed_out")
+            self.assertEqual(metadata["quarantined_from_path"], artifact_path)
 
     def test_cancelled_sessions_do_not_count_toward_repeated_failure_alerts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

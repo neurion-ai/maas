@@ -63,7 +63,9 @@
 - [x] Failure-memory logging for failed and timed-out sessions
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
+- [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
 - [x] Operator recovery for failure-blocked tasks
+- [x] Operator recover-and-requeue for failure-blocked tasks
 - [x] Operator recovery for agents left in `error`
 
 ## Still To Do On `main`
@@ -84,7 +86,7 @@
 
 - [ ] Automated restart and retry policies
 - [ ] DLQ and quarantine workflows
-- [ ] Failure-specific resolution flows beyond generic alert acknowledge/resolve
+- [ ] Broader failure-specific resolution flows beyond the current repeated-failure and recovery-linked incidents
 - [ ] Broader self-healing and recovery orchestration
 
 ### Platform expansion

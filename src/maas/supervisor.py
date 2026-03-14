@@ -5,11 +5,11 @@ import json
 
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
-from maas.services.failure_memory import maybe_raise_repeated_failure_alert, record_failure
+from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 
 
-def _handle_stale_sessions(connection, stale_after_seconds):
+def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
     stale_before = datetime.utcnow() - timedelta(seconds=stale_after_seconds)
     stale_rows = connection.execute(
         """
@@ -99,6 +99,12 @@ def _handle_stale_sessions(connection, stale_after_seconds):
             row["task_id"],
             "Session {0} timed out waiting for heartbeat.".format(row["session_id"]),
         )
+        quarantined_artifacts = quarantine_session_artifacts(
+            connection,
+            project_paths,
+            row["session_id"],
+            reason="session_timed_out",
+        )
         connection.execute(
             """
             INSERT INTO activity_log (
@@ -114,21 +120,38 @@ def _handle_stale_sessions(connection, stale_after_seconds):
                 json.dumps({"session_id": row["session_id"]}),
             ),
         )
+        if quarantined_artifacts:
+            connection.execute(
+                """
+                INSERT INTO activity_log (
+                    activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                ) VALUES (?, ?, ?, ?, 'artifacts_quarantined', 'resilience', ?, ?, 'warning')
+                """,
+                (
+                    generate_id("act"),
+                    row["project_id"],
+                    row["agent_id"],
+                    row["task_id"],
+                    "Quarantined session artifacts after stale-session timeout.",
+                    json.dumps({"session_id": row["session_id"], "artifacts": quarantined_artifacts}),
+                ),
+            )
         findings.append(
             {
                 "session_id": row["session_id"],
                 "task_id": row["task_id"],
                 "repeated_failure_alert": repeated_alert,
+                "quarantined_artifacts": quarantined_artifacts,
             }
         )
 
     return findings
 
 
-def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS, allocate_limit=None):
+def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS, allocate_limit=None, project_paths=None):
     ready_changes = refresh_ready_tasks(connection)
     allocation_result = allocate_ready_tasks(connection, actor_id="system_supervisor", limit=allocate_limit)
-    stale_sessions = _handle_stale_sessions(connection, stale_after_seconds)
+    stale_sessions = _handle_stale_sessions(connection, stale_after_seconds, project_paths=project_paths)
     connection.commit()
     return {
         "ready_changes": ready_changes,

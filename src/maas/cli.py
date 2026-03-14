@@ -215,7 +215,7 @@ def command_supervisor(args):
     while True:
         connection = connect(paths)
         try:
-            findings = run_supervisor_once(connection, allocate_limit=args.allocate_limit)
+            findings = run_supervisor_once(connection, allocate_limit=args.allocate_limit, project_paths=paths)
             print(json.dumps(findings, indent=2))
         finally:
             connection.close()
@@ -375,7 +375,7 @@ def command_lifecycle(args):
             )
             print(json.dumps({"artifact_id": artifact_id}, indent=2))
         elif args.lifecycle_command == "end":
-            end_session(connection, args.session_id, args.outcome, args.summary)
+            end_session(connection, args.session_id, args.outcome, args.summary, project_paths=paths)
             print(json.dumps({"status": "ok"}, indent=2))
     finally:
         connection.close()

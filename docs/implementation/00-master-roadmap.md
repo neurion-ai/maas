@@ -21,7 +21,7 @@ Legend for the checklist column:
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
-| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, repeated-failure alerts, read-model visibility, and task plus agent recovery exist; broader recovery is still pending |
+| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, repeated-failure alerts, read-model visibility, incident-specific alert actions, and task plus agent recovery exist; broader recovery is still pending |
 | 8. Brownfield and multi-project | `[ ]` | Still roadmap only |
 
 ## Delivery Order
@@ -50,7 +50,7 @@ This repository now includes:
 - [x] SQLite migrations and a migration runner
 - [x] Greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
 - [x] FastAPI read models for board, overview, goal tree, agents, activity, alerts, failures, live, and providers
-- [x] Task actions for ready queue refresh, allocator assignment, acceptance evaluation, and failure-blocked task recovery
+- [x] Task actions for ready queue refresh, allocator assignment, acceptance evaluation, failure-blocked task recovery, repeated-failure triage, and recover-and-requeue
 - [x] Supervisor run endpoint and CLI orchestration pass
 - [x] Control-room actions for manual supervisor runs, idle-agent assignment, and error-agent recovery
 - [x] Board controls for reprioritize, reassign, pause/resume, review, and halt

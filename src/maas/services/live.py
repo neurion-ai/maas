@@ -1,7 +1,7 @@
 """Lightweight live snapshot and SSE helpers for dashboard refresh."""
 
+import asyncio
 import json
-import time
 from datetime import datetime
 
 
@@ -33,7 +33,7 @@ def build_live_snapshot(connection):
     }
 
 
-def sse_stream(connection_factory, interval_seconds=2):
+async def sse_stream(connection_factory, interval_seconds=2):
     while True:
         connection = connection_factory()
         try:
@@ -42,4 +42,4 @@ def sse_stream(connection_factory, interval_seconds=2):
             connection.close()
         yield "event: dashboard\n"
         yield "data: {0}\n\n".format(json.dumps(snapshot))
-        time.sleep(interval_seconds)
+        await asyncio.sleep(interval_seconds)

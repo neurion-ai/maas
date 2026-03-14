@@ -65,7 +65,14 @@ export function BoardPage() {
       controller.abort();
       window.clearInterval(intervalId);
     };
-  }, [boardFilters, livePulse]);
+  }, [boardFilters]);
+
+  useEffect(() => {
+    if (livePulse === 0) {
+      return;
+    }
+    void loadBoard();
+  }, [livePulse]);
 
   const visibleTaskCount = useMemo(() => {
     if (!board) {

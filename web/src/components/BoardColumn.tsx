@@ -10,6 +10,7 @@ interface BoardColumnProps {
   onPriorityChange?: (taskId: string, priority: number) => void;
   onReassign?: (taskId: string, agentId: string) => void;
   onHalt?: (taskId: string) => void;
+  onRecover?: (taskId: string) => void;
 }
 
 export function BoardColumn({
@@ -20,7 +21,8 @@ export function BoardColumn({
   onAgentAction,
   onPriorityChange,
   onReassign,
-  onHalt
+  onHalt,
+  onRecover
 }: BoardColumnProps) {
   return (
     <section className="board-column">
@@ -43,6 +45,7 @@ export function BoardColumn({
             onPriorityChange={onPriorityChange}
             onReassign={onReassign}
             onHalt={onHalt}
+            onRecover={onRecover}
           />
         ))}
       </div>

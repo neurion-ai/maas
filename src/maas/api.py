@@ -19,7 +19,15 @@ from maas.services.live import build_live_snapshot, sse_stream
 from maas.services.provider_runtime import list_provider_runtime_status, run_provider_task
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
-from maas.services.steering import halt_task, pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
+from maas.services.steering import (
+    halt_task,
+    pause_agent,
+    reassign_task,
+    recover_task,
+    reprioritize_task,
+    resume_agent,
+    review_task,
+)
 from maas.supervisor import run_supervisor_once
 
 
@@ -442,6 +450,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return halt_task(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/recover")
+    def task_recover_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return recover_task(connection, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

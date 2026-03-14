@@ -85,6 +85,57 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertIsNone(agent["current_task_id"])
             self.assertEqual(failure["failure_type"], "session_timed_out")
 
+    def test_recover_action_can_requeue_stale_session_task_without_resetting_agent_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Recover Test",
+                description="Recover stale-session task",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+                run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+
+            connection = connect(result["paths"])
+            try:
+                task = connection.execute(
+                    "SELECT status, assigned_agent_id, review_state FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                agent = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = 'agent_builder'"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "planned")
+            self.assertIsNone(task["assigned_agent_id"])
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(agent["status"], "error")
+            self.assertIsNone(agent["current_task_id"])
+
     def test_supervisor_api_endpoint_runs_pass(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Supervisor API Test", description="Supervisor API test", project_type="custom")

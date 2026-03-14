@@ -193,6 +193,15 @@ export interface AlertItem {
   description: string;
   status: string;
   created_at: string;
+  operator_action?: AlertOperatorAction;
+}
+
+export interface AlertOperatorAction {
+  action: "recover_task" | "recover_agent";
+  label: string;
+  resource_type: "task" | "agent";
+  resource_id: string;
+  related_task_id?: string;
 }
 
 export interface AlertsResponse {

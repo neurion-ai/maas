@@ -146,6 +146,102 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(audit_row["action_type"], "permission_denied")
             self.assertIn("update_alert_status", audit_row["detail_json"])
 
+    def test_alerts_include_operator_actions_for_recoverable_failure_cases(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Alert Operator Actions Test",
+                description="Alert operator actions test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_failure_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                repeated_failure_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                stale_agent_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'session_failed'
+                    WHERE task_id IN (?, ?)
+                    """,
+                    (task_failure_id, repeated_failure_task_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'error', current_task_id = NULL
+                    WHERE agent_id = 'agent_reviewer'
+                    """
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES
+                        ('alert_task_failure', ?, 'warning', 'Task session failed', ?, 'open'),
+                        ('alert_repeated_failure', ?, 'critical', 'Repeated task failures', ?, 'open'),
+                        ('alert_stale_agent', ?, 'warning', 'Stale agent heartbeat', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task {0} failed in session sess_failure_123. Session crashed".format(task_failure_id),
+                        project_id,
+                        "Task {0} (Retry-heavy task) has failed 3 times. Latest failure: Timeout".format(
+                            repeated_failure_task_id
+                        ),
+                        project_id,
+                        "Agent agent_reviewer stopped heartbeating for task {0}.".format(stale_agent_task_id),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            alerts_payload = client.get("/api/alerts").json()
+            alerts_by_id = {alert["alert_id"]: alert for alert in alerts_payload["alerts"]}
+            provider_pending = [
+                alert for alert in alerts_payload["alerts"] if alert["title"] == "Provider adapters pending"
+            ][0]
+
+            self.assertNotIn("operator_action", provider_pending)
+            self.assertEqual(
+                alerts_by_id["alert_task_failure"]["operator_action"],
+                {
+                    "action": "recover_task",
+                    "label": "Recover task",
+                    "resource_type": "task",
+                    "resource_id": task_failure_id,
+                },
+            )
+            self.assertEqual(
+                alerts_by_id["alert_repeated_failure"]["operator_action"],
+                {
+                    "action": "recover_task",
+                    "label": "Recover task",
+                    "resource_type": "task",
+                    "resource_id": repeated_failure_task_id,
+                },
+            )
+            self.assertEqual(
+                alerts_by_id["alert_stale_agent"]["operator_action"],
+                {
+                    "action": "recover_agent",
+                    "label": "Recover agent",
+                    "resource_type": "agent",
+                    "resource_id": "agent_reviewer",
+                    "related_task_id": stale_agent_task_id,
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,13 +1,93 @@
 """Alert read models and steering actions."""
 
 import json
+import re
 
 from maas.ids import generate_id
 from maas.services.security import ensure_board_action_allowed
 
 
+TASK_SESSION_FAILED_PATTERN = re.compile(r"^Task (?P<task_id>\S+) failed in session (?P<session_id>\S+)\.")
+REPEATED_TASK_FAILURE_PATTERN = re.compile(r"^Task (?P<task_id>\S+) \(")
+STALE_AGENT_HEARTBEAT_PATTERN = re.compile(
+    r"^Agent (?P<agent_id>\S+) stopped heartbeating for task (?P<task_id>\S+)\."
+)
+RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
+
+
 def _escape_like(value):
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _can_recover_task(connection, task_id):
+    task = connection.execute(
+        """
+        SELECT status, review_state
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        return False
+    return task["status"] == "blocked" and task["review_state"] in RECOVERABLE_FAILURE_REVIEW_STATES
+
+
+def _can_recover_agent(connection, agent_id):
+    agent = connection.execute(
+        """
+        SELECT status, current_task_id
+        FROM agents
+        WHERE agent_id = ?
+        """,
+        (agent_id,),
+    ).fetchone()
+    if agent is None:
+        return False
+    if agent["status"] != "error" or agent["current_task_id"] is not None:
+        return False
+    active_session = connection.execute(
+        """
+        SELECT session_id
+        FROM sessions
+        WHERE agent_id = ? AND status = 'active'
+        LIMIT 1
+        """,
+        (agent_id,),
+    ).fetchone()
+    return active_session is None
+
+
+def _infer_operator_action(connection, title, description):
+    if title == "Task session failed":
+        match = TASK_SESSION_FAILED_PATTERN.match(description)
+        if match is not None and _can_recover_task(connection, match.group("task_id")):
+            return {
+                "action": "recover_task",
+                "label": "Recover task",
+                "resource_type": "task",
+                "resource_id": match.group("task_id"),
+            }
+    if title == "Repeated task failures":
+        match = REPEATED_TASK_FAILURE_PATTERN.match(description)
+        if match is not None and _can_recover_task(connection, match.group("task_id")):
+            return {
+                "action": "recover_task",
+                "label": "Recover task",
+                "resource_type": "task",
+                "resource_id": match.group("task_id"),
+            }
+    if title == "Stale agent heartbeat":
+        match = STALE_AGENT_HEARTBEAT_PATTERN.match(description)
+        if match is not None and _can_recover_agent(connection, match.group("agent_id")):
+            return {
+                "action": "recover_agent",
+                "label": "Recover agent",
+                "resource_type": "agent",
+                "resource_id": match.group("agent_id"),
+                "related_task_id": match.group("task_id"),
+            }
+    return None
 
 
 def _record_alert_status_change(connection, project_id, actor_id, alert_id, status, reason=None):
@@ -131,10 +211,13 @@ def fetch_alerts(connection):
     grouped = {"open": [], "acknowledged": [], "resolved": []}
     for row in rows:
         alert = dict(row)
+        operator_action = _infer_operator_action(connection, alert["title"], alert["description"])
+        if operator_action is not None:
+            alert["operator_action"] = operator_action
         grouped.setdefault(alert["status"], []).append(alert)
 
     return {
-        "alerts": [dict(row) for row in rows],
+        "alerts": [alert for alerts in grouped.values() for alert in alerts],
         "grouped": grouped,
         "summary": {
             "open": len(grouped.get("open", [])),

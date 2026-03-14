@@ -7,6 +7,7 @@ from maas.api import create_app
 from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
 from maas.ids import generate_id
+from maas.services.alerts import fetch_alerts
 from maas.services.lifecycle import heartbeat
 from maas.supervisor import run_supervisor_once
 
@@ -332,6 +333,58 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(repeated_alert["title"], "Repeated task failures")
             self.assertEqual(repeated_alert["severity"], "critical")
             self.assertIsNotNone(supervisor_result["stale_sessions"][0]["repeated_failure_alert"])
+
+    def test_stale_heartbeat_alert_omits_recover_agent_action_while_agent_stays_running(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Stale Alert Action Test",
+                description="Supervisor stale alert action test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                stale_session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                ).fetchone()["session_id"]
+                healthy_session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message
+                    ) VALUES (?, ?, ?, ?, 'active', 'python_script', 65, ?)
+                    """,
+                    (
+                        healthy_session_id,
+                        project_id,
+                        "agent_builder",
+                        task_id,
+                        "Second active session for stale-alert operator-action regression test",
+                    ),
+                )
+                heartbeat(connection, healthy_session_id, 70, "Healthy duplicate session heartbeat")
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE session_id = ?
+                    """,
+                    (stale_session_id,),
+                )
+                connection.commit()
+
+                run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                alert_payload = fetch_alerts(connection)
+            finally:
+                connection.close()
+
+            stale_alert = [alert for alert in alert_payload["alerts"] if alert["title"] == "Stale agent heartbeat"][0]
+            self.assertNotIn("operator_action", stale_alert)
 
     def test_cancelled_sessions_do_not_count_toward_repeated_failure_alerts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

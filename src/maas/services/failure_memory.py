@@ -51,18 +51,23 @@ def quarantine_session_artifacts(connection, project_paths, session_id, reason):
     artifact_root = os.path.abspath(project_paths.artifacts_dir)
     quarantine_root = os.path.abspath(project_paths.quarantine_dir)
     quarantined = []
+    quarantined_paths = {}
     for artifact in artifacts:
         stored_path = artifact["path"]
         source_path = stored_path if os.path.isabs(stored_path) else os.path.abspath(os.path.join(project_paths.root, stored_path))
-        if not os.path.exists(source_path):
-            continue
         if os.path.commonpath([artifact_root, source_path]) != artifact_root:
             continue
 
         relative_path = os.path.relpath(source_path, artifact_root)
         destination_path = os.path.join(quarantine_root, session_id, relative_path)
-        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-        shutil.move(source_path, destination_path)
+        if source_path not in quarantined_paths:
+            if not os.path.exists(source_path):
+                continue
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            shutil.move(source_path, destination_path)
+            quarantined_paths[source_path] = destination_path
+        else:
+            destination_path = quarantined_paths[source_path]
 
         metadata = json.loads(artifact["metadata_json"] or "{}")
         metadata.update(

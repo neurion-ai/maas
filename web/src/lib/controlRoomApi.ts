@@ -247,3 +247,10 @@ export async function assignNextTask(agentId: string) {
   );
   return payload as { agent_id: string; task_id: string | null; assigned: boolean; task_title?: string };
 }
+
+export async function recoverAgent(agentId: string) {
+  const payload = await postJson<{ agent_id: string; status: string }>(`/api/agents/${agentId}/actions/recover`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as { agent_id: string; status: string };
+}

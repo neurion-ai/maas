@@ -12,6 +12,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - task-scoped capability grants for execution, heartbeats, activity, artifacts, and session completion
 - failure-memory logging with repeated-failure alerting and dashboard visibility
 - operator recovery for failure-blocked tasks
+- operator recovery for error-state agents
 - concrete simulated runtime adapters for Python Script, Claude Code, and OpenAI Codex
 - a React control room with operator actions for supervisor runs and idle-agent assignment
 - board-side operator controls for review, reprioritize, reassign, pause/resume, and halt
@@ -64,6 +65,7 @@ The project bootstrap creates:
 - `POST /api/tasks/{task_id}/actions/evaluate`
 - `POST /api/tasks/{task_id}/actions/recover`
 - `POST /api/agents/{agent_id}/actions/assign-next`
+- `POST /api/agents/{agent_id}/actions/recover`
 - `POST /api/supervisor/run`
 
 The primary operational surface is the Kanban board returned by `/api/board`.
@@ -75,6 +77,7 @@ The primary operational surface is the Kanban board returned by `/api/board`.
 - `maas task allocate --project-root . --agent-id <agent_id>`
 - `maas task evaluate --project-root . --task-id <task_id>`
 - `maas task recover --project-root . --task-id <task_id> --actor-id <agent_id>`
+- `maas agent recover --project-root . --agent-id <agent_id> --actor-id <agent_id>`
 - `maas supervisor --project-root . --once`
 - `maas failure list --project-root .`
 - `maas escalation list --project-root .`
@@ -93,6 +96,7 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - risky task and agent interventions can now be routed through an escalation queue instead of being executed immediately
 - failed and timed-out sessions are now recorded in failure memory and can raise repeated-failure alerts
 - operators can return failure-blocked tasks to the planning queue without resuming the old execution context
+- operators can recover timeout-stranded agents from `error` back to `idle` once no active session remains
 
 ## Provider Notes
 

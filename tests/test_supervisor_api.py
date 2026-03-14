@@ -136,6 +136,63 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(agent["status"], "error")
             self.assertIsNone(agent["current_task_id"])
 
+    def test_agent_recover_action_returns_error_agent_to_idle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Agent Recover Test",
+                description="Recover timed-out agent",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE agent_id = 'agent_builder' AND status = 'active'
+                    """
+                )
+                connection.commit()
+                run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/agents/agent_builder/actions/recover",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+            self.assertEqual(recover_response.json()["status"], "idle")
+
+            connection = connect(result["paths"])
+            try:
+                agent = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = 'agent_builder'"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(agent["status"], "idle")
+            self.assertIsNone(agent["current_task_id"])
+
+    def test_agent_recover_rejects_non_error_agents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Agent Recover Guard Test",
+                description="Reject invalid agent recover path",
+                project_type="custom",
+            )
+            client = TestClient(create_app(tmpdir))
+
+            recover_response = client.post(
+                "/api/agents/agent_reviewer/actions/recover",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 400)
+
     def test_supervisor_api_endpoint_runs_pass(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Supervisor API Test", description="Supervisor API test", project_type="custom")

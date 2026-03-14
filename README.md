@@ -6,6 +6,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - a greenfield bootstrap flow
 - a FastAPI API exposing Kanban board read models
 - a task scheduler surface with ready-queue refresh and acceptance evaluation
+- an allocator surface for assigning ready tasks to idle agents
 - a lightweight supervisor/lifecycle foundation
 - implementation specs for the planned roadmap
 
@@ -15,6 +16,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 PYTHONPATH=src python3 -m maas init --project-root .
 PYTHONPATH=src python3 -m maas db migrate --project-root .
 PYTHONPATH=src python3 -m maas task ready --project-root . --refresh
+PYTHONPATH=src python3 -m maas task allocate --project-root .
 PYTHONPATH=src python3 -m maas api --project-root .
 ```
 
@@ -37,13 +39,17 @@ The project bootstrap creates:
 - `GET /api/alerts`
 - `GET /api/tasks/ready`
 - `POST /api/tasks/actions/refresh-ready`
+- `POST /api/tasks/actions/allocate-ready`
 - `POST /api/tasks/{task_id}/actions/evaluate`
+- `POST /api/agents/{agent_id}/actions/assign-next`
 
 The primary operational surface is the Kanban board returned by `/api/board`.
 
 ## Task Engine Commands
 
 - `maas task ready --project-root . --refresh`
+- `maas task allocate --project-root .`
+- `maas task allocate --project-root . --agent-id <agent_id>`
 - `maas task evaluate --project-root . --task-id <task_id>`
 
-These commands expose the current dependency-aware ready queue and acceptance-gate evaluation flow from the CLI.
+These commands expose the current dependency-aware ready queue, allocator flow, and acceptance-gate evaluation from the CLI.

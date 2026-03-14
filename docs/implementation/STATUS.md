@@ -73,9 +73,10 @@ The system is best described as **an operational prototype with real infrastruct
 ### Scheduling and planning
 
 - ready-task resolution exists, with dependency/conflict-aware refresh semantics
+- allocator assignment exists for idle agents and ready work
 - acceptance criteria evaluation exists for `artifact_exists`, `metric`, `db_query`, and `test_passes`
 - task evaluation is exposed through both CLI and API surfaces
-- allocator logic is still minimal
+- allocator logic is still heuristic and intentionally lightweight
 - no advanced replanning loop yet
 
 ### Providers
@@ -108,10 +109,11 @@ The system is best described as **an operational prototype with real infrastruct
 Current work is moving deeper into the goal/task engine with:
 
 - dependency-aware ready queue refresh
+- idle-agent task allocation
 - acceptance-gate evaluation
 - scheduler-facing task commands and API actions
 
-If the current task-evaluation branch is not yet merged, treat those scheduler features as in progress rather than available on `main`.
+If the current allocator branch is not yet merged, treat those assignment features as in progress rather than available on `main`.
 
 ## Practical Assessment
 
@@ -123,6 +125,6 @@ If someone asks “can MAAS be used right now?”, the honest answer is:
 The project is roughly in the **late Batch 2 through Batch 6 foundation zone** of the roadmap:
 
 - Batches 1 and 4 are effectively in place.
-- Batch 2 is moving from storage/plumbing into real orchestration behavior.
+- Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
 - Batches 3, 5, and 6 are partially in place.
 - Batches 7 and 8 are mostly ahead of us.

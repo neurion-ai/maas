@@ -6,6 +6,34 @@ from maas.ids import generate_id
 
 
 def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
+    agent_row = connection.execute(
+        """
+        SELECT agent_id, project_id, status, current_task_id
+        FROM agents
+        WHERE agent_id = ?
+        """,
+        (agent_id,),
+    ).fetchone()
+    if agent_row is None or agent_row["project_id"] != project_id:
+        raise ValueError("Agent not found")
+    if agent_row["current_task_id"] and agent_row["current_task_id"] != task_id:
+        raise ValueError("Agent already has an active task")
+
+    task_row = connection.execute(
+        """
+        SELECT task_id, assigned_agent_id, status
+        FROM tasks
+        WHERE task_id = ? AND project_id = ?
+        """,
+        (task_id, project_id),
+    ).fetchone()
+    if task_row is None:
+        raise ValueError("Task not found")
+    if task_row["status"] not in ("planned", "ready", "assigned"):
+        raise ValueError("Task cannot be started from status {0}".format(task_row["status"]))
+    if task_row["assigned_agent_id"] and task_row["assigned_agent_id"] != agent_id:
+        raise ValueError("Task is assigned to another agent")
+
     session_id = generate_id("sess")
     connection.execute(
         """

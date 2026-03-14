@@ -72,7 +72,7 @@ export function TaskCard({
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
   const canSteerTask = task.status !== "done" && task.status !== "cancelled";
-  const canReassign = canSteerTask && !!onReassign && agentOptions.length > 0;
+  const canReassign = canSteerTask && task.status !== "in_progress" && !!onReassign && agentOptions.length > 0;
   const canReprioritize = canSteerTask && !!onPriorityChange;
   const canHalt = canSteerTask && !!onHalt;
 

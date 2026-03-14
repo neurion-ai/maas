@@ -122,7 +122,9 @@ def halt_task(connection, task_id, actor_id):
         connection.execute(
             """
             UPDATE agents
-            SET status = 'idle', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+            SET status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'idle' END,
+                current_task_id = NULL,
+                updated_at = CURRENT_TIMESTAMP
             WHERE agent_id = ? AND current_task_id = ?
             """,
             (task["assigned_agent_id"], task_id),
@@ -184,11 +186,13 @@ def reprioritize_task(connection, task_id, actor_id, priority):
 
 def reassign_task(connection, task_id, actor_id, agent_id):
     task = connection.execute(
-        "SELECT task_id, project_id FROM tasks WHERE task_id = ?",
+        "SELECT task_id, project_id, status FROM tasks WHERE task_id = ?",
         (task_id,),
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
+    if task["status"] == "in_progress":
+        raise ValueError("In-progress tasks cannot be reassigned")
     agent = connection.execute(
         "SELECT agent_id FROM agents WHERE agent_id = ? AND project_id = ?",
         (agent_id, task["project_id"]),

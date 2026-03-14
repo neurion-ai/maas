@@ -11,6 +11,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - a lightweight supervisor/lifecycle foundation
 - a React control room with operator actions for supervisor runs and idle-agent assignment
 - board-side operator controls for review, reprioritize, reassign, pause/resume, and halt
+- role-baseline permission enforcement for steering and alert actions
 - implementation specs for the planned roadmap
 
 ## Quick Start

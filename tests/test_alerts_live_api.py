@@ -4,6 +4,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from maas.api import create_app
+from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
 
 
@@ -40,6 +41,37 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             refreshed = client.get("/api/alerts").json()
             matching = [alert for alert in refreshed["alerts"] if alert["alert_id"] == alert_id]
             self.assertEqual(matching[0]["status"], "resolved")
+
+    def test_alert_action_requires_board_permission(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Alert Permission Test", description="Alert permission test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            alerts_payload = client.get("/api/alerts").json()
+            alert_id = alerts_payload["alerts"][0]["alert_id"]
+
+            denied_response = client.post(
+                "/api/alerts/{0}/actions/acknowledge".format(alert_id),
+                json={"actor_id": "agent_builder"},
+            )
+            self.assertEqual(denied_response.status_code, 403)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                audit_row = connection.execute(
+                    """
+                    SELECT action_type, detail_json
+                    FROM audit_trail
+                    WHERE actor_id = 'agent_builder'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(audit_row["action_type"], "permission_denied")
+            self.assertIn("update_alert_status", audit_row["detail_json"])
 
 
 if __name__ == "__main__":

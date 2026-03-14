@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
+from maas.services.escalations import request_escalation
 
 
 class AlertsAndLiveApiTest(unittest.TestCase):
@@ -68,6 +69,33 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             failures_payload = failures_response.json()
             self.assertEqual(failures_payload["summary"]["total_failures"], 1)
             self.assertEqual(failures_payload["recent"][0]["failure_type"], "session_failed")
+
+    def test_live_snapshot_includes_open_escalation_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Live Escalation Test", description="Live escalation test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                request_escalation(
+                    connection,
+                    project_id=project_id,
+                    actor_id="agent_builder",
+                    action_type="halt_task",
+                    resource_type="task",
+                    resource_id=task_id,
+                    reason="Need operator approval",
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            live_payload = client.get("/api/live").json()
+
+            self.assertEqual(live_payload["counts"]["escalations_open"], 1)
+            self.assertIsNotNone(live_payload["revision"]["latest_escalation"])
 
     def test_alert_action_requires_board_permission(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -3,10 +3,11 @@ import { ActivityPage } from "./pages/ActivityPage";
 import { AgentRosterPage } from "./pages/AgentRosterPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { BoardPage } from "./pages/BoardPage";
+import { EscalationsPage } from "./pages/EscalationsPage";
 import { GoalTreePage } from "./pages/GoalTreePage";
 import { OverviewPage } from "./pages/OverviewPage";
 
-type View = "overview" | "board" | "goals" | "agents" | "activity" | "alerts";
+type View = "overview" | "board" | "goals" | "agents" | "activity" | "alerts" | "escalations";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -14,7 +15,8 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "goals", label: "Goal Tree" },
   { id: "agents", label: "Agent Roster" },
   { id: "activity", label: "Activity" },
-  { id: "alerts", label: "Alerts" }
+  { id: "alerts", label: "Alerts" },
+  { id: "escalations", label: "Escalations" }
 ];
 
 function getInitialView(): View {
@@ -69,6 +71,7 @@ export default function App() {
         {activeView === "agents" ? <AgentRosterPage /> : null}
         {activeView === "activity" ? <ActivityPage /> : null}
         {activeView === "alerts" ? <AlertsPage /> : null}
+        {activeView === "escalations" ? <EscalationsPage /> : null}
       </div>
     </div>
   );

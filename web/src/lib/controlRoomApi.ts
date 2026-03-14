@@ -2,6 +2,7 @@ import type {
   ActivityItem,
   AgentRosterResponse,
   AlertsResponse,
+  EscalationsResponse,
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
@@ -26,6 +27,7 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     goals_active: 2,
     alerts_open: 1,
     alerts_critical: 0,
+    escalations_open: 0,
     failures_total: 0,
     repeated_failure_tasks: 0,
     agents_running: 2
@@ -131,12 +133,23 @@ const ALERTS_FALLBACK: AlertsResponse = {
   }
 };
 
+const ESCALATIONS_FALLBACK: EscalationsResponse = {
+  escalations: [],
+  grouped: { open: [], approved: [], rejected: [] },
+  summary: {
+    open: 0,
+    approved: 0,
+    rejected: 0
+  }
+};
+
 const LIVE_FALLBACK: LiveSnapshot = {
   generated_at: new Date().toISOString(),
   counts: {
     tasks_in_progress: 2,
     tasks_review: 1,
     alerts_open: 1,
+    escalations_open: 0,
     agents_running: 2,
     failures_total: 0,
     repeated_failure_tasks: 0
@@ -181,6 +194,10 @@ export function fetchAlerts() {
   return fetchJson<AlertsResponse>("/api/alerts", ALERTS_FALLBACK);
 }
 
+export function fetchEscalations() {
+  return fetchJson<EscalationsResponse>("/api/escalations", ESCALATIONS_FALLBACK);
+}
+
 export function fetchLiveSnapshot() {
   return fetchJson<LiveSnapshot>("/api/live", LIVE_FALLBACK);
 }
@@ -207,6 +224,13 @@ async function postJson<T>(path: string, body: Record<string, string | number | 
 
 export async function updateAlertStatus(alertId: string, action: "acknowledge" | "resolve") {
   await postJson(`/api/alerts/${alertId}/actions/${action}`, { actor_id: "agent_allocator" });
+}
+
+export async function updateEscalationStatus(escalationId: string, action: "approve" | "reject", resolutionNote = "") {
+  await postJson(`/api/escalations/${escalationId}/actions/${action}`, {
+    actor_id: "agent_allocator",
+    resolution_note: resolutionNote
+  });
 }
 
 export async function runSupervisorPass(allocateLimit?: number) {

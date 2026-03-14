@@ -7,6 +7,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.escalations import request_escalation
 
 
 class DashboardApiTest(unittest.TestCase):
@@ -106,6 +107,32 @@ class DashboardApiTest(unittest.TestCase):
             self.assertGreaterEqual(len(payload["agents"]), 1)
             self.assertIn("display_name", payload["agents"][0])
             self.assertIn("heartbeat_age_seconds", payload["agents"][0])
+
+    def test_overview_includes_open_escalation_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Escalation Overview Test", description="Escalation overview test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                request_escalation(
+                    connection,
+                    project_id=project_id,
+                    actor_id="agent_builder",
+                    action_type="halt_task",
+                    resource_type="task",
+                    resource_id=task_id,
+                    reason="Need operator approval",
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            overview_payload = client.get("/api/overview").json()
+
+            self.assertEqual(overview_payload["summary"]["escalations_open"], 1)
 
 
 if __name__ == "__main__":

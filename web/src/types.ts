@@ -100,6 +100,7 @@ export interface OverviewSummary {
   goals_active: number;
   alerts_open: number;
   alerts_critical: number;
+  escalations_open: number;
   failures_total: number;
   repeated_failure_tasks: number;
   agents_running: number;
@@ -206,12 +207,41 @@ export interface AlertsResponse {
   };
 }
 
+export interface EscalationItem {
+  escalation_id: string;
+  project_id?: string;
+  requested_by: string;
+  requester_name?: string | null;
+  action_type: string;
+  resource_type: string;
+  resource_id: string;
+  payload_json: string;
+  reason: string;
+  status: string;
+  resolved_by?: string | null;
+  resolver_name?: string | null;
+  resolution_note?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+}
+
+export interface EscalationsResponse {
+  escalations: EscalationItem[];
+  grouped: Record<string, EscalationItem[]>;
+  summary: {
+    open: number;
+    approved: number;
+    rejected: number;
+  };
+}
+
 export interface LiveSnapshot {
   generated_at: string;
   counts: {
     tasks_in_progress: number;
     tasks_review: number;
     alerts_open: number;
+    escalations_open: number;
     agents_running: number;
     failures_total: number;
     repeated_failure_tasks: number;
@@ -220,6 +250,7 @@ export interface LiveSnapshot {
     latest_task?: string | null;
     latest_activity?: string | null;
     latest_alert?: string | null;
+    latest_escalation?: string | null;
     latest_failure?: string | null;
   };
 }

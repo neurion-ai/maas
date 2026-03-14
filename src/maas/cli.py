@@ -10,8 +10,9 @@ from maas.api import create_app
 from maas.db import connect, project_paths, run_migrations
 from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
-from maas.services.provider_runtime import run_provider_task
+from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log
+from maas.services.provider_runtime import run_provider_task
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.supervisor import run_supervisor_once
@@ -68,6 +69,34 @@ def build_parser():
     failure_list_parser = failure_subparsers.add_parser("list")
     failure_list_parser.add_argument("--project-root", default=".")
     failure_list_parser.add_argument("--limit", type=int, default=20)
+
+    escalation_parser = subparsers.add_parser("escalation")
+    escalation_subparsers = escalation_parser.add_subparsers(dest="escalation_command", required=True)
+
+    escalation_list_parser = escalation_subparsers.add_parser("list")
+    escalation_list_parser.add_argument("--project-root", default=".")
+
+    escalation_request_parser = escalation_subparsers.add_parser("request")
+    escalation_request_parser.add_argument("--project-root", default=".")
+    escalation_request_parser.add_argument("--project-id", required=True)
+    escalation_request_parser.add_argument("--actor-id", required=True)
+    escalation_request_parser.add_argument("--action-type", required=True)
+    escalation_request_parser.add_argument("--resource-type", required=True)
+    escalation_request_parser.add_argument("--resource-id", required=True)
+    escalation_request_parser.add_argument("--reason", default="")
+    escalation_request_parser.add_argument("--payload-json", default="{}")
+
+    escalation_approve_parser = escalation_subparsers.add_parser("approve")
+    escalation_approve_parser.add_argument("--project-root", default=".")
+    escalation_approve_parser.add_argument("--escalation-id", required=True)
+    escalation_approve_parser.add_argument("--actor-id", required=True)
+    escalation_approve_parser.add_argument("--resolution-note", default="")
+
+    escalation_reject_parser = escalation_subparsers.add_parser("reject")
+    escalation_reject_parser.add_argument("--project-root", default=".")
+    escalation_reject_parser.add_argument("--escalation-id", required=True)
+    escalation_reject_parser.add_argument("--actor-id", required=True)
+    escalation_reject_parser.add_argument("--resolution-note", default="")
 
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--project-root", default=".")
@@ -203,6 +232,36 @@ def command_failure(args):
         connection.close()
 
 
+def command_escalation(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.escalation_command == "list":
+            print(json.dumps(fetch_escalations(connection), indent=2))
+        elif args.escalation_command == "request":
+            print(
+                json.dumps(
+                    request_escalation(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        action_type=args.action_type,
+                        resource_type=args.resource_type,
+                        resource_id=args.resource_id,
+                        reason=args.reason,
+                        payload=json.loads(args.payload_json),
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.escalation_command == "approve":
+            print(json.dumps(approve_escalation(connection, args.escalation_id, args.actor_id, args.resolution_note), indent=2))
+        elif args.escalation_command == "reject":
+            print(json.dumps(reject_escalation(connection, args.escalation_id, args.actor_id, args.resolution_note), indent=2))
+    finally:
+        connection.close()
+
+
 def command_worker(args):
     paths = project_paths(args.project_root)
     connection = connect(paths)
@@ -295,6 +354,8 @@ def main(argv=None):
         command_task(args)
     elif args.command == "failure":
         command_failure(args)
+    elif args.command == "escalation":
+        command_escalation(args)
     elif args.command == "worker":
         command_worker(args)
     elif args.command == "lifecycle":

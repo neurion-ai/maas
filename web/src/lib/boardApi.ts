@@ -262,7 +262,10 @@ export async function fetchBoard(filters: BoardFiltersInput = {}, signal?: Abort
 
     const payload = (await response.json()) as BoardResponse;
     return normalizeBoard(payload);
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
     return normalizeBoard(FALLBACK_BOARD);
   }
 }

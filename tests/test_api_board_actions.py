@@ -39,6 +39,33 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(len(matching_cards), 1)
             self.assertEqual(matching_cards[0]["status"], "done")
 
+    def test_rejected_review_task_returns_to_assignable_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Reject Test", description="Reject review path", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.get("/api/board", params={"review_only": "true"})
+            self.assertEqual(response.status_code, 200)
+            review_task_id = response.json()["columns"][3]["tasks"][0]["task_id"]
+
+            reject_response = client.post(
+                "/api/tasks/{0}/actions/review".format(review_task_id),
+                json={"actor_id": "agent_reviewer", "decision": "reject"},
+            )
+            self.assertEqual(reject_response.status_code, 200)
+
+            after_response = client.get("/api/board", params={"search": "Validate seeded lifecycle semantics"})
+            self.assertEqual(after_response.status_code, 200)
+            matching_cards = [
+                task
+                for column in after_response.json()["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == review_task_id
+            ]
+            self.assertEqual(len(matching_cards), 1)
+            self.assertEqual(matching_cards[0]["status"], "planned")
+            self.assertEqual(matching_cards[0]["review_state"], "changes_requested")
+
     def test_pause_resume_and_reprioritize_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Steering Test", description="Operator actions", project_type="custom")

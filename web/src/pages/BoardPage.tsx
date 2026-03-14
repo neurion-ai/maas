@@ -38,11 +38,18 @@ export function BoardPage() {
 
   async function loadBoard(signal?: AbortSignal) {
     setIsRefreshing(true);
-    const nextBoard = await fetchBoard(boardFilters, signal);
-    startTransition(() => {
-      setBoard(nextBoard);
-    });
-    setIsRefreshing(false);
+    try {
+      const nextBoard = await fetchBoard(boardFilters, signal);
+      startTransition(() => {
+        setBoard(nextBoard);
+      });
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        setNotice("Board refresh failed; showing the most recent available data.");
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
   }
 
   useEffect(() => {

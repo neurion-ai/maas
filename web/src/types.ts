@@ -4,7 +4,8 @@ export type BoardColumnKey =
   | "in_progress"
   | "review"
   | "blocked"
-  | "done";
+  | "done"
+  | "cancelled";
 
 export interface BoardAgent {
   id: string;
@@ -21,7 +22,7 @@ export interface BoardTask {
   task_id: string;
   title: string;
   description?: string;
-  status: BoardColumnKey | "assigned" | "cancelled";
+  status: BoardColumnKey | "assigned";
   priority: number;
   progress_pct?: number | null;
   heartbeat_age_seconds?: number | null;
@@ -53,6 +54,7 @@ export interface FilterOption {
 export interface BoardFilterOptions {
   agents?: FilterOption[];
   goals?: FilterOption[];
+  priority_min_values?: number[];
 }
 
 export interface BoardFiltersInput {

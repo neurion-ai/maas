@@ -16,7 +16,7 @@ from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_o
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
-from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
+from maas.services.steering import halt_task, pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
 from maas.supervisor import run_supervisor_once
 
 
@@ -302,6 +302,16 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return review_task(connection, task_id, payload.actor_id, payload.decision)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/halt")
+    def task_halt_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return halt_task(connection, task_id, payload.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

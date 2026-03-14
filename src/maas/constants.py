@@ -16,6 +16,7 @@ BOARD_COLUMNS = (
     ("review", "Review"),
     ("blocked", "Blocked"),
     ("done", "Done"),
+    ("cancelled", "Cancelled"),
 )
 
 GOAL_STATUSES = (
@@ -33,4 +34,3 @@ AGENT_STATUSES = ("idle", "running", "paused", "error", "disabled")
 ALERT_SEVERITIES = ("info", "warning", "critical")
 DEPENDENCY_TYPES = ("blocks", "informs", "conflicts")
 HEARTBEAT_STALE_SECONDS = 90
-

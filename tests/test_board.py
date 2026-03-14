@@ -17,7 +17,7 @@ class BoardReadModelTest(unittest.TestCase):
                 connection.close()
 
             labels = [column["title"] for column in board["columns"]]
-            self.assertEqual(labels, ["Planned", "Ready", "In Progress", "Review", "Blocked", "Done"])
+            self.assertEqual(labels, ["Planned", "Ready", "In Progress", "Review", "Blocked", "Done", "Cancelled"])
             self.assertGreater(board["summary"]["total_tasks"], 0)
             self.assertIn("generated_at", board)
             self.assertIn("filters", board)

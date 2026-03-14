@@ -17,6 +17,8 @@ Each board column should include:
 - `title`
 - `tasks`
 
+Current implementation also includes a `cancelled` column so halted work remains visible to operators.
+
 Each task card should include:
 
 - `task_id`

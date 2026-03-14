@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
+from maas.services.lifecycle import end_session, start_session
 
 
 class BoardApiActionsTest(unittest.TestCase):
@@ -178,6 +179,82 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(halted_card["status"], "cancelled")
             self.assertEqual(halted_card["review_state"], "halted_by_operator")
             self.assertEqual(halted_card["capabilities"], [])
+
+    def test_recover_failed_task_returns_it_to_planned_queue(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Recover Task Test", description="Recover failure-blocked task", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting recovery test",
+                )
+                end_session(connection, session_id, "failed", "Recoverable failure")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+            self.assertEqual(recover_response.json()["status"], "planned")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                recovered_task = connection.execute(
+                    """
+                    SELECT status, assigned_agent_id, review_state, progress_pct, last_heartbeat_at
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            capabilities_response = client.get("/api/tasks/{0}/capabilities".format(task_id))
+            self.assertEqual(capabilities_response.status_code, 200)
+            self.assertEqual(recovered_task["status"], "planned")
+            self.assertIsNone(recovered_task["assigned_agent_id"])
+            self.assertIsNone(recovered_task["review_state"])
+            self.assertEqual(recovered_task["progress_pct"], 0)
+            self.assertIsNone(recovered_task["last_heartbeat_at"])
+            self.assertEqual(capabilities_response.json()["grants"], [])
+
+    def test_recover_rejects_non_failure_blocked_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recover Guard Test", description="Reject invalid recover path", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            pause_response = client.post(
+                "/api/agents/agent_builder/actions/pause",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(pause_response.status_code, 200)
+
+            blocked_task = client.get("/api/board", params={"search": "Implement FastAPI board endpoint"}).json()
+            task_id = [
+                task
+                for column in blocked_task["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Implement FastAPI board endpoint"
+            ][0]["task_id"]
+
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 400)
 
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -10,6 +10,8 @@ from maas.services.security import (
     revoke_task_capabilities,
 )
 
+RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
+
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
     connection.execute(
@@ -166,6 +168,71 @@ def halt_task(connection, task_id, actor_id):
     )
     connection.commit()
     return {"task_id": task_id, "status": "cancelled"}
+
+
+def recover_task(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, review_state
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "recover_task", "task", task_id)
+    if task["status"] != "blocked":
+        raise ValueError("Only blocked tasks can be recovered")
+    if task["review_state"] not in RECOVERABLE_FAILURE_REVIEW_STATES:
+        raise ValueError("Task is not blocked by a recoverable failure")
+
+    if task["assigned_agent_id"]:
+        revoke_task_capabilities(
+            connection,
+            task["project_id"],
+            task_id,
+            agent_id=task["assigned_agent_id"],
+            reason="task_recovered",
+            revoked_by=actor_id,
+        )
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'planned',
+            assigned_agent_id = NULL,
+            progress_pct = 0,
+            review_state = NULL,
+            last_heartbeat_at = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "recover_task",
+        "task",
+        task_id,
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "previous_agent_id": task["assigned_agent_id"],
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "recovered",
+        "Task returned to the planning queue after failure recovery.",
+    )
+    connection.commit()
+    return {"task_id": task_id, "status": "planned"}
 
 
 def reprioritize_task(connection, task_id, actor_id, priority):

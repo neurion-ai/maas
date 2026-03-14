@@ -1,5 +1,13 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { fetchBoard, haltTask, reassignTask, reprioritizeTask, reviewTask, setAgentState } from "../lib/boardApi";
+import {
+  fetchBoard,
+  haltTask,
+  reassignTask,
+  recoverTask,
+  reprioritizeTask,
+  reviewTask,
+  setAgentState
+} from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { BoardFiltersInput, BoardResponse, FilterOption } from "../types";
 import { BoardColumn } from "../components/BoardColumn";
@@ -164,6 +172,21 @@ export function BoardPage() {
     }
   }
 
+  async function handleRecover(taskId: string) {
+    const actionKey = `recover:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await recoverTask(taskId);
+      setNotice(`Task ${taskId} returned to the planning queue.`);
+      await loadBoard();
+    } catch {
+      setNotice("Task recovery failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <main className="board-shell">
       <section className="hero-panel">
@@ -280,6 +303,7 @@ export function BoardPage() {
             onPriorityChange={handlePriorityChange}
             onReassign={handleReassign}
             onHalt={handleHalt}
+            onRecover={handleRecover}
           />
         ))}
       </section>

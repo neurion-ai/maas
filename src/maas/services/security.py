@@ -25,9 +25,6 @@ def _audit_denial(connection, project_id, actor_id, action_type, resource_type, 
 
 
 def ensure_board_action_allowed(connection, actor_id, project_id, action_type, resource_type, resource_id):
-    if actor_id.startswith("system_"):
-        return {"actor_id": actor_id, "system": True}
-
     actor = connection.execute(
         """
         SELECT agent_id, role, permissions_json
@@ -47,4 +44,4 @@ def ensure_board_action_allowed(connection, actor_id, project_id, action_type, r
         connection.commit()
         raise PermissionError("Actor is not allowed to perform board actions")
 
-    return {"actor_id": actor_id, "role": actor["role"], "system": False}
+    return {"actor_id": actor_id, "role": actor["role"]}

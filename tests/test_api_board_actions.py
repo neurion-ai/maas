@@ -236,6 +236,20 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(audit_row["action_type"], "permission_denied")
             self.assertIn("review_task", audit_row["detail_json"])
 
+    def test_spoofed_system_actor_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Spoof Test", description="Spoof test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_payload = client.get("/api/board", params={"review_only": "true"}).json()
+            review_task = board_payload["columns"][3]["tasks"][0]
+
+            denied_response = client.post(
+                "/api/tasks/{0}/actions/review".format(review_task["task_id"]),
+                json={"actor_id": "system_supervisor", "decision": "approve"},
+            )
+            self.assertEqual(denied_response.status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

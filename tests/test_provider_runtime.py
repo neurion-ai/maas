@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 
@@ -157,6 +158,77 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("Unsupported provider type", response.json()["detail"])
+
+    def test_provider_run_task_rejects_paths_outside_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Path Test", description="Provider path test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+            finally:
+                connection.close()
+
+            invalid_cases = [
+                ("/tmp/escape.txt", "agent_allocator"),
+                ("../escape.txt", "agent_researcher"),
+                ("../../etc/passwd", "agent_reviewer"),
+            ]
+            for invalid_path, agent_id in invalid_cases:
+                connection = connect(project_paths(tmpdir))
+                try:
+                    task_id = _insert_assigned_task(
+                        connection, project_id, goal_id, agent_id, "Run adapter with invalid path {0}".format(invalid_path)
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                response = client.post(
+                    "/api/providers/python_script/actions/run-task",
+                    json={
+                        "project_id": project_id,
+                        "agent_id": agent_id,
+                        "task_id": task_id,
+                        "artifact_path": invalid_path,
+                    },
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(".maas/artifacts", response.json()["detail"])
+
+    def test_provider_run_task_does_not_write_artifact_when_session_start_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Atomicity Test", description="Provider atomicity test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(
+                    connection, project_id, goal_id, "agent_allocator", "Run adapter with rejected assignment"
+                )
+                connection.execute(
+                    "UPDATE tasks SET assigned_agent_id = 'agent_reviewer' WHERE task_id = ?",
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "should-not-exist.txt"
+            artifact_full_path = os.path.join(tmpdir, ".maas", "artifacts", artifact_name)
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/python_script/actions/run-task",
+                json={
+                    "project_id": project_id,
+                    "agent_id": "agent_allocator",
+                    "task_id": task_id,
+                    "artifact_path": artifact_name,
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertFalse(os.path.exists(artifact_full_path))
 
 
 if __name__ == "__main__":

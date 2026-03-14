@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from maas.services.escalations import fetch_escalations
-from maas.services.failure_memory import fetch_repeated_failure_tasks, repeated_failure_task_count
+from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_repeated_failure_tasks, repeated_failure_task_count
 
 
 def _parse_timestamp(value):
@@ -103,6 +103,7 @@ def fetch_overview(connection):
             SELECT
                 failure_log.failure_id,
                 failure_log.task_id,
+                failure_log.session_id,
                 failure_log.failure_type,
                 failure_log.summary,
                 failure_log.created_at,
@@ -114,6 +115,7 @@ def fetch_overview(connection):
             """
         ).fetchall()
     ]
+    recent_failures = enrich_failures_with_quarantine(connection, recent_failures)
     repeated_failure_tasks = fetch_repeated_failure_tasks(connection, limit=5)
     escalation_summary = fetch_escalations(connection)["summary"]
 

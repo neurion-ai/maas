@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 
@@ -8,6 +9,7 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import request_escalation
+from maas.services.lifecycle import end_session, produce_artifact, start_session
 
 
 class DashboardApiTest(unittest.TestCase):
@@ -94,6 +96,57 @@ class DashboardApiTest(unittest.TestCase):
             self.assertEqual(overview_payload["summary"]["repeated_failure_tasks"], 6)
             self.assertEqual(len(overview_payload["repeated_failures"]), 5)
             self.assertEqual(live_payload["counts"]["repeated_failure_tasks"], 6)
+
+    def test_overview_recent_failures_include_quarantined_artifact_counts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Dashboard Quarantine Test",
+                description="Dashboard quarantine test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting dashboard quarantine test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "dashboard-quarantine-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("dashboard quarantine\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Dashboard failure with quarantined artifact",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            overview_payload = client.get("/api/overview").json()
+            recent_failure = overview_payload["recent_failures"][0]
+
+            self.assertEqual(recent_failure["failure_type"], "session_failed")
+            self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
+            self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
     def test_agent_roster_is_enriched(self):
         with tempfile.TemporaryDirectory() as tmpdir:

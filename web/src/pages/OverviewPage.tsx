@@ -165,6 +165,11 @@ export function OverviewPage() {
                 <div>
                   <strong>{item.task_title ?? item.task_id ?? "Unlinked failure"}</strong>
                   <p>{item.summary}</p>
+                  {item.quarantined_artifact_count ? (
+                    <p>
+                      Quarantined artifacts: {item.quarantined_artifact_count}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="data-list__meta">
                   <span>{item.failure_type}</span>

@@ -57,6 +57,8 @@ def _maybe_auto_retry_timed_out_task(connection, project_id, task_id, actor_id):
     ).fetchone()
     if task is None:
         return None
+    if task["status"] != "in_progress":
+        return None
 
     recovery_policy = fetch_project_recovery_policy(connection, project_id)
     if not recovery_policy["auto_retry_timeout_sessions"]:

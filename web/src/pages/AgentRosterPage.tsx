@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchAgentRoster } from "../lib/controlRoomApi";
+import { useLivePulse } from "../lib/useLivePulse";
 import type { AgentRosterResponse } from "../types";
 
 function formatHeartbeat(seconds?: number | null) {
@@ -14,6 +15,7 @@ function formatHeartbeat(seconds?: number | null) {
 
 export function AgentRosterPage() {
   const [roster, setRoster] = useState<AgentRosterResponse | null>(null);
+  const livePulse = useLivePulse();
 
   useEffect(() => {
     let mounted = true;
@@ -33,7 +35,7 @@ export function AgentRosterPage() {
       mounted = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [livePulse]);
 
   return (
     <section className="control-page">

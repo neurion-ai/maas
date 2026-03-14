@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { fetchActivity } from "../lib/controlRoomApi";
+import { useLivePulse } from "../lib/useLivePulse";
 import type { ActivityItem } from "../types";
 
 export function ActivityPage() {
   const [items, setItems] = useState<ActivityItem[]>([]);
+  const livePulse = useLivePulse();
 
   useEffect(() => {
     let mounted = true;
@@ -23,7 +25,7 @@ export function ActivityPage() {
       mounted = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [livePulse]);
 
   return (
     <section className="control-page">

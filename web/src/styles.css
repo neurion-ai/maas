@@ -353,6 +353,17 @@ select {
   border: 1px solid var(--line);
 }
 
+.alert-item {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  border: 1px solid var(--line);
+}
+
 .data-list__item p {
   margin: 6px 0 0;
   color: var(--muted);
@@ -719,6 +730,7 @@ select {
   }
 
   .data-list__item,
+  .alert-item,
   .goal-card__header,
   .roster-card__header {
     flex-direction: column;

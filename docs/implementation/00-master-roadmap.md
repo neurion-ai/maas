@@ -4,6 +4,32 @@
 
 MAAS is being implemented as a single-project, greenfield-first, board-first agent operating system. The first shipped slice centers the Kanban board, seeded task graph, SQLite blackboard, and lifecycle contract so humans can see work moving from planned to done.
 
+## Current Status
+
+This roadmap now needs to be read alongside the actual implementation status:
+
+| Batch | Status | Notes |
+|---|---|---|
+| 1. Core kernel and scaffold | Implemented | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
+| 2. Goal/task engine | Partial | Goal records, task DAG storage, board-visible task states, basic dependency handling |
+| 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, simulated worker path |
+| 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
+| 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, roster/overview/goal tree reads |
+| 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume actions with audit logging |
+| 7. Resilience and failure memory | Early | Stale-session detection and alerts exist; broader recovery/failure memory is still pending |
+| 8. Brownfield and multi-project | Not started | Still roadmap only |
+
+## In-Flight Work
+
+The current development branch is extending the dashboard from a periodically refreshed control room into a more live operator surface:
+
+- alert read/action support
+- live snapshot API
+- SSE-driven dashboard pulse for faster refresh
+- alert triage page in the frontend
+
+Until that branch merges, treat those items as in progress rather than shipped.
+
 ## Delivery Order
 
 1. Core kernel and scaffold
@@ -29,7 +55,15 @@ This repository now includes:
 
 - SQLite migrations and a migration runner
 - greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
-- FastAPI read models for board, goals, agents, activity, alerts, and providers
+- FastAPI read models for board, overview, goal tree, agents, activity, alerts, and providers
 - lifecycle API/CLI surface
-- a React board shell under `web/`
+- a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, and Activity views
 
+## Recommended Reading Order
+
+For someone joining development now:
+
+1. Read this file for batch ordering and current status.
+2. Read `README.md` for the current runnable surface.
+3. Read batch docs `01` through `05` for implemented and partially implemented areas.
+4. Read `06` through `08` as forward-looking roadmap/spec material.

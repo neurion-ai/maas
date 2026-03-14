@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { fetchOverview } from "../lib/controlRoomApi";
+import { useLivePulse } from "../lib/useLivePulse";
 import type { OverviewResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 export function OverviewPage() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  const livePulse = useLivePulse();
 
   useEffect(() => {
     let mounted = true;
@@ -25,7 +27,7 @@ export function OverviewPage() {
       mounted = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [livePulse]);
 
   return (
     <section className="control-page">

@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import { ActivityPage } from "./pages/ActivityPage";
 import { AgentRosterPage } from "./pages/AgentRosterPage";
+import { AlertsPage } from "./pages/AlertsPage";
 import { BoardPage } from "./pages/BoardPage";
 import { GoalTreePage } from "./pages/GoalTreePage";
 import { OverviewPage } from "./pages/OverviewPage";
 
-type View = "overview" | "board" | "goals" | "agents" | "activity";
+type View = "overview" | "board" | "goals" | "agents" | "activity" | "alerts";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "board", label: "Board" },
   { id: "goals", label: "Goal Tree" },
   { id: "agents", label: "Agent Roster" },
-  { id: "activity", label: "Activity" }
+  { id: "activity", label: "Activity" },
+  { id: "alerts", label: "Alerts" }
 ];
 
 function getInitialView(): View {
@@ -66,6 +68,7 @@ export default function App() {
         {activeView === "goals" ? <GoalTreePage /> : null}
         {activeView === "agents" ? <AgentRosterPage /> : null}
         {activeView === "activity" ? <ActivityPage /> : null}
+        {activeView === "alerts" ? <AlertsPage /> : null}
       </div>
     </div>
   );

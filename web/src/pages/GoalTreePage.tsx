@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchGoalTree } from "../lib/controlRoomApi";
+import { useLivePulse } from "../lib/useLivePulse";
 import type { GoalTreeNode, GoalTreeResponse } from "../types";
 
 function GoalTreeItem({ node }: { node: GoalTreeNode }) {
@@ -30,6 +31,7 @@ function GoalTreeItem({ node }: { node: GoalTreeNode }) {
 
 export function GoalTreePage() {
   const [tree, setTree] = useState<GoalTreeResponse | null>(null);
+  const livePulse = useLivePulse();
 
   useEffect(() => {
     let mounted = true;
@@ -44,7 +46,7 @@ export function GoalTreePage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [livePulse]);
 
   return (
     <section className="control-page">

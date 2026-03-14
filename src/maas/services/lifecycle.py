@@ -1,0 +1,137 @@
+"""Lifecycle service methods used by adapters and API surfaces."""
+
+import json
+
+from maas.ids import generate_id
+
+
+def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
+    session_id = generate_id("sess")
+    connection.execute(
+        """
+        INSERT INTO sessions (
+            session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message
+        ) VALUES (?, ?, ?, ?, 'active', ?, 0, ?)
+        """,
+        (session_id, project_id, agent_id, task_id, provider_type, status_message),
+    )
+    connection.execute(
+        """
+        UPDATE agents
+        SET status = 'running', current_task_id = ?, last_heartbeat_at = CURRENT_TIMESTAMP
+        WHERE agent_id = ?
+        """,
+        (task_id, agent_id),
+    )
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'in_progress',
+            assigned_agent_id = ?,
+            last_heartbeat_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ? AND status IN ('planned', 'ready', 'assigned')
+        """,
+        (agent_id, task_id),
+    )
+    connection.commit()
+    return session_id
+
+
+def heartbeat(connection, session_id, progress_pct, status_message):
+    connection.execute(
+        """
+        UPDATE sessions
+        SET progress_pct = ?, status_message = ?, last_heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = ?
+        """,
+        (progress_pct, status_message, session_id),
+    )
+    row = connection.execute(
+        "SELECT agent_id, task_id FROM sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if row:
+        connection.execute(
+            "UPDATE agents SET last_heartbeat_at = CURRENT_TIMESTAMP WHERE agent_id = ?",
+            (row["agent_id"],),
+        )
+        connection.execute(
+            """
+            UPDATE tasks
+            SET progress_pct = ?, last_heartbeat_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (progress_pct, row["task_id"]),
+        )
+    connection.commit()
+
+
+def log_activity(connection, project_id, agent_id, task_id, action, category, description, severity="info", details=None):
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            agent_id,
+            task_id,
+            action,
+            category,
+            description,
+            json.dumps(details or {}),
+            severity,
+        ),
+    )
+    connection.commit()
+
+
+def produce_artifact(connection, project_id, session_id, task_id, artifact_type, path, metadata=None):
+    artifact_id = generate_id("art")
+    connection.execute(
+        """
+        INSERT INTO artifacts (
+            artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (artifact_id, project_id, task_id, session_id, artifact_type, path, json.dumps(metadata or {})),
+    )
+    connection.commit()
+    return artifact_id
+
+
+def end_session(connection, session_id, outcome, summary):
+    row = connection.execute(
+        "SELECT agent_id, task_id FROM sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    connection.execute(
+        """
+        UPDATE sessions
+        SET status = ?, status_message = ?, ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = ?
+        """,
+        (outcome, summary, session_id),
+    )
+    if row:
+        connection.execute(
+            """
+            UPDATE agents
+            SET status = 'idle', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE agent_id = ?
+            """,
+            (row["agent_id"],),
+        )
+        if outcome == "completed":
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status = 'review', updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ? AND status = 'in_progress'
+                """,
+                (row["task_id"],),
+            )
+    connection.commit()

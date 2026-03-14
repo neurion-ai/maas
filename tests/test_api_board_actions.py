@@ -144,6 +144,9 @@ class BoardApiActionsTest(unittest.TestCase):
                 if task["title"] == "Define project workspace contracts"
             ][0]
             self.assertEqual(reassigned_card["agent"]["id"], "agent_builder")
+            self.assertTrue(
+                all(grant["agent_id"] == "agent_builder" for grant in reassigned_card["capabilities"])
+            )
 
             in_progress_board = client.get("/api/board", params={"search": "Implement FastAPI board endpoint"}).json()
             in_progress_task = [
@@ -174,6 +177,7 @@ class BoardApiActionsTest(unittest.TestCase):
             ][0]
             self.assertEqual(halted_card["status"], "cancelled")
             self.assertEqual(halted_card["review_state"], "halted_by_operator")
+            self.assertEqual(halted_card["capabilities"], [])
 
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -249,6 +253,25 @@ class BoardApiActionsTest(unittest.TestCase):
                 json={"actor_id": "system_supervisor", "decision": "approve"},
             )
             self.assertEqual(denied_response.status_code, 403)
+
+    def test_task_capabilities_endpoint_returns_active_grants(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Capability Endpoint Test", description="Capability endpoint", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_payload = client.get("/api/board", params={"search": "Wire the scheduler and board read model"}).json()
+            task = [
+                task
+                for column in board_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Wire the scheduler and board read model"
+            ][0]
+
+            response = client.get("/api/tasks/{0}/capabilities".format(task["task_id"]))
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["task_id"], task["task_id"])
+            self.assertEqual(len(payload["grants"]), 5)
 
 
 if __name__ == "__main__":

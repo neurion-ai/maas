@@ -22,6 +22,15 @@ class AllocatorApiTest(unittest.TestCase):
                 allocator_task = connection.execute(
                     "SELECT status, assigned_agent_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
                 ).fetchone()
+                grant_count = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM task_capability_grants
+                    WHERE task_id = (
+                        SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'
+                    ) AND agent_id = 'agent_allocator' AND revoked_at IS NULL
+                    """
+                ).fetchone()["count"]
             finally:
                 connection.close()
 
@@ -30,6 +39,7 @@ class AllocatorApiTest(unittest.TestCase):
             self.assertEqual(researcher_task["assigned_agent_id"], "agent_researcher")
             self.assertEqual(allocator_task["status"], "assigned")
             self.assertEqual(allocator_task["assigned_agent_id"], "agent_allocator")
+            self.assertEqual(grant_count, 5)
 
     def test_allocator_api_endpoints_assign_tasks_and_reject_busy_agents(self):
         with tempfile.TemporaryDirectory() as tmpdir:

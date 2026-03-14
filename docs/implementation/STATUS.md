@@ -53,6 +53,7 @@ The system is best described as **an operational prototype with real infrastruct
   - agent pause/resume
   - halt
 - audit logging for steering actions
+- task-scoped capability grants for assigned execution work
 
 ### Dashboard
 
@@ -101,7 +102,8 @@ The system is best described as **an operational prototype with real infrastruct
 - operator actions are audited
 - board-driven steering now covers most of the Batch 6 control surface
 - role-baseline `board_actions` permission enforcement now gates steering and alert actions
-- full capability-token infrastructure is not complete
+- task execution now requires task-scoped capability grants for start, heartbeat, activity, artifact, and end-session writes
+- escalation queues and broader capability-token distribution are still incomplete
 
 ## What Is Not Started
 
@@ -139,4 +141,5 @@ The project is roughly in the **late Batch 2 through Batch 6 foundation zone** o
 - Batches 1 and 4 are effectively in place.
 - Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
 - Batches 3, 5, and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
+- Batch 6 now also includes task-scoped execution grants tied to task assignment.
 - Batches 7 and 8 are mostly ahead of us.

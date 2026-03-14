@@ -74,6 +74,20 @@ def _board_column_key(status):
 
 
 def fetch_board(connection, filters=None):
+    capability_rows = connection.execute(
+        """
+        SELECT task_id, agent_id, capability
+        FROM task_capability_grants
+        WHERE revoked_at IS NULL
+        ORDER BY created_at ASC
+        """
+    ).fetchall()
+    capabilities_by_task = {}
+    for row in capability_rows:
+        capabilities_by_task.setdefault(row["task_id"], []).append(
+            {"agent_id": row["agent_id"], "capability": row["capability"]}
+        )
+
     rows = connection.execute(
         """
         SELECT
@@ -118,6 +132,7 @@ def fetch_board(connection, filters=None):
                 "name": row["agent_name"],
                 "status": row["agent_status"],
             },
+            "capabilities": capabilities_by_task.get(row["task_id"], []),
             "heartbeat_age_seconds": _age_seconds(row["last_heartbeat_at"]),
             "age_hours": round(age_minutes / 60.0, 1) if age_minutes is not None else None,
         }

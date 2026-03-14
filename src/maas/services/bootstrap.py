@@ -7,6 +7,7 @@ from maas.config import build_default_project_config, save_project_config
 from maas.db import connect, run_migrations
 from maas.ids import generate_id
 from maas.paths import ProjectPaths
+from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
 
 def default_project_name(project_root):
@@ -157,7 +158,17 @@ def seed_project(connection, config):
                 "awaiting_review" if status == "review" else None,
                 None,
             ),
-        )
+            )
+
+        if agent_id and status in ("planned", "ready", "assigned", "in_progress", "blocked"):
+            grant_task_capabilities(
+                connection,
+                project_id,
+                task_id,
+                agent_id,
+                TASK_EXECUTION_CAPABILITIES,
+                granted_by="system_bootstrap",
+            )
 
     connection.execute(
         """
@@ -221,4 +232,3 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
     project_id = seed_project(connection, config)
     connection.close()
     return {"paths": paths, "config": config, "project_id": project_id}
-

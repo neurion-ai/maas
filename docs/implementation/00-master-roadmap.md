@@ -16,19 +16,17 @@ This roadmap now needs to be read alongside the actual implementation status:
 | 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
 | 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, and task-scoped execution grants |
-| 7. Resilience and failure memory | Early | Stale-session detection and alerts exist; broader recovery/failure memory is still pending |
+| 7. Resilience and failure memory | Early | Stale-session detection, failure logging for failed/timed-out sessions, repeated-failure alerts, and read-model visibility exist; broader recovery is still pending |
 | 8. Brownfield and multi-project | Not started | Still roadmap only |
 
 ## In-Flight Work
 
-The current development branch is extending the scheduler and security layer from storage and status plumbing into actual orchestration behavior:
+The current development branch is extending the resilience layer from stale-session handling into reusable failure memory:
 
-- dependency-aware ready queue refresh
-- idle-agent task allocation
-- supervisor-driven orchestration pass
-- acceptance evaluation for artifact, metric, SQL, and test-command checks
-- CLI and API task actions for refresh, assignment, and evaluation
-- task-scoped capability grants tied to assignment and lifecycle execution
+- failure-log storage
+- failed/timed-out session recording
+- repeated-failure alerting
+- board/overview/live visibility for unhealthy work
 
 Until that branch merges, treat those items as in progress rather than shipped.
 
@@ -64,6 +62,7 @@ This repository now includes:
 - board controls for reprioritize, reassign, pause/resume, review, and halt
 - role-baseline permission enforcement for steering and alert actions
 - task capability grant storage plus lifecycle enforcement for start, heartbeat, activity, artifact, and end-session actions
+- failure-log storage plus read models for recent failures and repeated-failure tasks
 - lifecycle API/CLI surface
 - a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, and Activity views
 

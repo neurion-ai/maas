@@ -4,6 +4,8 @@ import unittest
 from fastapi.testclient import TestClient
 
 from maas.api import create_app
+from maas.db import connect, project_paths
+from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 
 
@@ -11,6 +13,26 @@ class DashboardApiTest(unittest.TestCase):
     def test_overview_and_goal_tree_shapes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Dashboard Test", description="Dashboard test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    )
+                    SELECT ?, project_id, ?, session_id, agent_id, 'session_failed', 'Dashboard-visible failure', '{}'
+                    FROM sessions
+                    WHERE task_id = ?
+                    LIMIT 1
+                    """,
+                    (generate_id("fail"), task_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
             client = TestClient(create_app(tmpdir))
 
             overview = client.get("/api/overview")
@@ -18,8 +40,10 @@ class DashboardApiTest(unittest.TestCase):
             overview_payload = overview.json()
             self.assertEqual(overview_payload["project"]["name"], "Dashboard Test")
             self.assertGreaterEqual(overview_payload["summary"]["tasks_total"], 1)
+            self.assertEqual(overview_payload["summary"]["failures_total"], 1)
             self.assertIn("active_work", overview_payload)
             self.assertIn("recent_activity", overview_payload)
+            self.assertIn("recent_failures", overview_payload)
 
             goal_tree = client.get("/api/goals/tree")
             self.assertEqual(goal_tree.status_code, 200)

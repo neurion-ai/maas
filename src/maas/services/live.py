@@ -9,6 +9,7 @@ def build_live_snapshot(connection):
     latest_task = connection.execute("SELECT MAX(updated_at) AS value FROM tasks").fetchone()["value"]
     latest_activity = connection.execute("SELECT MAX(created_at) AS value FROM activity_log").fetchone()["value"]
     latest_alert = connection.execute("SELECT MAX(created_at) AS value FROM alerts").fetchone()["value"]
+    latest_failure = connection.execute("SELECT MAX(created_at) AS value FROM failure_log").fetchone()["value"]
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "counts": {
@@ -24,11 +25,27 @@ def build_live_snapshot(connection):
             "agents_running": connection.execute(
                 "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
             ).fetchone()["count"],
+            "failures_total": connection.execute(
+                "SELECT COUNT(*) AS count FROM failure_log"
+            ).fetchone()["count"],
+            "repeated_failure_tasks": connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM (
+                    SELECT task_id
+                    FROM failure_log
+                    WHERE task_id IS NOT NULL
+                    GROUP BY task_id
+                    HAVING COUNT(*) >= 2
+                )
+                """
+            ).fetchone()["count"],
         },
         "revision": {
             "latest_task": latest_task,
             "latest_activity": latest_activity,
             "latest_alert": latest_alert,
+            "latest_failure": latest_failure,
         },
     }
 

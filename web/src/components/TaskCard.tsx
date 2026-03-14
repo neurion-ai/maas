@@ -108,6 +108,10 @@ export function TaskCard({
           <dt>Review</dt>
           <dd>{task.review_state ?? "Not in review"}</dd>
         </div>
+        <div>
+          <dt>Failures</dt>
+          <dd>{task.failure_count ? `${task.failure_count} logged` : "None"}</dd>
+        </div>
       </dl>
       {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt) && (
         <div className="task-card__actions">

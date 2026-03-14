@@ -11,6 +11,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths, run_migrations
 from maas.services.bootstrap import bootstrap_project
 from maas.services.board import fetch_board
+from maas.services.failure_memory import fetch_failure_log
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.supervisor import run_supervisor_once
@@ -60,6 +61,13 @@ def build_parser():
     task_allocate_parser.add_argument("--agent-id")
     task_allocate_parser.add_argument("--actor-id", default="system_allocator")
     task_allocate_parser.add_argument("--limit", type=int)
+
+    failure_parser = subparsers.add_parser("failure")
+    failure_subparsers = failure_parser.add_subparsers(dest="failure_command", required=True)
+
+    failure_list_parser = failure_subparsers.add_parser("list")
+    failure_list_parser.add_argument("--project-root", default=".")
+    failure_list_parser.add_argument("--limit", type=int, default=20)
 
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--project-root", default=".")
@@ -185,6 +193,16 @@ def command_task(args):
         connection.close()
 
 
+def command_failure(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.failure_command == "list":
+            print(json.dumps(fetch_failure_log(connection, limit=args.limit), indent=2))
+    finally:
+        connection.close()
+
+
 def command_worker(args):
     paths = project_paths(args.project_root)
     artifact_path = os.path.join(paths.root, args.artifact_path)
@@ -288,6 +306,8 @@ def main(argv=None):
         command_board(args)
     elif args.command == "task":
         command_task(args)
+    elif args.command == "failure":
+        command_failure(args)
     elif args.command == "worker":
         command_worker(args)
     elif args.command == "lifecycle":

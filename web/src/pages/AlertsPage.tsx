@@ -52,6 +52,7 @@ export function AlertsPage() {
       <section className="stats-grid">
         <StatCard label="Open alerts" value={alerts?.summary.open ?? 0} tone="warn" />
         <StatCard label="Critical open" value={alerts?.summary.critical_open ?? 0} tone="warn" />
+        <StatCard label="Repeated failure alerts" value={alerts?.summary.repeated_failure_open ?? 0} tone="warn" />
         <StatCard label="Acknowledged" value={alerts?.summary.acknowledged ?? 0} />
         <StatCard label="Resolved" value={alerts?.summary.resolved ?? 0} tone="good" />
       </section>

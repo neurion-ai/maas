@@ -26,6 +26,8 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     goals_active: 2,
     alerts_open: 1,
     alerts_critical: 0,
+    failures_total: 0,
+    repeated_failure_tasks: 0,
     agents_running: 2
   },
   active_work: [
@@ -45,7 +47,9 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
       severity: "info",
       created_at: new Date().toISOString()
     }
-  ]
+  ],
+  recent_failures: [],
+  repeated_failures: []
 };
 
 const GOAL_TREE_FALLBACK: GoalTreeResponse = {
@@ -122,7 +126,8 @@ const ALERTS_FALLBACK: AlertsResponse = {
     open: 1,
     acknowledged: 0,
     resolved: 0,
-    critical_open: 0
+    critical_open: 0,
+    repeated_failure_open: 0
   }
 };
 
@@ -132,7 +137,9 @@ const LIVE_FALLBACK: LiveSnapshot = {
     tasks_in_progress: 2,
     tasks_review: 1,
     alerts_open: 1,
-    agents_running: 2
+    agents_running: 2,
+    failures_total: 0,
+    repeated_failure_tasks: 0
   },
   revision: {}
 };

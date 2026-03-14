@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.failure_memory import maybe_raise_repeated_failure_alert, record_failure
 from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
 
 
@@ -218,5 +219,63 @@ def end_session(connection, session_id, outcome, summary):
             WHERE task_id = ? AND status = 'in_progress'
             """,
             (row["task_id"],),
+        )
+    elif outcome == "failed":
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'blocked', review_state = 'session_failed', updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status = 'in_progress'
+            """,
+            (row["task_id"],),
+        )
+        record_failure(
+            connection,
+            row["project_id"],
+            "session_failed",
+            summary or "Session failed",
+            task_id=row["task_id"],
+            session_id=session_id,
+            agent_id=row["agent_id"],
+            details={"outcome": outcome},
+        )
+        connection.execute(
+            """
+            INSERT INTO activity_log (
+                activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+            ) VALUES (?, ?, ?, ?, 'session_failed', 'runtime', ?, ?, 'error')
+            """,
+            (
+                generate_id("act"),
+                row["project_id"],
+                row["agent_id"],
+                row["task_id"],
+                "Session failed for task {0}.".format(row["task_id"]),
+                json.dumps({"session_id": session_id, "summary": summary}),
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO alerts (
+                alert_id, project_id, severity, title, description, status
+            ) VALUES (?, ?, 'warning', 'Task session failed', ?, 'open')
+            """,
+            (
+                generate_id("alert"),
+                row["project_id"],
+                "Task {0} failed in session {1}. {2}".format(row["task_id"], session_id, summary or ""),
+            ),
+        )
+        maybe_raise_repeated_failure_alert(connection, row["project_id"], row["task_id"], summary or "Session failed")
+    elif outcome == "cancelled":
+        record_failure(
+            connection,
+            row["project_id"],
+            "session_cancelled",
+            summary or "Session cancelled",
+            task_id=row["task_id"],
+            session_id=session_id,
+            agent_id=row["agent_id"],
+            details={"outcome": outcome},
         )
     connection.commit()

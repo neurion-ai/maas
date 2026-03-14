@@ -93,6 +93,39 @@ def fetch_overview(connection):
             """
         ).fetchall()
     ]
+    recent_failures = [
+        dict(row)
+        for row in connection.execute(
+            """
+            SELECT
+                failure_log.failure_id,
+                failure_log.task_id,
+                failure_log.failure_type,
+                failure_log.summary,
+                failure_log.created_at,
+                tasks.title AS task_title
+            FROM failure_log
+            LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
+            ORDER BY failure_log.created_at DESC
+            LIMIT 5
+            """
+        ).fetchall()
+    ]
+    repeated_failure_tasks = [
+        dict(row)
+        for row in connection.execute(
+            """
+            SELECT failure_log.task_id, tasks.title AS task_title, COUNT(*) AS failure_count
+            FROM failure_log
+            LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
+            WHERE failure_log.task_id IS NOT NULL
+            GROUP BY failure_log.task_id, tasks.title
+            HAVING COUNT(*) >= 2
+            ORDER BY failure_count DESC, MAX(failure_log.created_at) DESC
+            LIMIT 5
+            """
+        ).fetchall()
+    ]
 
     return {
         "project": dict(project) if project else None,
@@ -105,12 +138,18 @@ def fetch_overview(connection):
             "goals_active": goal_counts.get("active", 0),
             "alerts_open": sum(alert_counts.values()),
             "alerts_critical": alert_counts.get("critical", 0),
+            "failures_total": connection.execute(
+                "SELECT COUNT(*) AS count FROM failure_log"
+            ).fetchone()["count"],
+            "repeated_failure_tasks": len(repeated_failure_tasks),
             "agents_running": connection.execute(
                 "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
             ).fetchone()["count"],
         },
         "active_work": active_tasks,
         "recent_activity": recent_activity,
+        "recent_failures": recent_failures,
+        "repeated_failures": repeated_failure_tasks,
     }
 
 

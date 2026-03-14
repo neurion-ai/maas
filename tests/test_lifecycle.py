@@ -160,6 +160,63 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_failed_session_creates_failure_memory_and_blocks_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Failure Test",
+                description="Lifecycle failure test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle failure test",
+                )
+
+                end_session(connection, session_id, "failed", "Unit test simulated failure")
+
+                task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                failure = connection.execute(
+                    """
+                    SELECT failure_type, summary
+                    FROM failure_log
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                alert = connection.execute(
+                    """
+                    SELECT title
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+            self.assertEqual(failure["failure_type"], "session_failed")
+            self.assertIn("Unit test simulated failure", failure["summary"])
+            self.assertEqual(alert["title"], "Task session failed")
+
 
 if __name__ == "__main__":
     unittest.main()

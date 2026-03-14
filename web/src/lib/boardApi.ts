@@ -314,3 +314,9 @@ export async function recoverTask(taskId: string) {
     actor_id: DEFAULT_ACTOR_ID
   });
 }
+
+export async function recoverAndRequeueTask(taskId: string) {
+  await postJson(`/api/tasks/${taskId}/actions/recover-and-requeue`, {
+    actor_id: DEFAULT_ACTOR_ID
+  });
+}

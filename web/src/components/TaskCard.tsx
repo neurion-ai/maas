@@ -48,6 +48,7 @@ interface TaskCardProps {
   onReassign?: (taskId: string, agentId: string) => void;
   onHalt?: (taskId: string) => void;
   onRecover?: (taskId: string) => void;
+  onRecoverAndRequeue?: (taskId: string) => void;
 }
 
 export function TaskCard({
@@ -59,7 +60,8 @@ export function TaskCard({
   onPriorityChange,
   onReassign,
   onHalt,
-  onRecover
+  onRecover,
+  onRecoverAndRequeue
 }: TaskCardProps) {
   const reviewApproveKey = `review:${task.task_id}:approve`;
   const reviewRejectKey = `review:${task.task_id}:reject`;
@@ -68,6 +70,7 @@ export function TaskCard({
   const reassignKey = `reassign:${task.task_id}`;
   const haltKey = `halt:${task.task_id}`;
   const recoverKey = `recover:${task.task_id}`;
+  const recoverAndRequeueKey = `recover-and-requeue:${task.task_id}`;
   const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
   const isPendingReviewReject = pendingActionKey === reviewRejectKey;
   const isPendingAgentAction = pendingActionKey === agentActionKey;
@@ -75,6 +78,7 @@ export function TaskCard({
   const isPendingReassign = pendingActionKey === reassignKey;
   const isPendingHalt = pendingActionKey === haltKey;
   const isPendingRecover = pendingActionKey === recoverKey;
+  const isPendingRecoverAndRequeue = pendingActionKey === recoverAndRequeueKey;
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
   const canSteerTask = task.status !== "done" && task.status !== "cancelled";
@@ -83,6 +87,8 @@ export function TaskCard({
   const canHalt = canSteerTask && !!onHalt;
   const canRecover =
     task.status === "blocked" && !!onRecover && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
+  const canRecoverAndRequeue =
+    task.status === "blocked" && !!onRecoverAndRequeue && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
 
   return (
     <article className={`task-card task-card--${task.status}`}>
@@ -121,7 +127,7 @@ export function TaskCard({
           <dd>{task.failure_count ? `${task.failure_count} logged` : "None"}</dd>
         </div>
       </dl>
-      {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover) && (
+      {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue) && (
         <div className="task-card__actions">
           {canReview && (
             <>
@@ -210,10 +216,20 @@ export function TaskCard({
             <button
               type="button"
               className="task-action task-action--approve"
-              disabled={isPendingRecover}
+              disabled={isPendingRecover || isPendingRecoverAndRequeue}
               onClick={() => onRecover?.(task.task_id)}
             >
               {isPendingRecover ? "Recovering..." : "Recover task"}
+            </button>
+          )}
+          {canRecoverAndRequeue && (
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              disabled={isPendingRecover || isPendingRecoverAndRequeue}
+              onClick={() => onRecoverAndRequeue?.(task.task_id)}
+            >
+              {isPendingRecoverAndRequeue ? "Requeueing..." : "Recover + requeue"}
             </button>
           )}
         </div>

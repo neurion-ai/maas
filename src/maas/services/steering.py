@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_session_failed_alerts
 from maas.services.failure_memory import resolve_repeated_failure_alerts
 from maas.services.security import (
@@ -173,6 +174,47 @@ def halt_task(connection, task_id, actor_id):
 
 
 def recover_task(connection, task_id, actor_id):
+    task = _load_recoverable_task(connection, task_id, actor_id)
+    _reset_recoverable_task(
+        connection,
+        task,
+        actor_id,
+        audit_action_type="recover_task",
+        activity_action="recovered",
+        activity_description="Task returned to the planning queue after failure recovery.",
+    )
+    connection.commit()
+    return {"task_id": task_id, "status": "planned"}
+
+
+def recover_and_requeue_task(connection, task_id, actor_id):
+    task = _load_recoverable_task(connection, task_id, actor_id)
+    _reset_recoverable_task(
+        connection,
+        task,
+        actor_id,
+        audit_action_type="recover_and_requeue_task",
+        activity_action="recovered_and_requeued",
+        activity_description="Task recovered from failure and returned to readiness evaluation.",
+    )
+    refresh_ready_tasks(connection)
+    refreshed_task = connection.execute(
+        """
+        SELECT status, review_state
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": refreshed_task["status"],
+        "review_state": refreshed_task["review_state"],
+    }
+
+
+def _load_recoverable_task(connection, task_id, actor_id):
     task = connection.execute(
         """
         SELECT task_id, project_id, assigned_agent_id, status, review_state
@@ -188,12 +230,15 @@ def recover_task(connection, task_id, actor_id):
         raise ValueError("Only blocked tasks can be recovered")
     if task["review_state"] not in RECOVERABLE_FAILURE_REVIEW_STATES:
         raise ValueError("Task is not blocked by a recoverable failure")
+    return task
 
+
+def _reset_recoverable_task(connection, task, actor_id, audit_action_type, activity_action, activity_description):
     if task["assigned_agent_id"]:
         revoke_task_capabilities(
             connection,
             task["project_id"],
-            task_id,
+            task["task_id"],
             agent_id=task["assigned_agent_id"],
             reason="task_recovered",
             revoked_by=actor_id,
@@ -210,15 +255,15 @@ def recover_task(connection, task_id, actor_id):
             updated_at = CURRENT_TIMESTAMP
         WHERE task_id = ?
         """,
-        (task_id,),
+        (task["task_id"],),
     )
     _audit(
         connection,
         task["project_id"],
         actor_id,
-        "recover_task",
+        audit_action_type,
         "task",
-        task_id,
+        task["task_id"],
         {
             "previous_status": task["status"],
             "previous_review_state": task["review_state"],
@@ -229,26 +274,24 @@ def recover_task(connection, task_id, actor_id):
         connection,
         task["project_id"],
         task["assigned_agent_id"],
-        task_id,
-        "recovered",
-        "Task returned to the planning queue after failure recovery.",
+        task["task_id"],
+        activity_action,
+        activity_description,
     )
     resolve_repeated_failure_alerts(
         connection,
         task["project_id"],
-        task_id,
+        task["task_id"],
         actor_id,
         resolution_reason="task_recovered",
     )
     resolve_task_session_failed_alerts(
         connection,
         task["project_id"],
-        task_id,
+        task["task_id"],
         actor_id,
         reason="task_recovered",
     )
-    connection.commit()
-    return {"task_id": task_id, "status": "planned"}
 
 
 def resolve_task_repeated_failures(connection, task_id, actor_id):

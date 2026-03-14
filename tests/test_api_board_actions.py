@@ -434,6 +434,73 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(task["review_state"], "session_failed")
             self.assertEqual(resolved_alert["status"], "resolved")
 
+    def test_recover_and_requeue_returns_recoverable_task_to_ready_queue(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Recover And Requeue Test",
+                description="Recover failure-blocked task directly to ready",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting recover-and-requeue test",
+                )
+                end_session(connection, session_id, "failed", "Recoverable failure")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover-and-requeue".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+            self.assertEqual(recover_response.json()["status"], "ready")
+            self.assertIsNone(recover_response.json()["review_state"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                recovered_task = connection.execute(
+                    """
+                    SELECT status, assigned_agent_id, review_state, progress_pct, last_heartbeat_at
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                session_failed_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            capabilities_response = client.get("/api/tasks/{0}/capabilities".format(task_id))
+            self.assertEqual(capabilities_response.status_code, 200)
+            self.assertEqual(recovered_task["status"], "ready")
+            self.assertIsNone(recovered_task["assigned_agent_id"])
+            self.assertIsNone(recovered_task["review_state"])
+            self.assertEqual(recovered_task["progress_pct"], 0)
+            self.assertIsNone(recovered_task["last_heartbeat_at"])
+            self.assertEqual(capabilities_response.json()["grants"], [])
+            self.assertEqual(session_failed_alert["status"], "resolved")
+
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Pause Halt Test", description="Pause then halt", project_type="custom")

@@ -3,6 +3,7 @@ import {
   fetchBoard,
   haltTask,
   reassignTask,
+  recoverAndRequeueTask,
   recoverTask,
   reprioritizeTask,
   reviewTask,
@@ -187,6 +188,21 @@ export function BoardPage() {
     }
   }
 
+  async function handleRecoverAndRequeue(taskId: string) {
+    const actionKey = `recover-and-requeue:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await recoverAndRequeueTask(taskId);
+      setNotice(`Task ${taskId} recovered and requeued.`);
+      await loadBoard();
+    } catch {
+      setNotice("Task recover-and-requeue failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <main className="board-shell">
       <section className="hero-panel">
@@ -304,6 +320,7 @@ export function BoardPage() {
             onReassign={handleReassign}
             onHalt={handleHalt}
             onRecover={handleRecover}
+            onRecoverAndRequeue={handleRecoverAndRequeue}
           />
         ))}
       </section>

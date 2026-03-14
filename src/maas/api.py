@@ -20,6 +20,7 @@ from maas.services.provider_runtime import list_provider_runtime_status, run_pro
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
+    recover_and_requeue_task,
     halt_task,
     pause_agent,
     reassign_task,
@@ -464,6 +465,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return recover_task(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/recover-and-requeue")
+    def task_recover_and_requeue_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return recover_and_requeue_task(connection, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

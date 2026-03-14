@@ -12,6 +12,7 @@ from maas.db import connect, project_paths, run_migrations
 from maas.services.bootstrap import bootstrap_project
 from maas.services.board import fetch_board
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.supervisor import run_supervisor_once
 
 
@@ -41,6 +42,17 @@ def build_parser():
 
     board_parser = subparsers.add_parser("board")
     board_parser.add_argument("--project-root", default=".")
+
+    task_parser = subparsers.add_parser("task")
+    task_subparsers = task_parser.add_subparsers(dest="task_command", required=True)
+
+    task_ready_parser = task_subparsers.add_parser("ready")
+    task_ready_parser.add_argument("--project-root", default=".")
+    task_ready_parser.add_argument("--refresh", action="store_true")
+
+    task_evaluate_parser = task_subparsers.add_parser("evaluate")
+    task_evaluate_parser.add_argument("--project-root", default=".")
+    task_evaluate_parser.add_argument("--task-id", required=True)
 
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--project-root", default=".")
@@ -148,6 +160,19 @@ def command_board(args):
         connection.close()
 
 
+def command_task(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.task_command == "ready":
+            changed = refresh_ready_tasks(connection) if args.refresh else []
+            print(json.dumps({"changed": changed, "tasks": resolve_ready_tasks(connection)}, indent=2))
+        elif args.task_command == "evaluate":
+            print(json.dumps(evaluate_task(connection, paths, args.task_id), indent=2))
+    finally:
+        connection.close()
+
+
 def command_worker(args):
     paths = project_paths(args.project_root)
     artifact_path = os.path.join(paths.root, args.artifact_path)
@@ -249,6 +274,8 @@ def main(argv=None):
         command_supervisor(args)
     elif args.command == "board":
         command_board(args)
+    elif args.command == "task":
+        command_task(args)
     elif args.command == "worker":
         command_worker(args)
     elif args.command == "lifecycle":

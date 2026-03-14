@@ -72,8 +72,10 @@ The system is best described as **an operational prototype with real infrastruct
 
 ### Scheduling and planning
 
-- ready-task resolution exists, but allocator logic is still minimal
-- acceptance criteria plumbing exists, but evaluation is still placeholder-heavy outside the basic path
+- ready-task resolution exists, with dependency/conflict-aware refresh semantics
+- acceptance criteria evaluation exists for `artifact_exists`, `metric`, `db_query`, and `test_passes`
+- task evaluation is exposed through both CLI and API surfaces
+- allocator logic is still minimal
 - no advanced replanning loop yet
 
 ### Providers
@@ -103,13 +105,13 @@ The system is best described as **an operational prototype with real infrastruct
 
 ## Current Development Focus
 
-Current work is moving the dashboard from “refreshing control room” toward “live operator surface” with:
+Current work is moving deeper into the goal/task engine with:
 
-- alert triage actions
-- live snapshot read model
-- server-sent-event driven refresh pulse
+- dependency-aware ready queue refresh
+- acceptance-gate evaluation
+- scheduler-facing task commands and API actions
 
-If those branch changes are not yet merged, they should be treated as in progress rather than available on `main`.
+If the current task-evaluation branch is not yet merged, treat those scheduler features as in progress rather than available on `main`.
 
 ## Practical Assessment
 
@@ -118,8 +120,9 @@ If someone asks “can MAAS be used right now?”, the honest answer is:
 - Yes, as a greenfield local prototype and operator-facing foundation.
 - No, not yet as a fully autonomous production platform.
 
-The project is roughly in the **Batch 5 / early Batch 6 zone** of the roadmap:
+The project is roughly in the **late Batch 2 through Batch 6 foundation zone** of the roadmap:
 
 - Batches 1 and 4 are effectively in place.
-- Batches 2, 3, 5, and 6 are partially in place.
+- Batch 2 is moving from storage/plumbing into real orchestration behavior.
+- Batches 3, 5, and 6 are partially in place.
 - Batches 7 and 8 are mostly ahead of us.

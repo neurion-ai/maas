@@ -13,6 +13,7 @@ from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
+from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
 
 
@@ -149,6 +150,14 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/tasks/ready")
+    def tasks_ready():
+        connection = connect(paths)
+        try:
+            return {"tasks": resolve_ready_tasks(connection)}
+        finally:
+            connection.close()
+
     @app.get("/api/goals/tree")
     def goals_tree():
         connection = connect(paths)
@@ -275,6 +284,24 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return review_task(connection, task_id, payload.actor_id, payload.decision)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/actions/refresh-ready")
+    def task_refresh_ready_action():
+        connection = connect(paths)
+        try:
+            return {"changed": refresh_ready_tasks(connection), "tasks": resolve_ready_tasks(connection)}
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/evaluate")
+    def task_evaluate_action(task_id: str):
+        connection = connect(paths)
+        try:
+            return evaluate_task(connection, paths, task_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

@@ -1,0 +1,80 @@
+"""Project config loading and defaults."""
+
+import os
+
+import yaml
+
+
+DEFAULT_PROJECT_TYPE = "custom"
+
+
+def build_default_project_config(name, description, project_type):
+    return {
+        "project": {
+            "name": name,
+            "description": description,
+            "type": project_type or DEFAULT_PROJECT_TYPE,
+        },
+        "agent_roles": [
+            {
+                "role": "allocator",
+                "description": "Owns planning, prioritization, and assignment.",
+                "permissions": {"board_actions": True, "db_read": ["*"], "db_write": ["*"]},
+            },
+            {
+                "role": "researcher",
+                "description": "Explores problem space and creates supporting artifacts.",
+                "permissions": {"board_actions": False, "db_read": ["*"], "db_write": ["activity_log", "artifacts"]},
+            },
+            {
+                "role": "builder",
+                "description": "Implements tasks and produces runnable outputs.",
+                "permissions": {"board_actions": False, "db_read": ["*"], "db_write": ["activity_log", "artifacts"]},
+            },
+            {
+                "role": "reviewer",
+                "description": "Validates work and resolves review items.",
+                "permissions": {"board_actions": True, "db_read": ["*"], "db_write": ["activity_log", "tasks"]},
+            },
+        ],
+        "plan_templates": [
+            {"name": "Research Investigation", "kind": "universal"},
+            {"name": "Feature Development", "kind": "universal"},
+            {"name": "Bug Fix", "kind": "universal"},
+        ],
+        "acceptance_defaults": {
+            "task": ["artifact_exists"],
+            "goal": ["artifact_exists", "human_review"],
+        },
+        "state_machines": {
+            "task": [
+                "planned",
+                "ready",
+                "assigned",
+                "in_progress",
+                "review",
+                "blocked",
+                "done",
+                "cancelled",
+            ]
+        },
+        "guardrails": {
+            "max_session_cost_usd": 50,
+            "heartbeat_stale_seconds": 90,
+            "board_filters": ["agent", "goal", "priority", "blocked_only", "review_only"],
+        },
+    }
+
+
+def load_project_config(path):
+    with open(path, "r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def save_project_config(path, config):
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        yaml.safe_dump(config, handle, sort_keys=False)
+

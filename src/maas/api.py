@@ -1,5 +1,7 @@
 """FastAPI application for MAAS."""
 
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -15,6 +17,7 @@ from maas.services.lifecycle import end_session, heartbeat, log_activity, produc
 from maas.services.live import build_live_snapshot, sse_stream
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
+from maas.supervisor import run_supervisor_once
 
 
 class LifecycleHeartbeatRequest(BaseModel):
@@ -85,6 +88,10 @@ class AssignTaskRequest(BaseModel):
 class AllocateTasksRequest(BaseModel):
     actor_id: str = "system_allocator"
     limit: int = None
+
+
+class SupervisorRunRequest(BaseModel):
+    allocate_limit: int = None
 
 
 def create_app(project_root="."):
@@ -345,6 +352,15 @@ def create_app(project_root="."):
             return reassign_task(connection, task_id, payload.actor_id, payload.agent_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/supervisor/run")
+    def supervisor_run_action(payload: Optional[SupervisorRunRequest] = None):
+        connection = connect(paths)
+        try:
+            limit = None if payload is None else payload.allocate_limit
+            return run_supervisor_once(connection, allocate_limit=limit)
         finally:
             connection.close()
 

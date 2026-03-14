@@ -88,6 +88,7 @@ The system is best described as **an operational prototype with real infrastruct
 ### Supervisor and resilience
 
 - stale-session detection exists
+- supervisor pass now refreshes readiness and allocates idle agents
 - alert generation exists
 - broader self-healing, DLQ handling, and failure memory remain incomplete
 
@@ -111,9 +112,9 @@ Current work is moving deeper into the goal/task engine with:
 - dependency-aware ready queue refresh
 - idle-agent task allocation
 - acceptance-gate evaluation
-- scheduler-facing task commands and API actions
+- scheduler/supervisor task commands and API actions
 
-If the current allocator branch is not yet merged, treat those assignment features as in progress rather than available on `main`.
+If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
 
 ## Practical Assessment
 
@@ -126,5 +127,5 @@ The project is roughly in the **late Batch 2 through Batch 6 foundation zone** o
 
 - Batches 1 and 4 are effectively in place.
 - Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
-- Batches 3, 5, and 6 are partially in place.
+- Batches 3, 5, and 6 are partially in place, with the supervisor now participating in orchestration.
 - Batches 7 and 8 are mostly ahead of us.

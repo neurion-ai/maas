@@ -1,5 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { fetchBoard, reviewTask, setAgentState } from "../lib/boardApi";
+import { fetchBoard, haltTask, reassignTask, reprioritizeTask, reviewTask, setAgentState } from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { BoardFiltersInput, BoardResponse, FilterOption } from "../types";
 import { BoardColumn } from "../components/BoardColumn";
@@ -119,6 +119,51 @@ export function BoardPage() {
     }
   }
 
+  async function handlePriorityChange(taskId: string, priority: number) {
+    const actionKey = `reprioritize:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await reprioritizeTask(taskId, priority);
+      setNotice(`Priority updated for ${taskId}.`);
+      await loadBoard();
+    } catch {
+      setNotice("Priority update failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleReassign(taskId: string, nextAgentId: string) {
+    const actionKey = `reassign:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await reassignTask(taskId, nextAgentId);
+      setNotice(`Task ${taskId} reassigned to ${nextAgentId}.`);
+      await loadBoard();
+    } catch {
+      setNotice("Task reassignment failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleHalt(taskId: string) {
+    const actionKey = `halt:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await haltTask(taskId);
+      setNotice(`Task ${taskId} halted.`);
+      await loadBoard();
+    } catch {
+      setNotice("Task halt failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <main className="board-shell">
       <section className="hero-panel">
@@ -228,9 +273,13 @@ export function BoardPage() {
           <BoardColumn
             key={column.key}
             column={column}
+            agentOptions={filterOptions.agents}
             pendingActionKey={pendingActionKey}
             onReviewAction={handleReviewAction}
             onAgentAction={handleAgentAction}
+            onPriorityChange={handlePriorityChange}
+            onReassign={handleReassign}
+            onHalt={handleHalt}
           />
         ))}
       </section>

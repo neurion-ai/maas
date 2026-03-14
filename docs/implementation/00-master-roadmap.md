@@ -15,7 +15,7 @@ This roadmap now needs to be read alongside the actual implementation status:
 | 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, simulated worker path |
 | 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
-| 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume actions with audit logging |
+| 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume, halt actions with audit logging and board controls |
 | 7. Resilience and failure memory | Early | Stale-session detection and alerts exist; broader recovery/failure memory is still pending |
 | 8. Brownfield and multi-project | Not started | Still roadmap only |
 
@@ -60,6 +60,7 @@ This repository now includes:
 - task actions for ready queue refresh, allocator assignment, and acceptance evaluation
 - supervisor run endpoint and CLI orchestration pass
 - control-room actions for manual supervisor runs and idle-agent assignment
+- board controls for reprioritize, reassign, pause/resume, review, and halt
 - lifecycle API/CLI surface
 - a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, and Activity views
 

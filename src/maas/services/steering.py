@@ -88,6 +88,70 @@ def review_task(connection, task_id, actor_id, decision):
     return {"task_id": task_id, "decision": decision}
 
 
+def halt_task(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    if task["status"] in ("done", "cancelled"):
+        raise ValueError("Task cannot be halted from status {0}".format(task["status"]))
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'cancelled', review_state = 'halted_by_operator', updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    connection.execute(
+        """
+        UPDATE sessions
+        SET status = 'cancelled', status_message = 'Halted by operator', ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ? AND status = 'active'
+        """,
+        (task_id,),
+    )
+    if task["assigned_agent_id"]:
+        connection.execute(
+            """
+            UPDATE agents
+            SET status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'idle' END,
+                current_task_id = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE agent_id = ? AND current_task_id = ?
+            """,
+            (task["assigned_agent_id"], task_id),
+        )
+
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "halt_task",
+        "task",
+        task_id,
+        {"previous_status": task["status"]},
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "halted",
+        "Task halted by operator.",
+        severity="warning",
+    )
+    connection.commit()
+    return {"task_id": task_id, "status": "cancelled"}
+
+
 def reprioritize_task(connection, task_id, actor_id, priority):
     task = connection.execute(
         "SELECT task_id, project_id, assigned_agent_id FROM tasks WHERE task_id = ?",
@@ -122,11 +186,13 @@ def reprioritize_task(connection, task_id, actor_id, priority):
 
 def reassign_task(connection, task_id, actor_id, agent_id):
     task = connection.execute(
-        "SELECT task_id, project_id FROM tasks WHERE task_id = ?",
+        "SELECT task_id, project_id, status FROM tasks WHERE task_id = ?",
         (task_id,),
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
+    if task["status"] == "in_progress":
+        raise ValueError("In-progress tasks cannot be reassigned")
     agent = connection.execute(
         "SELECT agent_id FROM agents WHERE agent_id = ? AND project_id = ?",
         (agent_id, task["project_id"]),

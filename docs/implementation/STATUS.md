@@ -51,6 +51,7 @@ The system is best described as **an operational prototype with real infrastruct
   - reprioritize
   - reassign
   - agent pause/resume
+  - halt
 - audit logging for steering actions
 
 ### Dashboard
@@ -63,6 +64,7 @@ The system is best described as **an operational prototype with real infrastruct
 - activity feed
 - overview control for manual supervisor runs
 - agent-roster control for assigning the next task to idle agents
+- board controls for reprioritize, reassign, halt, review, and pause/resume
 - React control-room shell with:
   - Overview
   - Board
@@ -97,6 +99,7 @@ The system is best described as **an operational prototype with real infrastruct
 ### Security
 
 - operator actions are audited
+- board-driven steering now covers most of the Batch 6 control surface
 - full permission enforcement and capability-token infrastructure are not complete
 
 ## What Is Not Started
@@ -116,6 +119,7 @@ Current work is moving deeper into the goal/task engine with:
 - acceptance-gate evaluation
 - scheduler/supervisor task commands and API actions
 - operator controls for manual supervisor runs and assign-next actions
+- board-side steering controls for reprioritize, reassign, and halt
 
 If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
 
@@ -125,6 +129,8 @@ If someone asks “can MAAS be used right now?”, the honest answer is:
 
 - Yes, as a greenfield local prototype and operator-facing foundation.
 - No, not yet as a fully autonomous production platform.
+
+If the current board-steering branch is not yet merged, treat the inline reprioritize/reassign/halt controls and cancelled column as in progress rather than available on `main`.
 
 The project is roughly in the **late Batch 2 through Batch 6 foundation zone** of the roadmap:
 

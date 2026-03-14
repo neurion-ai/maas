@@ -116,6 +116,94 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(matching_cards[0]["priority"], 97)
             self.assertEqual(matching_cards[0]["status"], "in_progress")
 
+    def test_reassign_and_halt_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Reassign Halt Test", description="Reassign and halt", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_payload = client.get("/api/board", params={"search": "Define project workspace contracts"}).json()
+            task = [
+                task
+                for column in board_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Define project workspace contracts"
+            ][0]
+
+            reassign_response = client.post(
+                "/api/tasks/{0}/actions/reassign".format(task["task_id"]),
+                json={"actor_id": "agent_allocator", "agent_id": "agent_builder"},
+            )
+            self.assertEqual(reassign_response.status_code, 200)
+
+            after_reassign = client.get("/api/board", params={"search": "Define project workspace contracts"}).json()
+            reassigned_card = [
+                task
+                for column in after_reassign["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Define project workspace contracts"
+            ][0]
+            self.assertEqual(reassigned_card["agent"]["id"], "agent_builder")
+
+            in_progress_board = client.get("/api/board", params={"search": "Implement FastAPI board endpoint"}).json()
+            in_progress_task = [
+                task
+                for column in in_progress_board["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Implement FastAPI board endpoint"
+            ][0]
+
+            invalid_reassign_response = client.post(
+                "/api/tasks/{0}/actions/reassign".format(in_progress_task["task_id"]),
+                json={"actor_id": "agent_allocator", "agent_id": "agent_researcher"},
+            )
+            self.assertEqual(invalid_reassign_response.status_code, 400)
+
+            halt_response = client.post(
+                "/api/tasks/{0}/actions/halt".format(in_progress_task["task_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(halt_response.status_code, 200)
+
+            halted_board = client.get("/api/board", params={"search": "Implement FastAPI board endpoint"}).json()
+            halted_card = [
+                task
+                for column in halted_board["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Implement FastAPI board endpoint"
+            ][0]
+            self.assertEqual(halted_card["status"], "cancelled")
+            self.assertEqual(halted_card["review_state"], "halted_by_operator")
+
+    def test_halt_preserves_paused_agent_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Pause Halt Test", description="Pause then halt", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            pause_response = client.post(
+                "/api/agents/agent_builder/actions/pause",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(pause_response.status_code, 200)
+
+            halted_task = client.get("/api/board", params={"search": "Implement FastAPI board endpoint"}).json()
+            blocked_card = [
+                task
+                for column in halted_task["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Implement FastAPI board endpoint"
+            ][0]
+
+            halt_response = client.post(
+                "/api/tasks/{0}/actions/halt".format(blocked_card["task_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(halt_response.status_code, 200)
+
+            agents_payload = client.get("/api/agents").json()
+            builder = [agent for agent in agents_payload["agents"] if agent["agent_id"] == "agent_builder"][0]
+            self.assertEqual(builder["status"], "paused")
+            self.assertIsNone(builder["current_task_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

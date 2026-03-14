@@ -8,7 +8,8 @@ const COLUMN_TITLES: Record<BoardColumnKey, string> = {
   in_progress: "In Progress",
   review: "Review",
   blocked: "Blocked",
-  done: "Done"
+  done: "Done",
+  cancelled: "Cancelled"
 };
 
 const FALLBACK_BOARD: BoardResponse = {
@@ -170,6 +171,11 @@ const FALLBACK_BOARD: BoardResponse = {
           }
         }
       ]
+    },
+    {
+      key: "cancelled",
+      title: COLUMN_TITLES.cancelled,
+      tasks: []
     }
   ],
   filters: ["search", "blocked_only", "review_only", "priority", "agent", "goal"]
@@ -238,7 +244,7 @@ function buildBoardQuery(filters: BoardFiltersInput) {
   return query.toString();
 }
 
-async function postJson(path: string, body: Record<string, string>) {
+async function postJson(path: string, body: Record<string, string | number>) {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -279,6 +285,26 @@ export async function reviewTask(taskId: string, decision: "approve" | "reject")
 
 export async function setAgentState(agentId: string, action: "pause" | "resume") {
   await postJson(`/api/agents/${agentId}/actions/${action}`, {
+    actor_id: DEFAULT_ACTOR_ID
+  });
+}
+
+export async function reprioritizeTask(taskId: string, priority: number) {
+  await postJson(`/api/tasks/${taskId}/actions/reprioritize`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    priority
+  });
+}
+
+export async function reassignTask(taskId: string, agentId: string) {
+  await postJson(`/api/tasks/${taskId}/actions/reassign`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    agent_id: agentId
+  });
+}
+
+export async function haltTask(taskId: string) {
+  await postJson(`/api/tasks/${taskId}/actions/halt`, {
     actor_id: DEFAULT_ACTOR_ID
   });
 }

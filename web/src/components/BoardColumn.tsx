@@ -1,14 +1,27 @@
-import type { BoardColumn as BoardColumnType } from "../types";
+import type { BoardColumn as BoardColumnType, FilterOption } from "../types";
 import { TaskCard } from "./TaskCard";
 
 interface BoardColumnProps {
   column: BoardColumnType;
+  agentOptions?: FilterOption[];
   pendingActionKey?: string | null;
   onReviewAction?: (taskId: string, decision: "approve" | "reject") => void;
   onAgentAction?: (agentId: string, action: "pause" | "resume") => void;
+  onPriorityChange?: (taskId: string, priority: number) => void;
+  onReassign?: (taskId: string, agentId: string) => void;
+  onHalt?: (taskId: string) => void;
 }
 
-export function BoardColumn({ column, pendingActionKey, onReviewAction, onAgentAction }: BoardColumnProps) {
+export function BoardColumn({
+  column,
+  agentOptions,
+  pendingActionKey,
+  onReviewAction,
+  onAgentAction,
+  onPriorityChange,
+  onReassign,
+  onHalt
+}: BoardColumnProps) {
   return (
     <section className="board-column">
       <header className="board-column__header">
@@ -23,9 +36,13 @@ export function BoardColumn({ column, pendingActionKey, onReviewAction, onAgentA
           <TaskCard
             key={task.task_id}
             task={task}
+            agentOptions={agentOptions}
             pendingActionKey={pendingActionKey}
             onReviewAction={onReviewAction}
             onAgentAction={onAgentAction}
+            onPriorityChange={onPriorityChange}
+            onReassign={onReassign}
+            onHalt={onHalt}
           />
         ))}
       </div>

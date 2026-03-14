@@ -1,4 +1,4 @@
-import type { BoardTask } from "../types";
+import type { BoardTask, FilterOption } from "../types";
 
 function formatPriority(priority: number) {
   if (priority >= 90) {
@@ -38,25 +38,43 @@ function formatAge(hours?: number | null) {
 
 interface TaskCardProps {
   task: BoardTask;
+  agentOptions?: FilterOption[];
   pendingActionKey?: string | null;
   onReviewAction?: (taskId: string, decision: "approve" | "reject") => void;
   onAgentAction?: (agentId: string, action: "pause" | "resume") => void;
+  onPriorityChange?: (taskId: string, priority: number) => void;
+  onReassign?: (taskId: string, agentId: string) => void;
+  onHalt?: (taskId: string) => void;
 }
 
 export function TaskCard({
   task,
+  agentOptions = [],
   pendingActionKey,
   onReviewAction,
-  onAgentAction
+  onAgentAction,
+  onPriorityChange,
+  onReassign,
+  onHalt
 }: TaskCardProps) {
   const reviewApproveKey = `review:${task.task_id}:approve`;
   const reviewRejectKey = `review:${task.task_id}:reject`;
   const agentActionKey = task.agent?.id ? `agent:${task.agent.id}:${task.agent.status === "paused" ? "resume" : "pause"}` : null;
+  const reprioritizeKey = `reprioritize:${task.task_id}`;
+  const reassignKey = `reassign:${task.task_id}`;
+  const haltKey = `halt:${task.task_id}`;
   const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
   const isPendingReviewReject = pendingActionKey === reviewRejectKey;
   const isPendingAgentAction = pendingActionKey === agentActionKey;
+  const isPendingReprioritize = pendingActionKey === reprioritizeKey;
+  const isPendingReassign = pendingActionKey === reassignKey;
+  const isPendingHalt = pendingActionKey === haltKey;
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
+  const canSteerTask = task.status !== "done" && task.status !== "cancelled";
+  const canReassign = canSteerTask && task.status !== "in_progress" && !!onReassign && agentOptions.length > 0;
+  const canReprioritize = canSteerTask && !!onPriorityChange;
+  const canHalt = canSteerTask && !!onHalt;
 
   return (
     <article className={`task-card task-card--${task.status}`}>
@@ -91,7 +109,7 @@ export function TaskCard({
           <dd>{task.review_state ?? "Not in review"}</dd>
         </div>
       </dl>
-      {(canReview || canToggleAgent) && (
+      {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt) && (
         <div className="task-card__actions">
           {canReview && (
             <>
@@ -113,6 +131,41 @@ export function TaskCard({
               </button>
             </>
           )}
+          {canReprioritize && (
+            <label className="task-inline-control">
+              <span>Priority</span>
+              <select
+                value={String(task.priority)}
+                disabled={isPendingReprioritize}
+                onChange={(event) => onPriorityChange?.(task.task_id, Number(event.target.value))}
+              >
+                {[50, 75, 90, 100].map((value) => (
+                  <option key={value} value={value}>
+                    {value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {canReassign && (
+            <label className="task-inline-control">
+              <span>Assign</span>
+              <select
+                value={task.agent?.id ?? ""}
+                disabled={isPendingReassign}
+                onChange={(event) => onReassign?.(task.task_id, event.target.value)}
+              >
+                <option value="" disabled>
+                  Select agent
+                </option>
+                {agentOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           {canToggleAgent && task.agent?.id && (
             <button
               type="button"
@@ -129,6 +182,16 @@ export function TaskCard({
                 : task.agent?.status === "paused"
                   ? "Resume Agent"
                   : "Pause Agent"}
+            </button>
+          )}
+          {canHalt && (
+            <button
+              type="button"
+              className="task-action task-action--reject"
+              disabled={isPendingHalt}
+              onClick={() => onHalt?.(task.task_id)}
+            >
+              {isPendingHalt ? "Halting..." : "Halt task"}
             </button>
           )}
         </div>

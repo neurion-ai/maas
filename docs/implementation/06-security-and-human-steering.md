@@ -25,4 +25,4 @@
 
 - forbidden action attempts are denied or escalated
 - board-driven actions create audit entries
-
+- board UI exposes steering controls for reprioritize, reassign, pause/resume, review, and halt

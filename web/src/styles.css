@@ -673,6 +673,27 @@ select {
   gap: 10px;
 }
 
+.task-inline-control {
+  display: grid;
+  gap: 6px;
+  min-width: 120px;
+}
+
+.task-inline-control span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.task-inline-control select {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--ink);
+}
+
 .task-action {
   border: 1px solid var(--line);
   background: #fff;

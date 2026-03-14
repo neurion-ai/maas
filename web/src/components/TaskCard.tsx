@@ -36,7 +36,28 @@ function formatAge(hours?: number | null) {
   return `${(hours / 24).toFixed(1)}d old`;
 }
 
-export function TaskCard({ task }: { task: BoardTask }) {
+interface TaskCardProps {
+  task: BoardTask;
+  pendingActionKey?: string | null;
+  onReviewAction?: (taskId: string, decision: "approve" | "reject") => void;
+  onAgentAction?: (agentId: string, action: "pause" | "resume") => void;
+}
+
+export function TaskCard({
+  task,
+  pendingActionKey,
+  onReviewAction,
+  onAgentAction
+}: TaskCardProps) {
+  const reviewApproveKey = `review:${task.task_id}:approve`;
+  const reviewRejectKey = `review:${task.task_id}:reject`;
+  const agentActionKey = task.agent?.id ? `agent:${task.agent.id}:${task.agent.status === "paused" ? "resume" : "pause"}` : null;
+  const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
+  const isPendingReviewReject = pendingActionKey === reviewRejectKey;
+  const isPendingAgentAction = pendingActionKey === agentActionKey;
+  const canReview = task.status === "review" && !!onReviewAction;
+  const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
+
   return (
     <article className={`task-card task-card--${task.status}`}>
       <div className="task-card__meta">
@@ -70,6 +91,48 @@ export function TaskCard({ task }: { task: BoardTask }) {
           <dd>{task.review_state ?? "Not in review"}</dd>
         </div>
       </dl>
+      {(canReview || canToggleAgent) && (
+        <div className="task-card__actions">
+          {canReview && (
+            <>
+              <button
+                type="button"
+                className="task-action task-action--approve"
+                disabled={isPendingReviewApprove || isPendingReviewReject}
+                onClick={() => onReviewAction?.(task.task_id, "approve")}
+              >
+                {isPendingReviewApprove ? "Approving..." : "Approve"}
+              </button>
+              <button
+                type="button"
+                className="task-action task-action--reject"
+                disabled={isPendingReviewApprove || isPendingReviewReject}
+                onClick={() => onReviewAction?.(task.task_id, "reject")}
+              >
+                {isPendingReviewReject ? "Rejecting..." : "Reject"}
+              </button>
+            </>
+          )}
+          {canToggleAgent && task.agent?.id && (
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              disabled={isPendingAgentAction}
+              onClick={() =>
+                onAgentAction?.(task.agent!.id, task.agent?.status === "paused" ? "resume" : "pause")
+              }
+            >
+              {isPendingAgentAction
+                ? task.agent?.status === "paused"
+                  ? "Resuming..."
+                  : "Pausing..."
+                : task.agent?.status === "paused"
+                  ? "Resume Agent"
+                  : "Pause Agent"}
+            </button>
+          )}
+        </div>
+      )}
     </article>
   );
 }

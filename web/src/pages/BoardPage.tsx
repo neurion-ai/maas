@@ -1,76 +1,114 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
-import { fetchBoard } from "../lib/boardApi";
-import type { BoardResponse } from "../types";
+import { fetchBoard, reviewTask, setAgentState } from "../lib/boardApi";
+import type { BoardFiltersInput, BoardResponse, FilterOption } from "../types";
 import { BoardColumn } from "../components/BoardColumn";
 import { StatCard } from "../components/StatCard";
+
+const PRIORITY_OPTIONS = [
+  { value: "0", label: "Any priority" },
+  { value: "50", label: "Medium and up" },
+  { value: "75", label: "High and up" },
+  { value: "90", label: "Critical only" }
+];
 
 export function BoardPage() {
   const [board, setBoard] = useState<BoardResponse | null>(null);
   const [query, setQuery] = useState("");
+  const [blockedOnly, setBlockedOnly] = useState(false);
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [priorityMin, setPriorityMin] = useState("0");
+  const [agentId, setAgentId] = useState("");
+  const [goalId, setGoalId] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
 
-  useEffect(() => {
-    let isMounted = true;
+  const boardFilters: BoardFiltersInput = useMemo(
+    () => ({
+      search: deferredQuery.trim() || undefined,
+      blockedOnly,
+      reviewOnly,
+      priorityMin: Number(priorityMin) || undefined,
+      agentId: agentId || undefined,
+      goalId: goalId || undefined
+    }),
+    [agentId, blockedOnly, deferredQuery, goalId, priorityMin, reviewOnly]
+  );
 
-    async function loadBoard() {
-      setIsRefreshing(true);
-      const nextBoard = await fetchBoard();
-      if (!isMounted) {
-        return;
-      }
+  async function loadBoard(signal?: AbortSignal) {
+    setIsRefreshing(true);
+    try {
+      const nextBoard = await fetchBoard(boardFilters, signal);
       startTransition(() => {
         setBoard(nextBoard);
       });
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        setNotice("Board refresh failed; showing the most recent available data.");
+      }
+    } finally {
       setIsRefreshing(false);
     }
+  }
 
-    void loadBoard();
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadBoard(controller.signal);
     const intervalId = window.setInterval(() => {
-      void loadBoard();
+      void loadBoard(controller.signal);
     }, 15000);
 
     return () => {
-      isMounted = false;
+      controller.abort();
       window.clearInterval(intervalId);
     };
-  }, []);
-
-  const filteredBoard = useMemo(() => {
-    if (!board) {
-      return null;
-    }
-
-    const normalizedQuery = deferredQuery.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return board;
-    }
-
-    return {
-      ...board,
-      columns: board.columns.map((column) => ({
-        ...column,
-        tasks: column.tasks.filter((task) => {
-          return [
-            task.title,
-            task.goal?.title ?? "",
-            task.agent?.name ?? "",
-            task.task_id
-          ]
-            .join(" ")
-            .toLowerCase()
-            .includes(normalizedQuery);
-        })
-      }))
-    };
-  }, [board, deferredQuery]);
+  }, [boardFilters]);
 
   const visibleTaskCount = useMemo(() => {
-    if (!filteredBoard) {
+    if (!board) {
       return 0;
     }
-    return filteredBoard.columns.reduce((sum, column) => sum + column.tasks.length, 0);
-  }, [filteredBoard]);
+    return board.columns.reduce((sum, column) => sum + column.tasks.length, 0);
+  }, [board]);
+
+  const filterOptions = useMemo(() => {
+    const empty: FilterOption[] = [];
+    return {
+      agents: board?.filter_options?.agents ?? empty,
+      goals: board?.filter_options?.goals ?? empty
+    };
+  }, [board]);
+
+  async function handleReviewAction(taskId: string, decision: "approve" | "reject") {
+    const actionKey = `review:${taskId}:${decision}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await reviewTask(taskId, decision);
+      setNotice(`Review ${decision}ed for ${taskId}.`);
+      await loadBoard();
+    } catch {
+      setNotice("Review action is not available yet on this backend.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleAgentAction(nextAgentId: string, action: "pause" | "resume") {
+    const actionKey = `agent:${nextAgentId}:${action}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await setAgentState(nextAgentId, action);
+      setNotice(`Agent ${action} requested for ${nextAgentId}.`);
+      await loadBoard();
+    } catch {
+      setNotice("Agent steering is not available yet on this backend.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
 
   return (
     <main className="board-shell">
@@ -99,6 +137,66 @@ export function BoardPage() {
         </div>
       </section>
 
+      <section className="filters-panel">
+        <div className="filters-panel__header">
+          <div>
+            <h2>Board filters</h2>
+            <p>These are sent to the server when supported and degrade safely when they are not.</p>
+          </div>
+          {notice ? <p className="filters-panel__notice">{notice}</p> : null}
+        </div>
+        <div className="filters-panel__grid">
+          <label className="filter-field">
+            <span>Priority</span>
+            <select value={priorityMin} onChange={(event) => setPriorityMin(event.target.value)}>
+              {PRIORITY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Agent</span>
+            <select value={agentId} onChange={(event) => setAgentId(event.target.value)}>
+              <option value="">All agents</option>
+              {filterOptions.agents.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="filter-field">
+            <span>Goal</span>
+            <select value={goalId} onChange={(event) => setGoalId(event.target.value)}>
+              <option value="">All goals</option>
+              {filterOptions.goals.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="toggle-row">
+            <button
+              type="button"
+              className={`toggle-pill ${blockedOnly ? "is-active" : ""}`}
+              onClick={() => setBlockedOnly((current) => !current)}
+            >
+              Blocked only
+            </button>
+            <button
+              type="button"
+              className={`toggle-pill ${reviewOnly ? "is-active" : ""}`}
+              onClick={() => setReviewOnly((current) => !current)}
+            >
+              Review only
+            </button>
+          </div>
+        </div>
+      </section>
+
       <section className="stats-grid">
         <StatCard label="Tasks in view" value={visibleTaskCount} />
         <StatCard label="Active agents" value={board?.summary.active_agents ?? 0} tone="good" />
@@ -117,8 +215,14 @@ export function BoardPage() {
       </section>
 
       <section className="board-grid" aria-label="MAAS task board">
-        {(filteredBoard?.columns ?? []).map((column) => (
-          <BoardColumn key={column.key} column={column} />
+        {(board?.columns ?? []).map((column) => (
+          <BoardColumn
+            key={column.key}
+            column={column}
+            pendingActionKey={pendingActionKey}
+            onReviewAction={handleReviewAction}
+            onAgentAction={handleAgentAction}
+          />
         ))}
       </section>
     </main>

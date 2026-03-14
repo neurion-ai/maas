@@ -1,6 +1,6 @@
 """FastAPI application for MAAS."""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -9,6 +9,7 @@ from maas.paths import ProjectPaths
 from maas.providers import list_providers
 from maas.services.board import fetch_board
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
 
 
 class LifecycleHeartbeatRequest(BaseModel):
@@ -49,6 +50,25 @@ class EndSessionRequest(BaseModel):
     summary: str
 
 
+class ReviewTaskRequest(BaseModel):
+    actor_id: str
+    decision: str
+
+
+class ReprioritizeTaskRequest(BaseModel):
+    actor_id: str
+    priority: int
+
+
+class ReassignTaskRequest(BaseModel):
+    actor_id: str
+    agent_id: str
+
+
+class AgentActionRequest(BaseModel):
+    actor_id: str
+
+
 def create_app(project_root="."):
     app = FastAPI(title="MAAS", version="0.1.0")
     paths = ProjectPaths(project_root)
@@ -65,10 +85,27 @@ def create_app(project_root="."):
         return {"status": "ok", "project_root": paths.root}
 
     @app.get("/api/board")
-    def board():
+    def board(
+        search: str = "",
+        agent_id: str = None,
+        goal_id: str = None,
+        priority_min: int = None,
+        blocked_only: bool = False,
+        review_only: bool = False,
+    ):
         connection = connect(paths)
         try:
-            return fetch_board(connection)
+            return fetch_board(
+                connection,
+                filters={
+                    "search": search,
+                    "agent_id": agent_id,
+                    "goal_id": goal_id,
+                    "priority_min": priority_min,
+                    "blocked_only": blocked_only,
+                    "review_only": review_only,
+                },
+            )
         finally:
             connection.close()
 
@@ -203,6 +240,56 @@ def create_app(project_root="."):
         try:
             end_session(connection, payload.session_id, payload.outcome, payload.summary)
             return {"status": "ok"}
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/review")
+    def task_review_action(task_id: str, payload: ReviewTaskRequest):
+        connection = connect(paths)
+        try:
+            return review_task(connection, task_id, payload.actor_id, payload.decision)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/reprioritize")
+    def task_reprioritize_action(task_id: str, payload: ReprioritizeTaskRequest):
+        connection = connect(paths)
+        try:
+            return reprioritize_task(connection, task_id, payload.actor_id, payload.priority)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/reassign")
+    def task_reassign_action(task_id: str, payload: ReassignTaskRequest):
+        connection = connect(paths)
+        try:
+            return reassign_task(connection, task_id, payload.actor_id, payload.agent_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/agents/{agent_id}/actions/pause")
+    def agent_pause_action(agent_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return pause_agent(connection, agent_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/agents/{agent_id}/actions/resume")
+    def agent_resume_action(agent_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return resume_agent(connection, agent_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 

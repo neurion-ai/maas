@@ -1,4 +1,6 @@
-import type { BoardColumnKey, BoardResponse } from "../types";
+import type { BoardColumnKey, BoardFiltersInput, BoardResponse, FilterOption } from "../types";
+
+const DEFAULT_ACTOR_ID = "agent_allocator";
 
 const COLUMN_TITLES: Record<BoardColumnKey, string> = {
   planned: "Planned",
@@ -169,8 +171,33 @@ const FALLBACK_BOARD: BoardResponse = {
         }
       ]
     }
-  ]
+  ],
+  filters: ["search", "blocked_only", "review_only", "priority", "agent", "goal"]
 };
+
+function deriveFilterOptions(payload: BoardResponse): BoardResponse["filter_options"] {
+  const agents = new Map<string, string>();
+  const goals = new Map<string, string>();
+
+  payload.columns.forEach((column) => {
+    column.tasks.forEach((task) => {
+      if (task.agent?.id && task.agent.name) {
+        agents.set(task.agent.id, task.agent.name);
+      }
+      if (task.goal?.id && task.goal.title) {
+        goals.set(task.goal.id, task.goal.title);
+      }
+    });
+  });
+
+  const toOptions = (entries: Map<string, string>): FilterOption[] =>
+    Array.from(entries.entries()).map(([id, label]) => ({ id, label }));
+
+  return {
+    agents: toOptions(agents),
+    goals: toOptions(goals)
+  };
+}
 
 function normalizeBoard(payload: BoardResponse): BoardResponse {
   const columns = payload.columns.map((column) => ({
@@ -180,20 +207,78 @@ function normalizeBoard(payload: BoardResponse): BoardResponse {
 
   return {
     ...payload,
-    columns
+    columns,
+    filters: payload.filters ?? FALLBACK_BOARD.filters,
+    filter_options: payload.filter_options ?? deriveFilterOptions({ ...payload, columns })
   };
 }
 
-export async function fetchBoard(signal?: AbortSignal): Promise<BoardResponse> {
+function buildBoardQuery(filters: BoardFiltersInput) {
+  const query = new URLSearchParams();
+
+  if (filters.search) {
+    query.set("search", filters.search);
+  }
+  if (filters.blockedOnly) {
+    query.set("blocked_only", "true");
+  }
+  if (filters.reviewOnly) {
+    query.set("review_only", "true");
+  }
+  if (filters.priorityMin && filters.priorityMin > 0) {
+    query.set("priority_min", String(filters.priorityMin));
+  }
+  if (filters.agentId) {
+    query.set("agent_id", filters.agentId);
+  }
+  if (filters.goalId) {
+    query.set("goal_id", filters.goalId);
+  }
+
+  return query.toString();
+}
+
+async function postJson(path: string, body: Record<string, string>) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+}
+
+export async function fetchBoard(filters: BoardFiltersInput = {}, signal?: AbortSignal): Promise<BoardResponse> {
   try {
-    const response = await fetch("/api/board", { signal });
+    const query = buildBoardQuery(filters);
+    const response = await fetch(query ? `/api/board?${query}` : "/api/board", { signal });
     if (!response.ok) {
       throw new Error(`Unexpected status: ${response.status}`);
     }
 
     const payload = (await response.json()) as BoardResponse;
     return normalizeBoard(payload);
-  } catch {
-    return FALLBACK_BOARD;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    return normalizeBoard(FALLBACK_BOARD);
   }
+}
+
+export async function reviewTask(taskId: string, decision: "approve" | "reject") {
+  await postJson(`/api/tasks/${taskId}/actions/review`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    decision
+  });
+}
+
+export async function setAgentState(agentId: string, action: "pause" | "resume") {
+  await postJson(`/api/agents/${agentId}/actions/${action}`, {
+    actor_id: DEFAULT_ACTOR_ID
+  });
 }

@@ -158,9 +158,18 @@ def restore_quarantined_session_artifacts(connection, project_paths, session_id)
         if os.path.exists(destination_path):
             raise ValueError("Restore destination already exists")
 
-    for source_path, destination_path in planned_moves.items():
-        os.makedirs(os.path.dirname(destination_path), exist_ok=True)
-        shutil.move(source_path, destination_path)
+    moved_paths = []
+    try:
+        for source_path, destination_path in planned_moves.items():
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            shutil.move(source_path, destination_path)
+            moved_paths.append((source_path, destination_path))
+    except OSError:
+        for rollback_source, rollback_destination in reversed(moved_paths):
+            if os.path.exists(rollback_destination) and not os.path.exists(rollback_source):
+                os.makedirs(os.path.dirname(rollback_source), exist_ok=True)
+                shutil.move(rollback_destination, rollback_source)
+        raise
 
     restored = []
     for artifact_id, metadata, original_path in rows_to_restore:

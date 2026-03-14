@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -331,6 +332,122 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertTrue(os.path.exists(quarantined_artifact["path"]))
             with open(artifact_path, "r", encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "existing destination\n")
+
+    def test_restore_failure_artifacts_rolls_back_partial_moves_when_restore_fails(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Failure Restore Rollback Test",
+                description="Failure restore rollback test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting failure restore rollback test",
+                )
+                artifact_path_one = os.path.join(result["paths"].artifacts_dir, "failure-restore-rollback-one.txt")
+                artifact_path_two = os.path.join(result["paths"].artifacts_dir, "failure-restore-rollback-two.txt")
+                with open(artifact_path_one, "w", encoding="utf-8") as handle:
+                    handle.write("rollback one\n")
+                with open(artifact_path_two, "w", encoding="utf-8") as handle:
+                    handle.write("rollback two\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path_one,
+                )
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path_two,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with rollback restore coverage",
+                    project_paths=result["paths"],
+                )
+                failure_id = connection.execute(
+                    """
+                    SELECT failure_id
+                    FROM failure_log
+                    WHERE session_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_id,),
+                ).fetchone()["failure_id"]
+                quarantined_before = connection.execute(
+                    """
+                    SELECT artifact_id, path, metadata_json
+                    FROM artifacts
+                    WHERE session_id = ?
+                    ORDER BY artifact_id ASC
+                    """,
+                    (session_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            move_calls = {"count": 0}
+            real_move = shutil.move
+
+            def flaky_move(source_path, destination_path, *args, **kwargs):
+                move_calls["count"] += 1
+                if move_calls["count"] == 2:
+                    raise OSError("simulated restore failure")
+                return real_move(source_path, destination_path, *args, **kwargs)
+
+            client = TestClient(create_app(tmpdir), raise_server_exceptions=False)
+            with patch("maas.services.failure_memory.shutil.move", side_effect=flaky_move):
+                restore_response = client.post(
+                    "/api/failures/{0}/actions/restore-artifacts".format(failure_id),
+                    json={"actor_id": "agent_allocator"},
+                )
+
+            self.assertEqual(restore_response.status_code, 500)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                quarantined_after = connection.execute(
+                    """
+                    SELECT artifact_id, path, metadata_json
+                    FROM artifacts
+                    WHERE session_id = ?
+                    ORDER BY artifact_id ASC
+                    """,
+                    (session_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(
+                [artifact["path"] for artifact in quarantined_after],
+                [artifact["path"] for artifact in quarantined_before],
+            )
+            for artifact in quarantined_after:
+                metadata = json.loads(artifact["metadata_json"] or "{}")
+                self.assertTrue(metadata["quarantined"])
+                self.assertTrue(os.path.exists(artifact["path"]))
+            self.assertFalse(os.path.exists(artifact_path_one))
+            self.assertFalse(os.path.exists(artifact_path_two))
 
     def test_live_snapshot_includes_open_escalation_count(self):
         with tempfile.TemporaryDirectory() as tmpdir:

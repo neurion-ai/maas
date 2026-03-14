@@ -14,9 +14,9 @@ export function FailuresPage() {
     let mounted = true;
 
     async function loadFailures() {
-      const payload = await fetchFailures();
+      const failuresPayload = await fetchFailures();
       if (mounted) {
-        setFailures(payload);
+        setFailures(failuresPayload);
       }
     }
 
@@ -31,7 +31,8 @@ export function FailuresPage() {
     setNotice(null);
     try {
       const payload = await restoreFailureArtifacts(failureId);
-      setFailures(await fetchFailures());
+      const failuresPayload = await fetchFailures();
+      setFailures(failuresPayload);
       setNotice(`Restored ${payload.restored_count} quarantined artifact(s) for ${failureId}.`);
     } catch {
       setNotice("Artifact restore failed; keep the quarantined files under review.");
@@ -71,6 +72,12 @@ export function FailuresPage() {
                 <div>
                   <strong>{item.task_title ?? item.task_id ?? "Unlinked failure"}</strong>
                   <p>{item.summary}</p>
+                  {item.retry_count ? (
+                    <p>
+                      Auto retries: {item.retry_count}
+                      {item.last_retry_reason ? ` (${item.last_retry_reason})` : ""}
+                    </p>
+                  ) : null}
                   {item.quarantined_artifact_count ? (
                     <p>
                       Quarantined artifacts: {item.quarantined_artifact_count}

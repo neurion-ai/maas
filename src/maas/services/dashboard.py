@@ -73,6 +73,8 @@ def fetch_overview(connection):
                 tasks.title,
                 tasks.status,
                 tasks.priority,
+                tasks.retry_count,
+                tasks.last_retry_reason,
                 goals.title AS goal_title,
                 agents.display_name AS agent_name
             FROM tasks

@@ -63,6 +63,10 @@ def build_default_project_config(name, description, project_type):
             "heartbeat_stale_seconds": 90,
             "board_filters": ["agent", "goal", "priority", "blocked_only", "review_only"],
         },
+        "recovery": {
+            "auto_retry_timeout_sessions": False,
+            "max_timed_out_retries": 1,
+        },
     }
 
 
@@ -77,4 +81,3 @@ def save_project_config(path, config):
         os.makedirs(directory, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         yaml.safe_dump(config, handle, sort_keys=False)
-

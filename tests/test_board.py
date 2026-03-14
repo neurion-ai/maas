@@ -81,6 +81,39 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertEqual(matching_cards[0]["failure_count"], 1)
             self.assertIsNotNone(matching_cards[0]["latest_failure_at"])
 
+    def test_board_cards_include_retry_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Retry Test", description="Board retry test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 2,
+                        last_retry_at = CURRENT_TIMESTAMP,
+                        last_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            matching_cards = [
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id
+            ]
+            self.assertEqual(matching_cards[0]["retry_count"], 2)
+            self.assertEqual(matching_cards[0]["last_retry_reason"], "session_timed_out")
+            self.assertIsNotNone(matching_cards[0]["last_retry_at"])
+
 
 if __name__ == "__main__":
     unittest.main()

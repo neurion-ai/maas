@@ -122,6 +122,49 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
             self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
+    def test_failures_api_exposes_retry_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Failure Retry API Test", description="Failure retry api test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1,
+                        last_retry_at = CURRENT_TIMESTAMP,
+                        last_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    )
+                    SELECT ?, project_id, ?, session_id, agent_id, 'session_timed_out', 'Retry-visible failure', '{}'
+                    FROM sessions
+                    WHERE task_id = ?
+                    LIMIT 1
+                    """,
+                    ("fail_retry_visible", task_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            failures_payload = client.get("/api/failures").json()
+            recent_failure = failures_payload["recent"][0]
+
+            self.assertEqual(recent_failure["failure_type"], "session_timed_out")
+            self.assertEqual(recent_failure["retry_count"], 1)
+            self.assertEqual(recent_failure["last_retry_reason"], "session_timed_out")
+            self.assertIsNotNone(recent_failure["last_retry_at"])
+
     def test_restore_failure_artifacts_action_restores_quarantined_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

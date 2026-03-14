@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
+from maas.ids import generate_id
+from maas.services.lifecycle import heartbeat
 from maas.supervisor import run_supervisor_once
 
 
@@ -82,6 +84,72 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertIn("ready_changes", payload)
             self.assertIn("allocations", payload)
             self.assertEqual(payload["assigned_count"], 1)
+
+    def test_stale_session_does_not_clobber_agent_with_other_active_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Duplicate Session Test",
+                description="Supervisor duplicate session test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                stale_session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                ).fetchone()["session_id"]
+                healthy_session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message
+                    ) VALUES (?, ?, ?, ?, 'active', 'python_script', 65, ?)
+                    """,
+                    (
+                        healthy_session_id,
+                        project_id,
+                        "agent_builder",
+                        task_id,
+                        "Second active session for duplicate-session regression test",
+                    ),
+                )
+                heartbeat(connection, healthy_session_id, 70, "Healthy duplicate session heartbeat")
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE session_id = ?
+                    """,
+                    (stale_session_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                agent = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = 'agent_builder'"
+                ).fetchone()
+                task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                healthy_session = connection.execute(
+                    "SELECT status FROM sessions WHERE session_id = ?",
+                    (healthy_session_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(supervisor_result["stale_sessions"]), 1)
+            self.assertEqual(agent["status"], "running")
+            self.assertEqual(agent["current_task_id"], task_id)
+            self.assertEqual(task["status"], "in_progress")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(healthy_session["status"], "active")
 
 
 if __name__ == "__main__":

@@ -31,22 +31,45 @@ def _handle_stale_sessions(connection, stale_after_seconds):
             """,
             (row["session_id"],),
         )
-        connection.execute(
+        has_other_agent_session = connection.execute(
             """
-            UPDATE agents
-            SET status = 'error', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+            SELECT COUNT(*) AS count
+            FROM sessions
             WHERE agent_id = ?
+              AND status = 'active'
+              AND session_id != ?
             """,
-            (row["agent_id"],),
-        )
-        connection.execute(
+            (row["agent_id"], row["session_id"]),
+        ).fetchone()["count"] > 0
+        has_other_task_session = connection.execute(
             """
-            UPDATE tasks
-            SET status = 'blocked', review_state = 'stale_session', updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = ? AND status = 'in_progress'
+            SELECT COUNT(*) AS count
+            FROM sessions
+            WHERE task_id = ?
+              AND status = 'active'
+              AND session_id != ?
             """,
-            (row["task_id"],),
-        )
+            (row["task_id"], row["session_id"]),
+        ).fetchone()["count"] > 0
+
+        if not has_other_agent_session:
+            connection.execute(
+                """
+                UPDATE agents
+                SET status = 'error', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ? AND current_task_id = ?
+                """,
+                (row["agent_id"], row["task_id"]),
+            )
+        if not has_other_task_session:
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status = 'blocked', review_state = 'stale_session', updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ? AND status = 'in_progress'
+                """,
+                (row["task_id"],),
+            )
         connection.execute(
             """
             INSERT INTO alerts (

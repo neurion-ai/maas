@@ -1,30 +1,25 @@
 # Batch 4: Greenfield Onboarding
 
-## Scope
+## Status On `main`
 
-- guided `maas init`
-- default `project.yaml`
-- default agent roles
-- universal templates
-- initial project-understanding artifact
-- initial seeded backlog visible on the board
+- [x] Batch 4 is shipped on `main`.
+
+## Shipped On `main`
+
+- [x] Guided `maas init`
+- [x] Default `project.yaml`
+- [x] Default agent roles
+- [x] Universal templates for the initial workspace
+- [x] Initial project-understanding artifact
+- [x] Initial seeded backlog visible on the board
+- [x] Generated artifacts: `project.yaml`, `.maas/project-understanding.md`, `.maas/state.db`, `.maas/artifacts/`, `.maas/logs/`, `.maas/quarantine/`
 
 ## Non-Goals
 
 - repo discovery
 - import of existing workflows
 
-## Generated Artifacts
+## Acceptance Checklist
 
-- `project.yaml`
-- `.maas/project-understanding.md`
-- `.maas/state.db`
-- `.maas/artifacts/`
-- `.maas/logs/`
-- `.maas/quarantine/`
-
-## Acceptance Tests
-
-- empty directory can be initialized
-- initial board view includes at least planned, ready, in-progress, review, blocked, and done cards
-
+- [x] Empty directory can be initialized
+- [x] Initial board view includes at least planned, ready, in-progress, review, blocked, and done cards

@@ -1,40 +1,40 @@
 # Batch 6: Security and Human Steering
 
-## Scope
+## Status On `main`
 
-- role baselines from `project.yaml`
-- task-scoped capability grants
-- board-driven steering actions
-- append-only audit trail for sensitive changes
+- [ ] Batch 6 is only partially shipped on `main`.
 
-## Current Implementation Notes
+## Shipped On `main`
 
-- board and alert actions now enforce the role-baseline `board_actions` permission
-- denied attempts return a permission error and create audit entries
-- task-scoped capability grants now exist for assigned execution work
-- lifecycle start, heartbeat, activity, artifact, and end-session writes now enforce active task grants
-- reassignment, halt, allocation, and bootstrap flows now grant or revoke task capabilities as task ownership changes
-- escalation queues now exist for halt, reassign, pause, and resume requests
-- escalation requests can be listed and resolved through API, CLI, and the control-room Escalations view
+- [x] Role baselines from `project.yaml`
+- [x] Task-scoped capability grants
+- [x] Board-driven steering actions
+- [x] Append-only audit trail for sensitive changes
+- [x] Board and alert actions enforce the role-baseline `board_actions` permission
+- [x] Denied attempts return a permission error and create audit entries
+- [x] Lifecycle start, heartbeat, activity, artifact, and end-session writes enforce active task grants
+- [x] Reassignment, halt, allocation, and bootstrap flows grant or revoke task capabilities as task ownership changes
+- [x] Escalation queues exist for halt, reassign, pause, and resume requests
+- [x] Escalation requests can be listed and resolved through API, CLI, and the control-room Escalations view
 
-## Non-Goals
+## Still To Do On `main`
 
-- OS-user isolation
-- microVM sandboxing
-- external identity provider integration
+- [ ] OS-user isolation
+- [ ] microVM sandboxing
+- [ ] External identity provider integration
 
-## Steering Actions
+## Steering Checklist
 
-- pause/resume
-- approve/reject review items
-- reprioritize
-- reassign
-- halt
+- [x] pause and resume
+- [x] approve and reject review items
+- [x] reprioritize
+- [x] reassign
+- [x] halt
 
-## Acceptance Tests
+## Acceptance Checklist
 
-- forbidden action attempts are denied or escalated
-- board-driven actions create audit entries
-- board UI exposes steering controls for reprioritize, reassign, pause/resume, review, and halt
-- lifecycle writes are denied when the assigned task capability grant is missing or revoked
-- escalation approvals and rejections are permission-gated, audited, and visible in the queue read model
+- [x] Forbidden action attempts are denied or escalated
+- [x] Board-driven actions create audit entries
+- [x] Board UI exposes steering controls for reprioritize, reassign, pause/resume, review, and halt
+- [x] Lifecycle writes are denied when the assigned task capability grant is missing or revoked
+- [x] Escalation approvals and rejections are permission-gated, audited, and visible in the queue read model

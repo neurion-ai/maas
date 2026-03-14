@@ -1,19 +1,22 @@
 # Batch 8: Brownfield and Multi-Project
 
-## Scope
+## Status On `main`
 
-- brownfield discovery pipeline
-- reviewed overlay onboarding
-- multi-project routing
-- dashboard/plugin extensions
+- [ ] Batch 8 has not started on `main`.
+
+## Still To Do On `main`
+
+- [ ] Brownfield discovery pipeline
+- [ ] Reviewed overlay onboarding
+- [ ] Multi-project routing
+- [ ] Dashboard and plugin extensions
 
 ## Non-Goals
 
 - replacing existing project workflows
 - forcing a single domain model on imported repos
 
-## Acceptance Tests
+## Acceptance Checklist
 
-- brownfield fixture produces a reviewable understanding artifact
-- multi-project API routing isolates project data correctly
-
+- [ ] Brownfield fixture produces a reviewable understanding artifact
+- [ ] Multi-project API routing isolates project data correctly

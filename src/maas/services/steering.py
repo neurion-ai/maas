@@ -423,3 +423,61 @@ def resume_agent(connection, agent_id, actor_id):
     )
     connection.commit()
     return {"agent_id": agent_id, "status": "running" if agent["current_task_id"] else "idle"}
+
+
+def recover_agent(connection, agent_id, actor_id):
+    agent = connection.execute(
+        """
+        SELECT agent_id, project_id, status, current_task_id
+        FROM agents
+        WHERE agent_id = ?
+        """,
+        (agent_id,),
+    ).fetchone()
+    if agent is None:
+        raise ValueError("Agent not found")
+    ensure_board_action_allowed(connection, actor_id, agent["project_id"], "recover_agent", "agent", agent_id)
+    if agent["status"] != "error":
+        raise ValueError("Only error agents can be recovered")
+    if agent["current_task_id"] is not None:
+        raise ValueError("Agent cannot be recovered while still attached to a task")
+
+    active_session = connection.execute(
+        """
+        SELECT session_id
+        FROM sessions
+        WHERE agent_id = ? AND status = 'active'
+        LIMIT 1
+        """,
+        (agent_id,),
+    ).fetchone()
+    if active_session is not None:
+        raise ValueError("Agent cannot be recovered while an active session exists")
+
+    connection.execute(
+        """
+        UPDATE agents
+        SET status = 'idle', updated_at = CURRENT_TIMESTAMP
+        WHERE agent_id = ?
+        """,
+        (agent_id,),
+    )
+    _audit(
+        connection,
+        agent["project_id"],
+        actor_id,
+        "recover_agent",
+        "agent",
+        agent_id,
+        {"previous_status": agent["status"]},
+    )
+    _activity(
+        connection,
+        agent["project_id"],
+        agent_id,
+        None,
+        "agent_recovered",
+        "Agent recovered from error state.",
+    )
+    connection.commit()
+    return {"agent_id": agent_id, "status": "idle"}

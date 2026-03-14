@@ -15,7 +15,7 @@ from maas.services.failure_memory import fetch_failure_log
 from maas.services.provider_runtime import run_provider_task
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
-from maas.services.steering import recover_task
+from maas.services.steering import recover_agent, recover_task
 from maas.supervisor import run_supervisor_once
 
 
@@ -46,6 +46,14 @@ def build_parser():
 
     board_parser = subparsers.add_parser("board")
     board_parser.add_argument("--project-root", default=".")
+
+    agent_parser = subparsers.add_parser("agent")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
+
+    agent_recover_parser = agent_subparsers.add_parser("recover")
+    agent_recover_parser.add_argument("--project-root", default=".")
+    agent_recover_parser.add_argument("--agent-id", required=True)
+    agent_recover_parser.add_argument("--actor-id", required=True)
 
     task_parser = subparsers.add_parser("task")
     task_subparsers = task_parser.add_subparsers(dest="task_command", required=True)
@@ -230,6 +238,16 @@ def command_task(args):
         connection.close()
 
 
+def command_agent(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.agent_command == "recover":
+            print(json.dumps(recover_agent(connection, args.agent_id, args.actor_id), indent=2))
+    finally:
+        connection.close()
+
+
 def command_failure(args):
     paths = project_paths(args.project_root)
     connection = connect(paths)
@@ -358,6 +376,8 @@ def main(argv=None):
         command_supervisor(args)
     elif args.command == "board":
         command_board(args)
+    elif args.command == "agent":
+        command_agent(args)
     elif args.command == "task":
         command_task(args)
     elif args.command == "failure":

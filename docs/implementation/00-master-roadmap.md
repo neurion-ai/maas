@@ -6,29 +6,23 @@ MAAS is being implemented as a single-project, greenfield-first, board-first age
 
 ## Current Status
 
-This roadmap now needs to be read alongside the actual implementation status:
+This roadmap now needs to be read alongside the actual implementation status in `docs/implementation/STATUS.md`.
 
-| Batch | Status | Notes |
+Legend for the checklist column:
+
+- `[x]` shipped on `main`
+- `[ ]` not fully shipped on `main`
+
+| Batch | Checklist | Notes |
 |---|---|---|
-| 1. Core kernel and scaffold | Implemented | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
-| 2. Goal/task engine | Partial | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
-| 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, and concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex |
-| 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
-| 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
-| 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
-| 7. Resilience and failure memory | Early | Stale-session detection, failure logging for failed/timed-out sessions, repeated-failure alerts, and read-model visibility exist; broader recovery is still pending |
-| 8. Brownfield and multi-project | Not started | Still roadmap only |
-
-## In-Flight Work
-
-The current development branch is extending the human-steering layer with a real escalation queue:
-
-- escalation queue storage and migration
-- request, approve, and reject flows in the API and CLI
-- escalation visibility in overview and live read models
-- control-room queue visibility for operator approvals
-
-Until that branch merges, treat those items as in progress rather than shipped.
+| 1. Core kernel and scaffold | `[x]` | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
+| 2. Goal/task engine | `[ ]` | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
+| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, and concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex |
+| 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
+| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
+| 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
+| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, repeated-failure alerts, read-model visibility, and task recovery exist; broader recovery is still pending |
+| 8. Brownfield and multi-project | `[ ]` | Still roadmap only |
 
 ## Delivery Order
 
@@ -53,20 +47,20 @@ Until that branch merges, treat those items as in progress rather than shipped.
 
 This repository now includes:
 
-- SQLite migrations and a migration runner
-- greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
-- FastAPI read models for board, overview, goal tree, agents, activity, alerts, and providers
-- task actions for ready queue refresh, allocator assignment, and acceptance evaluation
-- supervisor run endpoint and CLI orchestration pass
-- control-room actions for manual supervisor runs and idle-agent assignment
-- board controls for reprioritize, reassign, pause/resume, review, and halt
-- role-baseline permission enforcement for steering and alert actions
-- task capability grant storage plus lifecycle enforcement for start, heartbeat, activity, artifact, and end-session actions
-- escalation queue storage plus operator approve/reject flows for risky steering actions
-- failure-log storage plus read models for recent failures and repeated-failure tasks
-- concrete simulated provider adapters for Python Script, Claude Code, and OpenAI Codex
-- lifecycle API/CLI surface
-- a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Alerts, and Escalations views
+- [x] SQLite migrations and a migration runner
+- [x] Greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
+- [x] FastAPI read models for board, overview, goal tree, agents, activity, alerts, failures, live, and providers
+- [x] Task actions for ready queue refresh, allocator assignment, acceptance evaluation, and failure-blocked task recovery
+- [x] Supervisor run endpoint and CLI orchestration pass
+- [x] Control-room actions for manual supervisor runs and idle-agent assignment
+- [x] Board controls for reprioritize, reassign, pause/resume, review, and halt
+- [x] Role-baseline permission enforcement for steering and alert actions
+- [x] Task capability grant storage plus lifecycle enforcement for start, heartbeat, activity, artifact, and end-session actions
+- [x] Escalation queue storage plus operator approve/reject flows for risky steering actions
+- [x] Failure-log storage plus read models for recent failures and repeated-failure tasks
+- [x] Concrete simulated provider adapters for Python Script, Claude Code, and OpenAI Codex
+- [x] Lifecycle API/CLI surface
+- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Alerts, and Escalations views
 
 ## Recommended Reading Order
 

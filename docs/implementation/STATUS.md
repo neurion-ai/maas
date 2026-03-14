@@ -1,159 +1,106 @@
 # MAAS Development Status
 
-## Where We Are
+## Legend
 
-MAAS is no longer at the “just architecture docs” phase. The project has a real runnable foundation and is now in the **early productization** stage:
+- `[x]` shipped on `main`
+- `[ ]` not fully shipped on `main`
+- In-flight branch work should be tracked in open PRs, not in this file.
 
-- backend core exists
-- greenfield bootstrap exists
-- board-first workflow exists
-- basic steering exists
-- dashboard/control-room UI exists
+## Current Snapshot
 
-The system is best described as **an operational prototype with real infrastructure**, not a finished platform.
+- [x] MAAS is usable today as a greenfield local prototype with a real operator-facing control room.
+- [x] The board-first workflow, steering controls, escalation queue, and first-pass resilience foundations are in place.
+- [ ] MAAS is not yet a production-ready autonomous platform.
 
-## What Is Shipped
+## Shipped On `main`
 
 ### Core platform
 
-- Python package under `src/maas/`
-- SQLite-backed state with migrations
-- `.maas/` local workspace layout
-- `project.yaml` generation and loading
-- CLI entrypoints for init, migrate, API, supervisor, board, worker, and lifecycle operations
+- [x] Python package under `src/maas/`
+- [x] SQLite-backed state with migrations
+- [x] `.maas/` local workspace layout
+- [x] `project.yaml` generation and loading
+- [x] CLI entrypoints for init, migrate, API, supervisor, board, task, agent, worker, lifecycle, failure, and escalation operations
 
 ### Work orchestration
 
-- goals and tasks persisted in SQLite
-- board-visible task states:
-  - `planned`
-  - `ready`
-  - `assigned`
-  - `in_progress`
-  - `review`
-  - `blocked`
-  - `done`
-  - `cancelled`
-- dependency storage for `blocks`, `informs`, and `conflicts`
-- seeded greenfield backlog
+- [x] Goal and task records persisted in SQLite
+- [x] Board-visible task states: `planned`, `ready`, `assigned`, `in_progress`, `review`, `blocked`, `done`, `cancelled`
+- [x] Dependency storage for `blocks`, `informs`, and `conflicts`
+- [x] Seeded greenfield backlog and project-understanding artifact
+- [x] Dependency-aware ready-queue refresh
+- [x] Idle-agent allocation and manual assign-next controls
+- [x] Acceptance evaluation for `artifact_exists`, `metric`, `db_query`, and `test_passes`
 
-### Runtime and steering
+### Runtime and provider layer
 
-- lifecycle operations:
-  - `start_session`
-  - `heartbeat`
-  - `log_activity`
-  - `produce_artifact`
-  - `end_session`
-- simulated worker path for local execution
-- provider-dispatched worker/runtime path for `python_script`, `claude_code`, and `openai_codex`
-- steering actions:
-  - review approve/reject
-  - reprioritize
-  - reassign
-  - agent pause/resume
-  - halt
-- audit logging for steering actions
-- task-scoped capability grants for assigned execution work
-- failed and timed-out sessions now write to failure memory
+- [x] Lifecycle operations: `start_session`, `heartbeat`, `log_activity`, `produce_artifact`, `end_session`
+- [x] Simulated local worker/runtime execution path
+- [x] Provider-dispatched runtime path for `python_script`, `claude_code`, and `openai_codex`
+- [x] Shared lifecycle contract for provider activity and artifact output
 
-### Dashboard
+### Control room and steering
 
-- board API with server-side grouping
-- server-side board filters
-- overview read model
-- goal tree read model
-- enriched agent roster read model
-- activity feed
-- overview control for manual supervisor runs
-- agent-roster control for assigning the next task to idle agents
-- board controls for reprioritize, reassign, halt, review, and pause/resume
-- alerts and escalations queue views in the control room
-- React control-room shell with:
-  - Overview
-  - Board
-  - Goal Tree
-  - Agent Roster
-  - Activity
-  - Alerts
-  - Escalations
+- [x] Board API with server-side grouping and filters
+- [x] Overview, goal tree, agent roster, activity, alerts, escalations, failures, and live snapshot read models
+- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Alerts, and Escalations
+- [x] Operator controls for review approve/reject
+- [x] Operator controls for reprioritize, reassign, pause/resume, and halt
+- [x] Operator controls for manual supervisor runs and assign-next from the roster
+- [x] Role-baseline `board_actions` permission enforcement for steering and alert actions
+- [x] Audit logging for steering actions
+- [x] Escalation queue request, approve, and reject flows in API, CLI, and control room
 
-## What Is Partial
+### Security and execution permissions
+
+- [x] Task-scoped capability grants for assigned execution work
+- [x] Lifecycle enforcement for start, heartbeat, activity, artifact, and end-session writes
+- [x] Grant revocation on task halt, reassignment, recovery, and session completion
+
+### Resilience and failure handling
+
+- [x] Stale-session detection in the supervisor pass
+- [x] Failure-memory logging for failed and timed-out sessions
+- [x] Repeated-failure alerts for tasks with repeated failures
+- [x] Failure visibility in board, overview, live, and dedicated failures reads
+- [x] Operator recovery for failure-blocked tasks
+
+## Still To Do On `main`
 
 ### Scheduling and planning
 
-- ready-task resolution exists, with dependency/conflict-aware refresh semantics
-- allocator assignment exists for idle agents and ready work
-- acceptance criteria evaluation exists for `artifact_exists`, `metric`, `db_query`, and `test_passes`
-- task evaluation is exposed through both CLI and API surfaces
-- allocator logic is still heuristic and intentionally lightweight
-- no advanced replanning loop yet
+- [ ] Advanced replanning loop
+- [ ] Smarter allocator and scheduling policies beyond the current heuristic pass
+- [ ] Broader scheduler-driven recovery and requeue policies
 
 ### Providers
 
-- provider registry exists
-- concrete local simulation exists for Python Script, Claude Code, and OpenAI Codex adapters
-- provider-specific activity and artifact output now flow through the shared lifecycle contract
-- real external Claude Code / OpenAI Codex integrations are still not complete yet
+- [ ] Real external Claude Code integration
+- [ ] Real external OpenAI Codex integration
+- [ ] More complete provider runtime lifecycle coverage
 
-### Supervisor and resilience
+### Resilience and recovery
 
-- stale-session detection exists
-- supervisor pass now refreshes readiness and allocates idle agents
-- alert generation exists
-- failure memory now records failed and timed-out sessions
-- repeated task failures now raise critical alerts and appear in board/overview/live read models
-- broader self-healing, DLQ handling, and recovery workflows remain incomplete
+- [ ] Operator recovery for agents left in `error`
+- [ ] Automated restart and retry policies
+- [ ] DLQ and quarantine workflows
+- [ ] Failure-specific resolution flows beyond generic alert acknowledge/resolve
+- [ ] Broader self-healing and recovery orchestration
 
-### Security
+### Platform expansion
 
-- operator actions are audited
-- board-driven steering now covers most of the Batch 6 control surface
-- role-baseline `board_actions` permission enforcement now gates steering and alert actions
-- task execution now requires task-scoped capability grants for start, heartbeat, activity, artifact, and end-session writes
-- escalation queue request/approve/reject flows now exist in the API, CLI, and control room
-- broader capability-token distribution is still incomplete
+- [ ] Brownfield onboarding pipeline
+- [ ] Multi-project support
+- [ ] Plugin and domain extension architecture
+- [ ] Strong sandbox and isolation layers
 
-## What Is Not Started
+## Batch View
 
-- brownfield onboarding pipeline
-- multi-project support
-- plugin/domain extension architecture
-- serious sandbox/isolation layers
-- advanced failure memory and recovery orchestration
-
-## Current Development Focus
-
-Current work is moving deeper into the goal/task engine with:
-
-- dependency-aware ready queue refresh
-- idle-agent task allocation
-- acceptance-gate evaluation
-- scheduler/supervisor task commands and API actions
-- operator controls for manual supervisor runs and assign-next actions
-- board-side steering controls for reprioritize, reassign, and halt
-- permission-gated steering and alert actions
-- escalation queue approvals for risky task and agent interventions
-- failure-memory logging and repeated-failure surfacing
-- provider adapter execution through the runtime layer
-
-If the current escalation-queue branch is not yet merged, treat those approval-queue features as in progress rather than available on `main`.
-
-## Practical Assessment
-
-If someone asks “can MAAS be used right now?”, the honest answer is:
-
-- Yes, as a greenfield local prototype and operator-facing foundation.
-- No, not yet as a fully autonomous production platform.
-
-If the current escalation-queue branch is not yet merged, treat the escalation request/approval flow as in progress rather than available on `main`.
-
-The project is roughly in the **late Batch 2 through Batch 6 foundation zone** of the roadmap:
-
-- Batches 1 and 4 are effectively in place.
-- Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
-- Batch 3 now includes concrete simulated provider adapters routed through the lifecycle contract.
-- Batches 5 and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
-- Batch 6 now also includes task-scoped execution grants tied to task assignment plus a first-pass escalation queue for risky steering actions.
-- Batch 7 now has its first real failure-memory foundation, but most recovery automation is still ahead of us.
-- Batch 8 is still mostly ahead of us.
+- [x] Batch 1: Core kernel and scaffold
+- [ ] Batch 2: Goal/task engine is only partially complete
+- [ ] Batch 3: Runtime lifecycle and adapters are only partially complete
+- [x] Batch 4: Greenfield onboarding
+- [ ] Batch 5: Supervisor, dashboard, and Kanban V1 are only partially complete
+- [ ] Batch 6: Security and human steering are only partially complete
+- [ ] Batch 7: Resilience and failure memory are only partially complete
+- [ ] Batch 8: Brownfield and multi-project expansion has not started

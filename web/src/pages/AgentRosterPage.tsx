@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { assignNextTask, fetchAgentRoster } from "../lib/controlRoomApi";
+import { assignNextTask, fetchAgentRoster, recoverAgent } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { AgentRosterResponse } from "../types";
 
@@ -57,6 +57,20 @@ export function AgentRosterPage() {
     }
   }
 
+  async function handleRecoverAgent(agentId: string) {
+    setPendingAgentId(agentId);
+    setNotice(null);
+    try {
+      await recoverAgent(agentId);
+      setNotice(`Recovered ${agentId} to idle.`);
+      setRoster(await fetchAgentRoster());
+    } catch {
+      setNotice("Agent recovery failed; keeping the current roster view.");
+    } finally {
+      setPendingAgentId(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -97,6 +111,18 @@ export function AgentRosterPage() {
                   onClick={() => void handleAssignNext(agent.agent_id)}
                 >
                   {pendingAgentId === agent.agent_id ? "Assigning..." : "Assign next task"}
+                </button>
+              </div>
+            ) : null}
+            {agent.status === "error" ? (
+              <div className="roster-card__actions">
+                <button
+                  type="button"
+                  className="task-action task-action--approve"
+                  disabled={pendingAgentId === agent.agent_id}
+                  onClick={() => void handleRecoverAgent(agent.agent_id)}
+                >
+                  {pendingAgentId === agent.agent_id ? "Recovering..." : "Recover agent"}
                 </button>
               </div>
             ) : null}

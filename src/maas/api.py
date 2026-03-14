@@ -23,6 +23,7 @@ from maas.services.steering import (
     halt_task,
     pause_agent,
     reassign_task,
+    recover_agent,
     recover_task,
     reprioritize_task,
     resume_agent,
@@ -557,6 +558,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return resume_agent(connection, agent_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/agents/{agent_id}/actions/recover")
+    def agent_recover_action(agent_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return recover_agent(connection, agent_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

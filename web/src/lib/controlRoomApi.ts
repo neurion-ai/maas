@@ -4,7 +4,8 @@ import type {
   AlertsResponse,
   GoalTreeResponse,
   LiveSnapshot,
-  OverviewResponse
+  OverviewResponse,
+  SupervisorRunResponse
 } from "../types";
 
 const lastSuccessfulResponses = new Map<string, unknown>();
@@ -177,7 +178,7 @@ export function fetchLiveSnapshot() {
   return fetchJson<LiveSnapshot>("/api/live", LIVE_FALLBACK);
 }
 
-async function postJson(path: string, body: Record<string, string>) {
+async function postJson<T>(path: string, body: Record<string, string | number | null | undefined>): Promise<T | null> {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -189,8 +190,29 @@ async function postJson(path: string, body: Record<string, string>) {
   if (!response.ok) {
     throw new Error(`Unexpected status: ${response.status}`);
   }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  return (await response.json()) as T;
 }
 
 export async function updateAlertStatus(alertId: string, action: "acknowledge" | "resolve") {
   await postJson(`/api/alerts/${alertId}/actions/${action}`, { actor_id: "agent_allocator" });
+}
+
+export async function runSupervisorPass(allocateLimit?: number) {
+  const payload = await postJson<SupervisorRunResponse>("/api/supervisor/run", {
+    allocate_limit: allocateLimit ?? null
+  });
+  return payload as SupervisorRunResponse;
+}
+
+export async function assignNextTask(agentId: string) {
+  const payload = await postJson<{ agent_id: string; task_id: string | null; assigned: boolean; task_title?: string }>(
+    `/api/agents/${agentId}/actions/assign-next`,
+    { actor_id: "agent_allocator" }
+  );
+  return payload as { agent_id: string; task_id: string | null; assigned: boolean; task_title?: string };
 }

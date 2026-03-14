@@ -61,6 +61,8 @@ The system is best described as **an operational prototype with real infrastruct
 - goal tree read model
 - enriched agent roster read model
 - activity feed
+- overview control for manual supervisor runs
+- agent-roster control for assigning the next task to idle agents
 - React control-room shell with:
   - Overview
   - Board
@@ -113,6 +115,7 @@ Current work is moving deeper into the goal/task engine with:
 - idle-agent task allocation
 - acceptance-gate evaluation
 - scheduler/supervisor task commands and API actions
+- operator controls for manual supervisor runs and assign-next actions
 
 If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
 

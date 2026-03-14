@@ -191,3 +191,28 @@ export interface LiveSnapshot {
     latest_alert?: string | null;
   };
 }
+
+export interface SupervisorReadyChange {
+  task_id: string;
+  status: string;
+  review_state?: string | null;
+}
+
+export interface SupervisorAllocation {
+  agent_id: string;
+  task_id: string;
+  task_title?: string;
+  status: string;
+  assigned: boolean;
+  already_assigned?: boolean;
+}
+
+export interface SupervisorRunResponse {
+  ready_changes: SupervisorReadyChange[];
+  allocations: SupervisorAllocation[];
+  assigned_count: number;
+  stale_sessions: Array<{
+    session_id: string;
+    task_id: string;
+  }>;
+}

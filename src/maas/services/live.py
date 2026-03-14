@@ -4,6 +4,8 @@ import asyncio
 import json
 from datetime import datetime
 
+from maas.services.failure_memory import repeated_failure_task_count
+
 
 def build_live_snapshot(connection):
     latest_task = connection.execute("SELECT MAX(updated_at) AS value FROM tasks").fetchone()["value"]
@@ -28,18 +30,7 @@ def build_live_snapshot(connection):
             "failures_total": connection.execute(
                 "SELECT COUNT(*) AS count FROM failure_log"
             ).fetchone()["count"],
-            "repeated_failure_tasks": connection.execute(
-                """
-                SELECT COUNT(*) AS count
-                FROM (
-                    SELECT task_id
-                    FROM failure_log
-                    WHERE task_id IS NOT NULL
-                    GROUP BY task_id
-                    HAVING COUNT(*) >= 2
-                )
-                """
-            ).fetchone()["count"],
+            "repeated_failure_tasks": repeated_failure_task_count(connection),
         },
         "revision": {
             "latest_task": latest_task,

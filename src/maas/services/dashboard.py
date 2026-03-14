@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from maas.services.failure_memory import fetch_repeated_failure_tasks, repeated_failure_task_count
+
 
 def _parse_timestamp(value):
     if not value:
@@ -111,21 +113,7 @@ def fetch_overview(connection):
             """
         ).fetchall()
     ]
-    repeated_failure_tasks = [
-        dict(row)
-        for row in connection.execute(
-            """
-            SELECT failure_log.task_id, tasks.title AS task_title, COUNT(*) AS failure_count
-            FROM failure_log
-            LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
-            WHERE failure_log.task_id IS NOT NULL
-            GROUP BY failure_log.task_id, tasks.title
-            HAVING COUNT(*) >= 2
-            ORDER BY failure_count DESC, MAX(failure_log.created_at) DESC
-            LIMIT 5
-            """
-        ).fetchall()
-    ]
+    repeated_failure_tasks = fetch_repeated_failure_tasks(connection, limit=5)
 
     return {
         "project": dict(project) if project else None,
@@ -141,7 +129,7 @@ def fetch_overview(connection):
             "failures_total": connection.execute(
                 "SELECT COUNT(*) AS count FROM failure_log"
             ).fetchone()["count"],
-            "repeated_failure_tasks": len(repeated_failure_tasks),
+            "repeated_failure_tasks": repeated_failure_task_count(connection),
             "agents_running": connection.execute(
                 "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
             ).fetchone()["count"],

@@ -6,6 +6,7 @@ from maas.ids import generate_id
 
 
 REPEATED_FAILURE_THRESHOLD = 2
+REPEATED_FAILURE_TYPES = ("session_failed", "session_timed_out", "capability_denied")
 
 
 def record_failure(connection, project_id, failure_type, summary, task_id=None, session_id=None, agent_id=None, details=None):
@@ -30,17 +31,52 @@ def record_failure(connection, project_id, failure_type, summary, task_id=None, 
     return failure_id
 
 
+def _repeated_failure_clause():
+    placeholders = ", ".join(["?"] * len(REPEATED_FAILURE_TYPES))
+    return "failure_type IN ({0})".format(placeholders), REPEATED_FAILURE_TYPES
+
+
 def _failure_count_for_task(connection, task_id):
     if task_id is None:
         return 0
+    clause, params = _repeated_failure_clause()
     return connection.execute(
         """
         SELECT COUNT(*) AS count
         FROM failure_log
         WHERE task_id = ?
-        """,
-        (task_id,),
+          AND {0}
+        """.format(clause),
+        (task_id,) + params,
     ).fetchone()["count"]
+
+
+def fetch_repeated_failure_tasks(connection, limit=None):
+    clause, params = _repeated_failure_clause()
+    query = """
+        SELECT
+            failure_log.task_id,
+            tasks.title AS task_title,
+            COUNT(*) AS failure_count,
+            MAX(failure_log.created_at) AS latest_failure_at
+        FROM failure_log
+        LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
+        WHERE failure_log.task_id IS NOT NULL
+          AND {0}
+        GROUP BY failure_log.task_id, tasks.title
+        HAVING COUNT(*) >= ?
+        ORDER BY failure_count DESC, latest_failure_at DESC
+    """.format(clause)
+    query_params = params + (REPEATED_FAILURE_THRESHOLD,)
+    if limit is not None:
+        query += "\nLIMIT ?"
+        query_params += (limit,)
+
+    return [dict(row) for row in connection.execute(query, query_params).fetchall()]
+
+
+def repeated_failure_task_count(connection):
+    return len(fetch_repeated_failure_tasks(connection))
 
 
 def maybe_raise_repeated_failure_alert(connection, project_id, task_id, summary):
@@ -133,25 +169,7 @@ def fetch_failure_log(connection, limit=20):
     ).fetchall()
 
     recent = [dict(row) for row in rows]
-    repeated_tasks = [
-        dict(row)
-        for row in connection.execute(
-            """
-            SELECT
-                failure_log.task_id,
-                tasks.title AS task_title,
-                COUNT(*) AS failure_count,
-                MAX(failure_log.created_at) AS latest_failure_at
-            FROM failure_log
-            LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
-            WHERE failure_log.task_id IS NOT NULL
-            GROUP BY failure_log.task_id, tasks.title
-            HAVING COUNT(*) >= ?
-            ORDER BY failure_count DESC, latest_failure_at DESC
-            """,
-            (REPEATED_FAILURE_THRESHOLD,),
-        ).fetchall()
-    ]
+    repeated_tasks = fetch_repeated_failure_tasks(connection)
 
     return {
         "recent": recent,
@@ -163,6 +181,6 @@ def fetch_failure_log(connection, limit=20):
             "tasks_with_failures": connection.execute(
                 "SELECT COUNT(DISTINCT task_id) AS count FROM failure_log WHERE task_id IS NOT NULL"
             ).fetchone()["count"],
-            "repeated_tasks": len(repeated_tasks),
+            "repeated_tasks": repeated_failure_task_count(connection),
         },
     }

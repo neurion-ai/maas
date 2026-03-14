@@ -52,6 +52,48 @@ class DashboardApiTest(unittest.TestCase):
             self.assertGreaterEqual(len(goal_tree_payload["roots"]), 1)
             self.assertIn("children", goal_tree_payload["roots"][0])
 
+    def test_overview_repeated_failure_summary_is_not_capped_to_top_five(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Dashboard Failure Count Test", description="Dashboard failure count test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                for index in range(6):
+                    task_id = f"task_repeat_{index}"
+                    connection.execute(
+                        """
+                        INSERT INTO tasks (
+                            task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                        ) VALUES (?, ?, ?, '', 'blocked', 50, '[]')
+                        """,
+                        (task_id, project_id, f"Repeated failure task {index}"),
+                    )
+                    for failure_index in range(2):
+                        connection.execute(
+                            """
+                            INSERT INTO failure_log (
+                                failure_id, project_id, task_id, failure_type, summary, detail_json
+                            ) VALUES (?, ?, ?, 'session_failed', ?, '{}')
+                            """,
+                            (
+                                generate_id("fail"),
+                                project_id,
+                                task_id,
+                                f"failure {failure_index}",
+                            ),
+                        )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            overview_payload = client.get("/api/overview").json()
+            live_payload = client.get("/api/live").json()
+
+            self.assertEqual(overview_payload["summary"]["repeated_failure_tasks"], 6)
+            self.assertEqual(len(overview_payload["repeated_failures"]), 5)
+            self.assertEqual(live_payload["counts"]["repeated_failure_tasks"], 6)
+
     def test_agent_roster_is_enriched(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Roster Test", description="Roster test", project_type="custom")

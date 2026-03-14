@@ -13,6 +13,7 @@ from maas.providers import list_providers
 from maas.services.alerts import fetch_alerts, update_alert_status
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
+from maas.services.failure_memory import fetch_failure_log
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -229,6 +230,14 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_alerts(connection)
+        finally:
+            connection.close()
+
+    @app.get("/api/failures")
+    def failures(limit=20):
+        connection = connect(paths)
+        try:
+            return fetch_failure_log(connection, limit=int(limit))
         finally:
             connection.close()
 

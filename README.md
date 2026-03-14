@@ -10,6 +10,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - a supervisor pass for readiness refresh, allocation, and stale-session recovery
 - a lightweight supervisor/lifecycle foundation
 - task-scoped capability grants for execution, heartbeats, activity, artifacts, and session completion
+- failure-memory logging with repeated-failure alerting and dashboard visibility
 - a React control room with operator actions for supervisor runs and idle-agent assignment
 - board-side operator controls for review, reprioritize, reassign, pause/resume, and halt
 - role-baseline permission enforcement for steering and alert actions
@@ -43,6 +44,7 @@ The project bootstrap creates:
 - `GET /api/agents`
 - `GET /api/activity`
 - `GET /api/alerts`
+- `GET /api/failures`
 - `GET /api/tasks/ready`
 - `GET /api/tasks/{task_id}/capabilities`
 - `POST /api/tasks/actions/refresh-ready`
@@ -60,6 +62,7 @@ The primary operational surface is the Kanban board returned by `/api/board`.
 - `maas task allocate --project-root . --agent-id <agent_id>`
 - `maas task evaluate --project-root . --task-id <task_id>`
 - `maas supervisor --project-root . --once`
+- `maas failure list --project-root .`
 
 These commands expose the current dependency-aware ready queue, allocator flow, acceptance-gate evaluation, and supervisor orchestration pass from the CLI.
 
@@ -68,3 +71,4 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - board and alert actions are gated by role-baseline `board_actions` permissions from `project.yaml`
 - task execution now uses task-scoped capability grants, so lifecycle writes are limited to the assigned agent and task
 - board cards and the task capabilities API expose the currently active task grants
+- failed and timed-out sessions are now recorded in failure memory and can raise repeated-failure alerts

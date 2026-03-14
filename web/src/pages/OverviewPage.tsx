@@ -75,6 +75,8 @@ export function OverviewPage() {
         <StatCard label="In progress" value={overview?.summary.tasks_in_progress ?? 0} tone="good" />
         <StatCard label="Review queue" value={overview?.summary.tasks_review ?? 0} />
         <StatCard label="Blocked" value={overview?.summary.tasks_blocked ?? 0} tone="warn" />
+        <StatCard label="Failures logged" value={overview?.summary.failures_total ?? 0} tone="warn" />
+        <StatCard label="Repeated failures" value={overview?.summary.repeated_failure_tasks ?? 0} tone="warn" />
       </section>
 
       <section className="overview-grid">
@@ -144,6 +146,27 @@ export function OverviewPage() {
                 </div>
                 <div className="data-list__meta">
                   <span>{item.severity}</span>
+                  <span>{new Date(item.created_at).toLocaleTimeString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <h2>Recent failures</h2>
+            <p>Failure memory for the latest failed or timed-out work.</p>
+          </header>
+          <div className="data-list">
+            {(overview?.recent_failures ?? []).map((item) => (
+              <div key={item.failure_id ?? `${item.task_id}-${item.created_at}`} className="data-list__item">
+                <div>
+                  <strong>{item.task_title ?? item.task_id ?? "Unlinked failure"}</strong>
+                  <p>{item.summary}</p>
+                </div>
+                <div className="data-list__meta">
+                  <span>{item.failure_type}</span>
                   <span>{new Date(item.created_at).toLocaleTimeString()}</span>
                 </div>
               </div>

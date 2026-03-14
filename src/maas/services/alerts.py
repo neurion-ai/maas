@@ -33,6 +33,13 @@ def fetch_alerts(connection):
             "critical_open": len(
                 [alert for alert in grouped.get("open", []) if alert["severity"] == "critical"]
             ),
+            "repeated_failure_open": len(
+                [
+                    alert
+                    for alert in grouped.get("open", [])
+                    if alert["title"] == "Repeated task failures"
+                ]
+            ),
         },
     }
 

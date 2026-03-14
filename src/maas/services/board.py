@@ -74,6 +74,16 @@ def _board_column_key(status):
 
 
 def fetch_board(connection, filters=None):
+    failure_rows = connection.execute(
+        """
+        SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
+        FROM failure_log
+        WHERE task_id IS NOT NULL
+        GROUP BY task_id
+        """
+    ).fetchall()
+    failures_by_task = {row["task_id"]: dict(row) for row in failure_rows}
+
     capability_rows = connection.execute(
         """
         SELECT task_id, agent_id, capability
@@ -133,6 +143,8 @@ def fetch_board(connection, filters=None):
                 "status": row["agent_status"],
             },
             "capabilities": capabilities_by_task.get(row["task_id"], []),
+            "failure_count": failures_by_task.get(row["task_id"], {}).get("failure_count", 0),
+            "latest_failure_at": failures_by_task.get(row["task_id"], {}).get("latest_failure_at"),
             "heartbeat_age_seconds": _age_seconds(row["last_heartbeat_at"]),
             "age_hours": round(age_minutes / 60.0, 1) if age_minutes is not None else None,
         }

@@ -5,6 +5,7 @@ import json
 
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
+from maas.services.failure_memory import maybe_raise_repeated_failure_alert, record_failure
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 
 
@@ -82,6 +83,22 @@ def _handle_stale_sessions(connection, stale_after_seconds):
                 "Agent {0} stopped heartbeating for task {1}.".format(row["agent_id"], row["task_id"]),
             ),
         )
+        record_failure(
+            connection,
+            row["project_id"],
+            "session_timed_out",
+            "Session {0} timed out waiting for heartbeat.".format(row["session_id"]),
+            task_id=row["task_id"],
+            session_id=row["session_id"],
+            agent_id=row["agent_id"],
+            details={"reason": "stale_heartbeat"},
+        )
+        repeated_alert = maybe_raise_repeated_failure_alert(
+            connection,
+            row["project_id"],
+            row["task_id"],
+            "Session {0} timed out waiting for heartbeat.".format(row["session_id"]),
+        )
         connection.execute(
             """
             INSERT INTO activity_log (
@@ -97,7 +114,13 @@ def _handle_stale_sessions(connection, stale_after_seconds):
                 json.dumps({"session_id": row["session_id"]}),
             ),
         )
-        findings.append({"session_id": row["session_id"], "task_id": row["task_id"]})
+        findings.append(
+            {
+                "session_id": row["session_id"],
+                "task_id": row["task_id"],
+                "repeated_failure_alert": repeated_alert,
+            }
+        )
 
     return findings
 

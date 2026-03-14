@@ -30,6 +30,8 @@ export interface BoardTask {
   review_state?: string | null;
   goal?: BoardGoal | null;
   agent?: BoardAgent | null;
+  failure_count?: number;
+  latest_failure_at?: string | null;
 }
 
 export interface BoardColumn {
@@ -98,6 +100,8 @@ export interface OverviewSummary {
   goals_active: number;
   alerts_open: number;
   alerts_critical: number;
+  failures_total: number;
+  repeated_failure_tasks: number;
   agents_running: number;
 }
 
@@ -125,6 +129,28 @@ export interface OverviewResponse {
   summary: OverviewSummary;
   active_work: OverviewWorkItem[];
   recent_activity: ActivityItem[];
+  recent_failures: FailureItem[];
+  repeated_failures: RepeatedFailureItem[];
+}
+
+export interface FailureItem {
+  failure_id?: string;
+  task_id?: string | null;
+  session_id?: string | null;
+  agent_id?: string | null;
+  task_title?: string | null;
+  agent_name?: string | null;
+  failure_type: string;
+  summary: string;
+  detail_json?: string;
+  created_at: string;
+}
+
+export interface RepeatedFailureItem {
+  task_id: string;
+  task_title?: string | null;
+  failure_count: number;
+  latest_failure_at?: string | null;
 }
 
 export interface GoalTreeNode {
@@ -176,6 +202,7 @@ export interface AlertsResponse {
     acknowledged: number;
     resolved: number;
     critical_open: number;
+    repeated_failure_open: number;
   };
 }
 
@@ -186,11 +213,14 @@ export interface LiveSnapshot {
     tasks_review: number;
     alerts_open: number;
     agents_running: number;
+    failures_total: number;
+    repeated_failure_tasks: number;
   };
   revision: {
     latest_task?: string | null;
     latest_activity?: string | null;
     latest_alert?: string | null;
+    latest_failure?: string | null;
   };
 }
 
@@ -216,5 +246,10 @@ export interface SupervisorRunResponse {
   stale_sessions: Array<{
     session_id: string;
     task_id: string;
+    repeated_failure_alert?: {
+      alert_id: string;
+      task_id: string;
+      failure_count: number;
+    } | null;
   }>;
 }

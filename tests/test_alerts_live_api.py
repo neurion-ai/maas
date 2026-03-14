@@ -13,12 +13,33 @@ class AlertsAndLiveApiTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Live Test", description="Live test", project_type="custom")
             client = TestClient(create_app(tmpdir))
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    )
+                    SELECT 'fail_demo', project_id, ?, session_id, agent_id, 'session_failed', 'Demo failure', '{}'
+                    FROM sessions
+                    WHERE task_id = ?
+                    LIMIT 1
+                    """,
+                    (task_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
 
             live_response = client.get("/api/live")
             self.assertEqual(live_response.status_code, 200)
             live_payload = live_response.json()
             self.assertIn("counts", live_payload)
             self.assertIn("revision", live_payload)
+            self.assertEqual(live_payload["counts"]["failures_total"], 1)
 
             alerts_response = client.get("/api/alerts")
             self.assertEqual(alerts_response.status_code, 200)
@@ -41,6 +62,12 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             refreshed = client.get("/api/alerts").json()
             matching = [alert for alert in refreshed["alerts"] if alert["alert_id"] == alert_id]
             self.assertEqual(matching[0]["status"], "resolved")
+
+            failures_response = client.get("/api/failures")
+            self.assertEqual(failures_response.status_code, 200)
+            failures_payload = failures_response.json()
+            self.assertEqual(failures_payload["summary"]["total_failures"], 1)
+            self.assertEqual(failures_payload["recent"][0]["failure_type"], "session_failed")
 
     def test_alert_action_requires_board_permission(self):
         with tempfile.TemporaryDirectory() as tmpdir:

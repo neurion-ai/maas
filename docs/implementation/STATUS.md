@@ -54,6 +54,7 @@ The system is best described as **an operational prototype with real infrastruct
   - halt
 - audit logging for steering actions
 - task-scoped capability grants for assigned execution work
+- failed and timed-out sessions now write to failure memory
 
 ### Dashboard
 
@@ -95,7 +96,9 @@ The system is best described as **an operational prototype with real infrastruct
 - stale-session detection exists
 - supervisor pass now refreshes readiness and allocates idle agents
 - alert generation exists
-- broader self-healing, DLQ handling, and failure memory remain incomplete
+- failure memory now records failed and timed-out sessions
+- repeated task failures now raise critical alerts and appear in board/overview/live read models
+- broader self-healing, DLQ handling, and recovery workflows remain incomplete
 
 ### Security
 
@@ -124,6 +127,7 @@ Current work is moving deeper into the goal/task engine with:
 - operator controls for manual supervisor runs and assign-next actions
 - board-side steering controls for reprioritize, reassign, and halt
 - permission-gated steering and alert actions
+- failure-memory logging and repeated-failure surfacing
 
 If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
 
@@ -142,4 +146,5 @@ The project is roughly in the **late Batch 2 through Batch 6 foundation zone** o
 - Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
 - Batches 3, 5, and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
 - Batch 6 now also includes task-scoped execution grants tied to task assignment.
-- Batches 7 and 8 are mostly ahead of us.
+- Batch 7 now has its first real failure-memory foundation, but most recovery automation is still ahead of us.
+- Batch 8 is still mostly ahead of us.

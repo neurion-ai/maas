@@ -2,6 +2,7 @@ import tempfile
 import unittest
 
 from maas.db import connect
+from maas.ids import generate_id
 from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
 
@@ -45,6 +46,40 @@ class BoardReadModelTest(unittest.TestCase):
             matching_cards = [task for task in ready_column["tasks"] if task["task_id"] == task_id]
             self.assertEqual(len(matching_cards), 1)
             self.assertEqual(matching_cards[0]["status"], "assigned")
+
+    def test_board_cards_include_failure_rollup(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Failure Test", description="Board failure test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    )
+                    SELECT ?, project_id, ?, session_id, agent_id, 'session_failed', 'Board-visible failure', '{}'
+                    FROM sessions
+                    WHERE task_id = ?
+                    LIMIT 1
+                    """,
+                    (generate_id("fail"), task_id, task_id),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            matching_cards = [
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id
+            ]
+            self.assertEqual(matching_cards[0]["failure_count"], 1)
+            self.assertIsNotNone(matching_cards[0]["latest_failure_at"])
 
 
 if __name__ == "__main__":

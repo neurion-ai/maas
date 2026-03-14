@@ -63,6 +63,17 @@ class SupervisorApiTest(unittest.TestCase):
                 agent = connection.execute(
                     "SELECT status, current_task_id FROM agents WHERE agent_id = 'agent_builder'"
                 ).fetchone()
+                failure = connection.execute(
+                    """
+                    SELECT failure_type
+                    FROM failure_log
+                    WHERE task_id = (
+                        SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'
+                    )
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
             finally:
                 connection.close()
 
@@ -72,6 +83,7 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["review_state"], "stale_session")
             self.assertEqual(agent["status"], "error")
             self.assertIsNone(agent["current_task_id"])
+            self.assertEqual(failure["failure_type"], "session_timed_out")
 
     def test_supervisor_api_endpoint_runs_pass(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -150,6 +162,109 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["status"], "in_progress")
             self.assertIsNone(task["review_state"])
             self.assertEqual(healthy_session["status"], "active")
+
+    def test_supervisor_raises_repeated_failure_alert_for_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Repeated Failure Test",
+                description="Supervisor repeated failure test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    )
+                    SELECT ?, project_id, ?, session_id, agent_id, 'session_failed', 'Earlier failure', '{}'
+                    FROM sessions
+                    WHERE task_id = ?
+                    LIMIT 1
+                    """,
+                    (generate_id("fail"), task_id, task_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                repeated_alert = connection.execute(
+                    """
+                    SELECT title, severity
+                    FROM alerts
+                    WHERE title = 'Repeated task failures'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(repeated_alert["title"], "Repeated task failures")
+            self.assertEqual(repeated_alert["severity"], "critical")
+            self.assertIsNotNone(supervisor_result["stale_sessions"][0]["repeated_failure_alert"])
+
+    def test_cancelled_sessions_do_not_count_toward_repeated_failure_alerts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Cancelled Failure Test",
+                description="Supervisor cancelled failure test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    )
+                    SELECT ?, project_id, ?, session_id, agent_id, 'session_cancelled', 'Operator cancelled work', '{}'
+                    FROM sessions
+                    WHERE task_id = ?
+                    LIMIT 1
+                    """,
+                    (generate_id("fail"), task_id, task_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                repeated_alert = connection.execute(
+                    """
+                    SELECT alert_id
+                    FROM alerts
+                    WHERE title = 'Repeated task failures'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertIsNone(repeated_alert)
+            self.assertIsNone(supervisor_result["stale_sessions"][0]["repeated_failure_alert"])
 
 
 if __name__ == "__main__":

@@ -139,7 +139,7 @@ def _task_text(task_row):
 
 
 def _role_bonus(agent_row, task_row):
-    if task_row["status"] == "assigned" and task_row["assigned_agent_id"] == agent_row["agent_id"]:
+    if task_row["assigned_agent_id"] == agent_row["agent_id"]:
         return 300
 
     bonus = 0
@@ -280,14 +280,14 @@ def allocate_ready_tasks(connection, actor_id="system_allocator", limit=None):
     allocations = []
     new_assignment_count = 0
     for row in idle_agents:
+        if limit is not None and new_assignment_count >= limit:
+            break
         result = assign_next_task(connection, row["agent_id"], actor_id=actor_id)
         if result["task_id"] is None:
             continue
         if result["assigned"]:
             allocations.append(result)
             new_assignment_count += 1
-        if limit is not None and new_assignment_count >= limit:
-            break
 
     return {
         "allocations": allocations,

@@ -251,6 +251,45 @@ def recover_task(connection, task_id, actor_id):
     return {"task_id": task_id, "status": "planned"}
 
 
+def resolve_task_repeated_failures(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, status
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(
+        connection,
+        actor_id,
+        task["project_id"],
+        "resolve_task_repeated_failures",
+        "task",
+        task_id,
+    )
+
+    resolved_alert_ids = resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        resolution_reason="operator_triaged",
+    )
+    if not resolved_alert_ids:
+        raise ValueError("Task has no open repeated-failure alert")
+
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "resolved_alert_ids": resolved_alert_ids,
+        "resolved_count": len(resolved_alert_ids),
+        "status": task["status"],
+    }
+
+
 def reprioritize_task(connection, task_id, actor_id, priority):
     task = connection.execute(
         "SELECT task_id, project_id, assigned_agent_id FROM tasks WHERE task_id = ?",

@@ -356,6 +356,84 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(matching_primary["status"], "resolved")
             self.assertEqual(matching_other["status"], "open")
 
+    def test_resolve_repeated_failures_action_resolves_incident_without_recovering_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Repeated Failure Triage Test",
+                description="Resolve repeated failure incident without recovering task",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, failure_type, summary, detail_json
+                    ) VALUES ('fail_previous', ?, ?, 'session_failed', 'Earlier failure', '{}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting repeated failure triage test",
+                )
+                end_session(connection, session_id, "failed", "Repeated failure")
+
+                repeated_alert = connection.execute(
+                    """
+                    SELECT alert_id, status
+                    FROM alerts
+                    WHERE title = 'Repeated task failures'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(repeated_alert["status"], "open")
+
+            client = TestClient(create_app(tmpdir))
+            resolve_response = client.post(
+                "/api/tasks/{0}/actions/resolve-repeated-failures".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(resolve_response.status_code, 200)
+            self.assertEqual(resolve_response.json()["resolved_count"], 1)
+            self.assertEqual(resolve_response.json()["status"], "blocked")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                resolved_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE alert_id = ?
+                    """,
+                    (repeated_alert["alert_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+            self.assertEqual(resolved_alert["status"], "resolved")
+
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Pause Halt Test", description="Pause then halt", project_type="custom")

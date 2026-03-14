@@ -25,6 +25,7 @@ from maas.services.steering import (
     reassign_task,
     recover_agent,
     recover_task,
+    resolve_task_repeated_failures,
     reprioritize_task,
     resume_agent,
     review_task,
@@ -463,6 +464,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return recover_task(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/resolve-repeated-failures")
+    def task_resolve_repeated_failures_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return resolve_task_repeated_failures(connection, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

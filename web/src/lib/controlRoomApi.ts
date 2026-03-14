@@ -232,6 +232,12 @@ export async function runAlertOperatorAction(operatorAction: AlertOperatorAction
     await postJson(`/api/tasks/${operatorAction.resource_id}/actions/recover`, { actor_id: "agent_allocator" });
     return;
   }
+  if (operatorAction.action === "resolve_repeated_failures") {
+    await postJson(`/api/tasks/${operatorAction.resource_id}/actions/resolve-repeated-failures`, {
+      actor_id: "agent_allocator"
+    });
+    return;
+  }
   await postJson(`/api/agents/${operatorAction.resource_id}/actions/recover`, { actor_id: "agent_allocator" });
 }
 

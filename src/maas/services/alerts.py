@@ -33,6 +33,18 @@ def _can_recover_task(connection, task_id):
     return task["status"] == "blocked" and task["review_state"] in RECOVERABLE_FAILURE_REVIEW_STATES
 
 
+def _can_resolve_repeated_failures(connection, task_id):
+    task = connection.execute(
+        """
+        SELECT task_id
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    return task is not None
+
+
 def _can_recover_agent(connection, agent_id):
     agent = connection.execute(
         """
@@ -70,10 +82,10 @@ def _infer_operator_action(connection, title, description):
             }
     if title == "Repeated task failures":
         match = REPEATED_TASK_FAILURE_PATTERN.match(description)
-        if match is not None and _can_recover_task(connection, match.group("task_id")):
+        if match is not None and _can_resolve_repeated_failures(connection, match.group("task_id")):
             return {
-                "action": "recover_task",
-                "label": "Recover task",
+                "action": "resolve_repeated_failures",
+                "label": "Resolve repeated failures",
                 "resource_type": "task",
                 "resource_id": match.group("task_id"),
             }

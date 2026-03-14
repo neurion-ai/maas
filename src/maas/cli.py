@@ -12,7 +12,7 @@ from maas.db import connect, project_paths, run_migrations
 from maas.services.bootstrap import bootstrap_project
 from maas.services.board import fetch_board
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
-from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.supervisor import run_supervisor_once
 
 
@@ -53,6 +53,12 @@ def build_parser():
     task_evaluate_parser = task_subparsers.add_parser("evaluate")
     task_evaluate_parser.add_argument("--project-root", default=".")
     task_evaluate_parser.add_argument("--task-id", required=True)
+
+    task_allocate_parser = task_subparsers.add_parser("allocate")
+    task_allocate_parser.add_argument("--project-root", default=".")
+    task_allocate_parser.add_argument("--agent-id")
+    task_allocate_parser.add_argument("--actor-id", default="system_allocator")
+    task_allocate_parser.add_argument("--limit", type=int)
 
     worker_parser = subparsers.add_parser("worker")
     worker_parser.add_argument("--project-root", default=".")
@@ -169,6 +175,11 @@ def command_task(args):
             print(json.dumps({"changed": changed, "tasks": resolve_ready_tasks(connection)}, indent=2))
         elif args.task_command == "evaluate":
             print(json.dumps(evaluate_task(connection, paths, args.task_id), indent=2))
+        elif args.task_command == "allocate":
+            if args.agent_id:
+                print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))
+            else:
+                print(json.dumps(allocate_ready_tasks(connection, actor_id=args.actor_id, limit=args.limit), indent=2))
     finally:
         connection.close()
 

@@ -13,7 +13,7 @@ from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
-from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
 
 
@@ -76,6 +76,15 @@ class AgentActionRequest(BaseModel):
 
 class AlertActionRequest(BaseModel):
     actor_id: str
+
+
+class AssignTaskRequest(BaseModel):
+    actor_id: str = "system_allocator"
+
+
+class AllocateTasksRequest(BaseModel):
+    actor_id: str = "system_allocator"
+    limit: int = None
 
 
 def create_app(project_root="."):
@@ -224,6 +233,8 @@ def create_app(project_root="."):
                 status_message=payload.status_message,
             )
             return {"session_id": session_id}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 
@@ -307,6 +318,16 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.post("/api/tasks/actions/allocate-ready")
+    def task_allocate_ready_action(payload: AllocateTasksRequest):
+        connection = connect(paths)
+        try:
+            return allocate_ready_tasks(connection, actor_id=payload.actor_id, limit=payload.limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.post("/api/tasks/{task_id}/actions/reprioritize")
     def task_reprioritize_action(task_id: str, payload: ReprioritizeTaskRequest):
         connection = connect(paths)
@@ -322,6 +343,16 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return reassign_task(connection, task_id, payload.actor_id, payload.agent_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/agents/{agent_id}/actions/assign-next")
+    def agent_assign_next_action(agent_id: str, payload: AssignTaskRequest):
+        connection = connect(paths)
+        try:
+            return assign_next_task(connection, agent_id, actor_id=payload.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

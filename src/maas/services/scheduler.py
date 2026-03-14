@@ -8,6 +8,14 @@ import subprocess
 from maas.ids import generate_id
 
 
+ROLE_KEYWORDS = {
+    "allocator": ("plan", "schedule", "priorit", "board", "queue", "workflow", "orchestr", "wire"),
+    "researcher": ("define", "research", "investigate", "explore", "discover", "understand", "analyze"),
+    "builder": ("implement", "build", "create", "integrate", "bootstrap", "fix", "ship"),
+    "reviewer": ("review", "validate", "verify", "audit", "acceptance", "qa"),
+}
+
+
 def _compare(left, operator, right):
     if operator == ">=":
         return left >= right
@@ -124,6 +132,167 @@ def refresh_ready_tasks(connection):
             )
     connection.commit()
     return changed
+
+
+def _task_text(task_row):
+    return "{0} {1}".format(task_row["title"] or "", task_row["description"] or "").lower()
+
+
+def _role_bonus(agent_row, task_row):
+    if task_row["status"] == "assigned" and task_row["assigned_agent_id"] == agent_row["agent_id"]:
+        return 300
+
+    bonus = 0
+    text = _task_text(task_row)
+    for keyword in ROLE_KEYWORDS.get(agent_row["role"], ()):
+        if keyword in text:
+            bonus += 40
+            break
+
+    if agent_row["role"] == "builder" and bonus == 0:
+        bonus += 10
+    return bonus
+
+
+def _candidate_tasks_for_agent(connection, agent_row):
+    refresh_ready_tasks(connection)
+    rows = connection.execute(
+        """
+        SELECT task_id, project_id, title, description, status, priority, assigned_agent_id, created_at
+        FROM tasks
+        WHERE status IN ('ready', 'assigned')
+        ORDER BY priority DESC, created_at ASC
+        """
+    ).fetchall()
+
+    candidates = []
+    for row in rows:
+        if row["assigned_agent_id"] and row["assigned_agent_id"] != agent_row["agent_id"]:
+            continue
+        score = row["priority"] + _role_bonus(agent_row, row)
+        candidates.append((score, row))
+    candidates.sort(key=lambda item: (-item[0], item[1]["created_at"], item[1]["title"]))
+    return [row for _, row in candidates]
+
+
+def _audit_assignment(connection, project_id, actor_id, task_id, agent_id, assignment_type):
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, ?, 'task', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            "assign_task",
+            task_id,
+            json.dumps({"agent_id": agent_id, "assignment_type": assignment_type}),
+        ),
+    )
+
+
+def _log_assignment_activity(connection, project_id, agent_id, task_id, description):
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, 'task_assigned', 'allocation', ?, ?, 'info')
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            agent_id,
+            task_id,
+            description,
+            json.dumps({}),
+        ),
+    )
+
+
+def assign_next_task(connection, agent_id, actor_id="system_allocator"):
+    agent_row = connection.execute(
+        """
+        SELECT agent_id, project_id, role, display_name, status, current_task_id
+        FROM agents
+        WHERE agent_id = ?
+        """,
+        (agent_id,),
+    ).fetchone()
+    if agent_row is None:
+        raise ValueError("Agent not found")
+    if agent_row["status"] != "idle" or agent_row["current_task_id"] is not None:
+        raise ValueError("Agent is not idle")
+
+    candidates = _candidate_tasks_for_agent(connection, agent_row)
+    if not candidates:
+        return {"agent_id": agent_id, "task_id": None, "assigned": False}
+
+    task_row = candidates[0]
+    if task_row["status"] == "assigned" and task_row["assigned_agent_id"] == agent_id:
+        return {
+            "agent_id": agent_id,
+            "task_id": task_row["task_id"],
+            "task_title": task_row["title"],
+            "status": "assigned",
+            "assigned": False,
+            "already_assigned": True,
+        }
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET assigned_agent_id = ?, status = 'assigned', review_state = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (agent_id, task_row["task_id"]),
+    )
+    _audit_assignment(connection, task_row["project_id"], actor_id, task_row["task_id"], agent_id, "allocator")
+    _log_assignment_activity(
+        connection,
+        task_row["project_id"],
+        agent_id,
+        task_row["task_id"],
+        "Allocator assigned task to {0}.".format(agent_row["display_name"]),
+    )
+    connection.commit()
+    return {
+        "agent_id": agent_id,
+        "task_id": task_row["task_id"],
+        "task_title": task_row["title"],
+        "status": "assigned",
+        "assigned": True,
+        "already_assigned": False,
+    }
+
+
+def allocate_ready_tasks(connection, actor_id="system_allocator", limit=None):
+    idle_agents = connection.execute(
+        """
+        SELECT agent_id
+        FROM agents
+        WHERE status = 'idle' AND current_task_id IS NULL
+        ORDER BY display_name ASC
+        """
+    ).fetchall()
+
+    allocations = []
+    new_assignment_count = 0
+    for row in idle_agents:
+        result = assign_next_task(connection, row["agent_id"], actor_id=actor_id)
+        if result["task_id"] is None:
+            continue
+        if result["assigned"]:
+            allocations.append(result)
+            new_assignment_count += 1
+        if limit is not None and new_assignment_count >= limit:
+            break
+
+    return {
+        "allocations": allocations,
+        "assigned_count": new_assignment_count,
+    }
 
 
 def _evaluate_artifact_exists(connection, task_row, project_paths, criterion):

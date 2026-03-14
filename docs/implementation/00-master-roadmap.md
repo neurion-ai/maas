@@ -11,7 +11,7 @@ This roadmap now needs to be read alongside the actual implementation status:
 | Batch | Status | Notes |
 |---|---|---|
 | 1. Core kernel and scaffold | Implemented | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
-| 2. Goal/task engine | Partial | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation |
+| 2. Goal/task engine | Partial | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
 | 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, simulated worker path |
 | 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, roster/overview/goal tree reads |
@@ -21,11 +21,12 @@ This roadmap now needs to be read alongside the actual implementation status:
 
 ## In-Flight Work
 
-The current development branch is extending the scheduler from storage and status plumbing into actual task evaluation behavior:
+The current development branch is extending the scheduler from storage and status plumbing into actual orchestration behavior:
 
 - dependency-aware ready queue refresh
+- idle-agent task allocation
 - acceptance evaluation for artifact, metric, SQL, and test-command checks
-- CLI and API task actions for refresh and evaluation
+- CLI and API task actions for refresh, assignment, and evaluation
 
 Until that branch merges, treat those items as in progress rather than shipped.
 
@@ -55,7 +56,7 @@ This repository now includes:
 - SQLite migrations and a migration runner
 - greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
 - FastAPI read models for board, overview, goal tree, agents, activity, alerts, and providers
-- task actions for ready queue refresh and acceptance evaluation
+- task actions for ready queue refresh, allocator assignment, and acceptance evaluation
 - lifecycle API/CLI surface
 - a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, and Activity views
 

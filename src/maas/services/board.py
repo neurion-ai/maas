@@ -67,6 +67,12 @@ def _matches_filters(row, filters):
     return True
 
 
+def _board_column_key(status):
+    if status == "assigned":
+        return "ready"
+    return status
+
+
 def fetch_board(connection, filters=None):
     rows = connection.execute(
         """
@@ -97,6 +103,7 @@ def fetch_board(connection, filters=None):
     filtered_rows = [row for row in rows if _matches_filters(row, filters or {})]
     for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
+        column_key = _board_column_key(row["status"])
         card = {
             "task_id": row["task_id"],
             "title": row["title"],
@@ -114,7 +121,7 @@ def fetch_board(connection, filters=None):
             "heartbeat_age_seconds": _age_seconds(row["last_heartbeat_at"]),
             "age_hours": round(age_minutes / 60.0, 1) if age_minutes is not None else None,
         }
-        cards_by_status.setdefault(row["status"], []).append(card)
+        cards_by_status.setdefault(column_key, []).append(card)
 
     active_agents = connection.execute(
         "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"

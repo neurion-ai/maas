@@ -408,8 +408,6 @@ def _quarantined_artifacts_by_session(connection, session_ids):
         )
 
     return artifacts_by_session
-
-
 def enrich_failures_with_quarantine(connection, failures):
     session_ids = [failure["session_id"] for failure in failures if failure.get("session_id")]
     artifacts_by_session = _quarantined_artifacts_by_session(connection, session_ids)
@@ -437,6 +435,9 @@ def fetch_failure_log(connection, limit=20):
             failure_log.detail_json,
             failure_log.created_at,
             tasks.title AS task_title,
+            tasks.retry_count,
+            tasks.last_retry_at,
+            tasks.last_retry_reason,
             agents.display_name AS agent_name
         FROM failure_log
         LEFT JOIN tasks ON tasks.task_id = failure_log.task_id

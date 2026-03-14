@@ -126,6 +126,14 @@ export function TaskCard({
           <dt>Failures</dt>
           <dd>{task.failure_count ? `${task.failure_count} logged` : "None"}</dd>
         </div>
+        <div>
+          <dt>Retries</dt>
+          <dd>
+            {task.retry_count
+              ? `${task.retry_count} auto retr${task.retry_count === 1 ? "y" : "ies"}${task.last_retry_reason ? ` (${task.last_retry_reason})` : ""}`
+              : "None"}
+          </dd>
+        </div>
       </dl>
       {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue) && (
         <div className="task-card__actions">

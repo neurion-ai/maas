@@ -15,6 +15,20 @@ from maas.supervisor import run_supervisor_once
 
 
 class SupervisorApiTest(unittest.TestCase):
+    def _enable_timeout_auto_retry(self, connection, max_retries=1):
+        project = connection.execute(
+            "SELECT project_id, config_json FROM projects LIMIT 1"
+        ).fetchone()
+        config = json.loads(project["config_json"] or "{}")
+        config["recovery"] = {
+            "auto_retry_timeout_sessions": True,
+            "max_timed_out_retries": max_retries,
+        }
+        connection.execute(
+            "UPDATE projects SET config_json = ? WHERE project_id = ?",
+            (json.dumps(config), project["project_id"]),
+        )
+
     def test_supervisor_refreshes_ready_tasks_and_allocates_idle_agents(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Supervisor Test", description="Supervisor test", project_type="custom")
@@ -87,6 +101,166 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(agent["status"], "error")
             self.assertIsNone(agent["current_task_id"])
             self.assertEqual(failure["failure_type"], "session_timed_out")
+
+    def test_supervisor_auto_retries_timed_out_session_when_policy_allows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Retry Test",
+                description="Supervisor auto retry test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._enable_timeout_auto_retry(connection, max_retries=1)
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                blocker_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    "UPDATE tasks SET status = 'done' WHERE task_id = ?",
+                    (blocker_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, assigned_agent_id, retry_count, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                agent = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = 'agent_builder'"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(supervisor_result["stale_sessions"]), 1)
+            self.assertTrue(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertEqual(supervisor_result["stale_sessions"][0]["retry_count"], 1)
+            self.assertEqual(task["status"], "ready")
+            self.assertIsNone(task["review_state"])
+            self.assertIsNone(task["assigned_agent_id"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_timed_out")
+            self.assertEqual(agent["status"], "error")
+            self.assertIsNone(agent["current_task_id"])
+
+    def test_supervisor_does_not_auto_retry_operator_paused_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Paused Task Test",
+                description="Supervisor paused task test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._enable_timeout_auto_retry(connection, max_retries=1)
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            pause_response = client.post(
+                "/api/agents/agent_builder/actions/pause",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(pause_response.status_code, 200)
+
+            connection = connect(result["paths"])
+            try:
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertFalse(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "paused_by_operator")
+            self.assertEqual(task["retry_count"], 0)
+            self.assertIsNone(task["last_retry_reason"])
+
+    def test_supervisor_leaves_timed_out_task_blocked_when_retry_budget_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Retry Budget Test",
+                description="Supervisor retry budget test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._enable_timeout_auto_retry(connection, max_retries=1)
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertFalse(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "stale_session")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_timed_out")
 
     def test_recover_action_can_requeue_stale_session_task_without_resetting_agent_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

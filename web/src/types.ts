@@ -25,6 +25,9 @@ export interface BoardTask {
   status: BoardColumnKey | "assigned";
   priority: number;
   progress_pct?: number | null;
+  retry_count?: number;
+  last_retry_at?: string | null;
+  last_retry_reason?: string | null;
   heartbeat_age_seconds?: number | null;
   age_hours?: number | null;
   review_state?: string | null;
@@ -111,6 +114,8 @@ export interface OverviewWorkItem {
   title: string;
   status: string;
   priority: number;
+  retry_count?: number;
+  last_retry_reason?: string | null;
   goal_title?: string | null;
   agent_name?: string | null;
 }
@@ -141,6 +146,9 @@ export interface FailureItem {
   agent_id?: string | null;
   task_title?: string | null;
   agent_name?: string | null;
+  retry_count?: number;
+  last_retry_at?: string | null;
+  last_retry_reason?: string | null;
   failure_type: string;
   summary: string;
   detail_json?: string;

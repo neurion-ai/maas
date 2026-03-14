@@ -79,6 +79,74 @@ class SchedulerApiTest(unittest.TestCase):
             self.assertTrue(query_result["overall_passed"])
             self.assertTrue(command_result["overall_passed"])
 
+    def test_evaluate_task_returns_failed_result_for_invalid_query_and_timeout(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Scheduler Failure Test",
+                description="Scheduler failure test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                invalid_query_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Bootstrap migration runner'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {
+                                    "type": "db_query",
+                                    "query": "SELECT missing_column FROM not_a_real_table",
+                                    "op": ">=",
+                                    "value": 1,
+                                }
+                            ]
+                        ),
+                        invalid_query_task_id,
+                    ),
+                )
+
+                timeout_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {
+                                    "type": "test_passes",
+                                    "command": "python3 -c 'import time; time.sleep(1)'",
+                                    "timeout_seconds": 0,
+                                }
+                            ]
+                        ),
+                        timeout_task_id,
+                    ),
+                )
+                connection.commit()
+
+                invalid_query_result = evaluate_task(connection, result["paths"], invalid_query_task_id)
+                timeout_result = evaluate_task(connection, result["paths"], timeout_task_id)
+            finally:
+                connection.close()
+
+            self.assertFalse(invalid_query_result["overall_passed"])
+            self.assertIn("Query failed:", invalid_query_result["results"][0]["reason"])
+            self.assertFalse(timeout_result["overall_passed"])
+            self.assertIn("timed out", timeout_result["results"][0]["reason"])
+
     def test_refresh_ready_updates_blocked_and_unblocked_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Ready Test", description="Ready test", project_type="custom")

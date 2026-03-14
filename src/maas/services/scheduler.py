@@ -2,6 +2,7 @@
 
 import json
 import os
+import sqlite3
 import subprocess
 
 from maas.ids import generate_id
@@ -164,7 +165,14 @@ def _evaluate_db_query(connection, criterion):
     expected = criterion.get("value")
     if not query or expected is None:
         return {"type": "db_query", "passed": False, "reason": "Query or expected value missing."}
-    row = connection.execute(query).fetchone()
+    try:
+        row = connection.execute(query).fetchone()
+    except sqlite3.Error as exc:
+        return {
+            "type": "db_query",
+            "passed": False,
+            "reason": "Query failed: {0}".format(str(exc)),
+        }
     actual = None if row is None else list(row)[0]
     if actual is None:
         return {"type": "db_query", "passed": False, "reason": "Query returned no rows."}
@@ -181,15 +189,26 @@ def _evaluate_test_passes(project_paths, criterion):
     timeout = int(criterion.get("timeout_seconds", 30))
     if not command:
         return {"type": "test_passes", "passed": False, "reason": "Command missing."}
-    result = subprocess.run(
-        command,
-        cwd=project_paths.root,
-        shell=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=timeout,
-        universal_newlines=True,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=project_paths.root,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            universal_newlines=True,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = exc.output or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        return {
+            "type": "test_passes",
+            "passed": False,
+            "reason": "Command timed out after {0}s".format(timeout),
+            "output": output[-500:],
+        }
     return {
         "type": "test_passes",
         "passed": result.returncode == 0,

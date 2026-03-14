@@ -295,6 +295,12 @@ def reject_escalation(connection, escalation_id, actor_id, resolution_note=""):
     return {"escalation_id": escalation_id, "status": "rejected"}
 
 
+def count_open_escalations(connection):
+    return connection.execute(
+        "SELECT COUNT(*) AS count FROM escalation_queue WHERE status = 'open'"
+    ).fetchone()["count"]
+
+
 def fetch_escalations(connection):
     rows = connection.execute(
         """
@@ -331,7 +337,7 @@ def fetch_escalations(connection):
         "escalations": [dict(row) for row in rows],
         "grouped": grouped,
         "summary": {
-            "open": len(grouped.get("open", [])),
+            "open": count_open_escalations(connection),
             "approved": len(grouped.get("approved", [])),
             "rejected": len(grouped.get("rejected", [])),
         },

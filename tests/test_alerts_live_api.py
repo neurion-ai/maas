@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -7,6 +8,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import request_escalation
+from maas.services.live import build_live_snapshot
 
 
 class AlertsAndLiveApiTest(unittest.TestCase):
@@ -96,6 +98,22 @@ class AlertsAndLiveApiTest(unittest.TestCase):
 
             self.assertEqual(live_payload["counts"]["escalations_open"], 1)
             self.assertIsNotNone(live_payload["revision"]["latest_escalation"])
+
+    def test_live_snapshot_does_not_load_full_escalation_queue_for_open_count(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Live Query Test", description="Live query test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                with patch("maas.services.live.count_open_escalations", return_value=7), patch(
+                    "maas.services.live.fetch_escalations",
+                    side_effect=AssertionError("build_live_snapshot should not fetch the full escalation queue"),
+                    create=True,
+                ):
+                    snapshot = build_live_snapshot(connection)
+            finally:
+                connection.close()
+
+            self.assertEqual(snapshot["counts"]["escalations_open"], 7)
 
     def test_alert_action_requires_board_permission(self):
         with tempfile.TemporaryDirectory() as tmpdir:

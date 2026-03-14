@@ -36,6 +36,23 @@ def _repeated_failure_clause():
     return "failure_type IN ({0})".format(placeholders), REPEATED_FAILURE_TYPES
 
 
+def _escape_like(value):
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _repeated_failure_alert_like_pattern(task_id):
+    return "Task {0} (%".format(_escape_like(task_id))
+
+
+def _repeated_failure_alert_description(task_id, task_title, failure_count, summary):
+    return "Task {0} ({1}) has failed {2} times. Latest failure: {3}".format(
+        task_id,
+        task_title,
+        failure_count,
+        summary,
+    )
+
+
 def _failure_count_for_task(connection, task_id):
     if task_id is None:
         return 0
@@ -105,20 +122,16 @@ def maybe_raise_repeated_failure_alert(connection, project_id, task_id, summary)
           AND status IN ('open', 'acknowledged')
           AND title = 'Repeated task failures'
           AND description LIKE ?
+          ESCAPE '\\'
         LIMIT 1
         """,
-        (project_id, "%{0}%".format(task_id)),
+        (project_id, _repeated_failure_alert_like_pattern(task_id)),
     ).fetchone()
     if existing is not None:
         return None
 
     alert_id = generate_id("alert")
-    description = "Task {0} ({1}) has failed {2} times. Latest failure: {3}".format(
-        task_id,
-        task["title"],
-        failure_count,
-        summary,
-    )
+    description = _repeated_failure_alert_description(task_id, task["title"], failure_count, summary)
     connection.execute(
         """
         INSERT INTO alerts (
@@ -156,8 +169,9 @@ def resolve_repeated_failure_alerts(connection, project_id, task_id, actor_id, r
           AND status IN ('open', 'acknowledged')
           AND title = 'Repeated task failures'
           AND description LIKE ?
+          ESCAPE '\\'
         """,
-        (project_id, "%{0}%".format(task_id)),
+        (project_id, _repeated_failure_alert_like_pattern(task_id)),
     ).fetchall()
 
     resolved_alert_ids = []

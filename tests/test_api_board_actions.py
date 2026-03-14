@@ -270,6 +270,24 @@ class BoardApiActionsTest(unittest.TestCase):
                 task_id = connection.execute(
                     "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
                 ).fetchone()["task_id"]
+                other_task = connection.execute(
+                    "SELECT task_id, title FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES ('alert_other_task', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task {0} ({1}) has failed 2 times. Latest failure: refer to {2}".format(
+                            other_task["task_id"],
+                            other_task["title"],
+                            task_id,
+                        ),
+                    ),
+                )
                 connection.execute(
                     """
                     INSERT INTO failure_log (
@@ -290,20 +308,30 @@ class BoardApiActionsTest(unittest.TestCase):
                 )
                 end_session(connection, session_id, "failed", "Repeated failure")
 
-                repeated_alert = connection.execute(
-                    """
-                    SELECT alert_id, status
-                    FROM alerts
-                    WHERE title = 'Repeated task failures'
-                    ORDER BY created_at DESC
-                    LIMIT 1
-                    """
-                ).fetchone()
+                repeated_alerts = [
+                    dict(row)
+                    for row in connection.execute(
+                        """
+                        SELECT alert_id, description, status
+                        FROM alerts
+                        WHERE title = 'Repeated task failures'
+                        ORDER BY created_at ASC
+                        """
+                    ).fetchall()
+                ]
+                primary_alert = [
+                    alert for alert in repeated_alerts if alert["description"].startswith("Task {0} (".format(task_id))
+                ][0]
+                other_alert = [
+                    alert
+                    for alert in repeated_alerts
+                    if alert["description"].startswith("Task {0} (".format(other_task["task_id"]))
+                ][0]
             finally:
                 connection.close()
 
-            self.assertIsNotNone(repeated_alert)
-            self.assertEqual(repeated_alert["status"], "open")
+            self.assertEqual(primary_alert["status"], "open")
+            self.assertEqual(other_alert["status"], "open")
 
             client = TestClient(create_app(tmpdir))
             recover_response = client.post(
@@ -313,8 +341,10 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(recover_response.status_code, 200)
 
             alerts_payload = client.get("/api/alerts").json()
-            matching_alert = [alert for alert in alerts_payload["alerts"] if alert["alert_id"] == repeated_alert["alert_id"]][0]
-            self.assertEqual(matching_alert["status"], "resolved")
+            matching_primary = [alert for alert in alerts_payload["alerts"] if alert["alert_id"] == primary_alert["alert_id"]][0]
+            matching_other = [alert for alert in alerts_payload["alerts"] if alert["alert_id"] == other_alert["alert_id"]][0]
+            self.assertEqual(matching_primary["status"], "resolved")
+            self.assertEqual(matching_other["status"], "open")
 
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:

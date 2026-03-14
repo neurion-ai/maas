@@ -35,10 +35,10 @@ Legend:
 - [x] Steering controls for review, reprioritize, reassign, pause/resume, and halt
 - [x] Escalation queue for risky steering approvals
 - [x] Failure-memory logging, repeated-failure alerts, and task recovery for failure-blocked work
+- [x] Recovery for agents left in `error`
 
 ### Still to do on `main`
 
-- [ ] Recovery for agents left in `error`
 - [ ] Real external provider integrations
 - [ ] Automated restart, retry, and DLQ workflows
 - [ ] Brownfield onboarding and multi-project support

@@ -144,6 +144,63 @@ def maybe_raise_repeated_failure_alert(connection, project_id, task_id, summary)
     return {"alert_id": alert_id, "task_id": task_id, "failure_count": failure_count}
 
 
+def resolve_repeated_failure_alerts(connection, project_id, task_id, actor_id, resolution_reason):
+    if task_id is None:
+        return []
+
+    rows = connection.execute(
+        """
+        SELECT alert_id
+        FROM alerts
+        WHERE project_id = ?
+          AND status IN ('open', 'acknowledged')
+          AND title = 'Repeated task failures'
+          AND description LIKE ?
+        """,
+        (project_id, "%{0}%".format(task_id)),
+    ).fetchall()
+
+    resolved_alert_ids = []
+    for row in rows:
+        connection.execute(
+            "UPDATE alerts SET status = 'resolved' WHERE alert_id = ?",
+            (row["alert_id"],),
+        )
+        connection.execute(
+            """
+            INSERT INTO audit_trail (
+                audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+            ) VALUES (?, ?, ?, 'resolve_repeated_failure_alert', 'alert', ?, ?)
+            """,
+            (
+                generate_id("audit"),
+                project_id,
+                actor_id,
+                row["alert_id"],
+                json.dumps({"task_id": task_id, "reason": resolution_reason}),
+            ),
+        )
+        resolved_alert_ids.append(row["alert_id"])
+
+    if resolved_alert_ids:
+        connection.execute(
+            """
+            INSERT INTO activity_log (
+                activity_id, project_id, task_id, action, category, description, details_json, severity
+            ) VALUES (?, ?, ?, 'repeated_failure_alert_resolved', 'resilience', ?, ?, 'info')
+            """,
+            (
+                generate_id("act"),
+                project_id,
+                task_id,
+                "Repeated failure alerts resolved for task {0}.".format(task_id),
+                json.dumps({"alert_ids": resolved_alert_ids, "reason": resolution_reason}),
+            ),
+        )
+
+    return resolved_alert_ids
+
+
 def fetch_failure_log(connection, limit=20):
     rows = connection.execute(
         """

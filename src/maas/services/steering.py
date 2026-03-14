@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.failure_memory import resolve_repeated_failure_alerts
 from maas.services.security import (
     TASK_EXECUTION_CAPABILITIES,
     ensure_board_action_allowed,
@@ -230,6 +231,13 @@ def recover_task(connection, task_id, actor_id):
         task_id,
         "recovered",
         "Task returned to the planning queue after failure recovery.",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        resolution_reason="task_recovered",
     )
     connection.commit()
     return {"task_id": task_id, "status": "planned"}

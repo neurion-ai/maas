@@ -79,3 +79,79 @@ export interface BoardResponse {
     goal_id?: string | null;
   };
 }
+
+export interface OverviewProject {
+  project_id: string;
+  name: string;
+  description: string;
+  project_type: string;
+}
+
+export interface OverviewSummary {
+  tasks_total: number;
+  tasks_in_progress: number;
+  tasks_review: number;
+  tasks_blocked: number;
+  goals_total: number;
+  goals_active: number;
+  alerts_open: number;
+  alerts_critical: number;
+  agents_running: number;
+}
+
+export interface OverviewWorkItem {
+  task_id: string;
+  title: string;
+  status: string;
+  priority: number;
+  goal_title?: string | null;
+  agent_name?: string | null;
+}
+
+export interface ActivityItem {
+  activity_id?: string;
+  action: string;
+  description: string;
+  severity: string;
+  created_at: string;
+  agent_id?: string | null;
+  task_id?: string | null;
+}
+
+export interface OverviewResponse {
+  project: OverviewProject | null;
+  summary: OverviewSummary;
+  active_work: OverviewWorkItem[];
+  recent_activity: ActivityItem[];
+}
+
+export interface GoalTreeNode {
+  goal_id: string;
+  parent_goal_id?: string | null;
+  title: string;
+  description: string;
+  status: string;
+  goal_type: string;
+  priority: number;
+  task_counts: Record<string, number>;
+  children: GoalTreeNode[];
+}
+
+export interface GoalTreeResponse {
+  roots: GoalTreeNode[];
+  total_goals: number;
+}
+
+export interface AgentRosterEntry {
+  agent_id: string;
+  role: string;
+  display_name: string;
+  status: string;
+  current_task_id?: string | null;
+  current_task_title?: string | null;
+  heartbeat_age_seconds?: number | null;
+}
+
+export interface AgentRosterResponse {
+  agents: AgentRosterEntry[];
+}

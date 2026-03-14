@@ -8,6 +8,7 @@ from maas.db import connect
 from maas.paths import ProjectPaths
 from maas.providers import list_providers
 from maas.services.board import fetch_board
+from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
 
@@ -124,18 +125,27 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/goals/tree")
+    def goals_tree():
+        connection = connect(paths)
+        try:
+            return fetch_goal_tree(connection)
+        finally:
+            connection.close()
+
+    @app.get("/api/overview")
+    def overview():
+        connection = connect(paths)
+        try:
+            return fetch_overview(connection)
+        finally:
+            connection.close()
+
     @app.get("/api/agents")
     def agents():
         connection = connect(paths)
         try:
-            rows = connection.execute(
-                """
-                SELECT agent_id, role, display_name, status, current_task_id, last_heartbeat_at
-                FROM agents
-                ORDER BY display_name ASC
-                """
-            ).fetchall()
-            return [dict(row) for row in rows]
+            return fetch_agent_roster(connection)
         finally:
             connection.close()
 

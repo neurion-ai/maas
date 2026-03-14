@@ -163,6 +163,16 @@ export interface RepeatedFailureItem {
   latest_failure_at?: string | null;
 }
 
+export interface FailuresResponse {
+  recent: FailureItem[];
+  repeated_tasks: RepeatedFailureItem[];
+  summary: {
+    total_failures: number;
+    tasks_with_failures: number;
+    repeated_tasks: number;
+  };
+}
+
 export interface GoalTreeNode {
   goal_id: string;
   parent_goal_id?: string | null;

@@ -4,10 +4,11 @@ import { AgentRosterPage } from "./pages/AgentRosterPage";
 import { AlertsPage } from "./pages/AlertsPage";
 import { BoardPage } from "./pages/BoardPage";
 import { EscalationsPage } from "./pages/EscalationsPage";
+import { FailuresPage } from "./pages/FailuresPage";
 import { GoalTreePage } from "./pages/GoalTreePage";
 import { OverviewPage } from "./pages/OverviewPage";
 
-type View = "overview" | "board" | "goals" | "agents" | "activity" | "alerts" | "escalations";
+type View = "overview" | "board" | "goals" | "agents" | "activity" | "failures" | "alerts" | "escalations";
 
 const VIEWS: { id: View; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -15,6 +16,7 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "goals", label: "Goal Tree" },
   { id: "agents", label: "Agent Roster" },
   { id: "activity", label: "Activity" },
+  { id: "failures", label: "Failures" },
   { id: "alerts", label: "Alerts" },
   { id: "escalations", label: "Escalations" }
 ];
@@ -70,6 +72,7 @@ export default function App() {
         {activeView === "goals" ? <GoalTreePage /> : null}
         {activeView === "agents" ? <AgentRosterPage /> : null}
         {activeView === "activity" ? <ActivityPage /> : null}
+        {activeView === "failures" ? <FailuresPage /> : null}
         {activeView === "alerts" ? <AlertsPage /> : null}
         {activeView === "escalations" ? <EscalationsPage /> : null}
       </div>

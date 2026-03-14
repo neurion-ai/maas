@@ -63,6 +63,7 @@
 - [x] Failure-memory logging for failed and timed-out sessions
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
+- [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces
 - [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
 - [x] Operator recovery for failure-blocked tasks
 - [x] Operator recover-and-requeue for failure-blocked tasks

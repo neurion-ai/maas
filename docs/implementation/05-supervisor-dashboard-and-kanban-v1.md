@@ -10,7 +10,7 @@
 - [x] Alert creation for stale sessions
 - [x] Task-first `/api/board` response
 - [x] React board shell as the primary operator view
-- [x] Supporting reads for goals, agents, activity, alerts, and providers
+- [x] Supporting reads for overview, goals, agents, activity, alerts, failures, escalations, and providers
 - [x] Operator controls for manual supervisor runs and assign-next actions
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 

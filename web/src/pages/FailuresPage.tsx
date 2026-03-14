@@ -1,0 +1,102 @@
+import { useEffect, useState } from "react";
+import { fetchFailures } from "../lib/controlRoomApi";
+import { useLivePulse } from "../lib/useLivePulse";
+import type { FailuresResponse } from "../types";
+import { StatCard } from "../components/StatCard";
+
+export function FailuresPage() {
+  const [failures, setFailures] = useState<FailuresResponse | null>(null);
+  const livePulse = useLivePulse();
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadFailures() {
+      const payload = await fetchFailures();
+      if (mounted) {
+        setFailures(payload);
+      }
+    }
+
+    void loadFailures();
+    return () => {
+      mounted = false;
+    };
+  }, [livePulse]);
+
+  return (
+    <section className="control-page">
+      <header className="page-hero">
+        <div>
+          <span className="eyebrow">Failures</span>
+          <h1>Failure memory and quarantine</h1>
+          <p>Inspect recent failed or timed-out work, repeated incidents, and any artifacts isolated from normal flow.</p>
+        </div>
+      </header>
+
+      <section className="stats-grid">
+        <StatCard label="Failures logged" value={failures?.summary.total_failures ?? 0} tone="warn" />
+        <StatCard label="Tasks hit" value={failures?.summary.tasks_with_failures ?? 0} />
+        <StatCard label="Repeated tasks" value={failures?.summary.repeated_tasks ?? 0} tone="warn" />
+      </section>
+
+      <section className="overview-grid">
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Recent failures</h2>
+              <p>Latest failed or timed-out sessions, including quarantine details when artifacts were isolated.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(failures?.recent ?? []).map((item) => (
+              <div key={item.failure_id ?? `${item.task_id}-${item.created_at}`} className="data-list__item">
+                <div>
+                  <strong>{item.task_title ?? item.task_id ?? "Unlinked failure"}</strong>
+                  <p>{item.summary}</p>
+                  {item.quarantined_artifact_count ? (
+                    <p>
+                      Quarantined artifacts: {item.quarantined_artifact_count}
+                      {item.quarantined_artifacts?.[0]?.quarantined_from_path
+                        ? ` from ${item.quarantined_artifacts[0].quarantined_from_path}`
+                        : ""}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="data-list__meta">
+                  <span>{item.failure_type}</span>
+                  <span>{new Date(item.created_at).toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Repeated failure tasks</h2>
+              <p>Tasks that have crossed the repeated-failure threshold and should stay under explicit operator review.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(failures?.repeated_tasks ?? []).map((item) => (
+              <div key={item.task_id} className="data-list__item">
+                <div>
+                  <strong>{item.task_title ?? item.task_id}</strong>
+                  <p>{item.failure_count} logged failures</p>
+                </div>
+                <div className="data-list__meta">
+                  <span>{item.task_id}</span>
+                  <span>
+                    {item.latest_failure_at ? new Date(item.latest_failure_at).toLocaleString() : "No timestamp"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+      </section>
+    </section>
+  );
+}

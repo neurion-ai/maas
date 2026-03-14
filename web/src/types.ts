@@ -155,3 +155,39 @@ export interface AgentRosterEntry {
 export interface AgentRosterResponse {
   agents: AgentRosterEntry[];
 }
+
+export interface AlertItem {
+  alert_id: string;
+  project_id?: string;
+  severity: string;
+  title: string;
+  description: string;
+  status: string;
+  created_at: string;
+}
+
+export interface AlertsResponse {
+  alerts: AlertItem[];
+  grouped: Record<string, AlertItem[]>;
+  summary: {
+    open: number;
+    acknowledged: number;
+    resolved: number;
+    critical_open: number;
+  };
+}
+
+export interface LiveSnapshot {
+  generated_at: string;
+  counts: {
+    tasks_in_progress: number;
+    tasks_review: number;
+    alerts_open: number;
+    agents_running: number;
+  };
+  revision: {
+    latest_task?: string | null;
+    latest_activity?: string | null;
+    latest_alert?: string | null;
+  };
+}

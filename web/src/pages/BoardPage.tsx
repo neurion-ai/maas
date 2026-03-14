@@ -1,5 +1,6 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { fetchBoard, reviewTask, setAgentState } from "../lib/boardApi";
+import { useLivePulse } from "../lib/useLivePulse";
 import type { BoardFiltersInput, BoardResponse, FilterOption } from "../types";
 import { BoardColumn } from "../components/BoardColumn";
 import { StatCard } from "../components/StatCard";
@@ -23,6 +24,7 @@ export function BoardPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query);
+  const livePulse = useLivePulse();
 
   const boardFilters: BoardFiltersInput = useMemo(
     () => ({
@@ -63,7 +65,7 @@ export function BoardPage() {
       controller.abort();
       window.clearInterval(intervalId);
     };
-  }, [boardFilters]);
+  }, [boardFilters, livePulse]);
 
   const visibleTaskCount = useMemo(() => {
     if (!board) {

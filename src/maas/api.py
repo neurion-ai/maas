@@ -2,14 +2,17 @@
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from maas.db import connect
+from maas.db import connect, project_paths
 from maas.paths import ProjectPaths
 from maas.providers import list_providers
+from maas.services.alerts import fetch_alerts, update_alert_status
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.live import build_live_snapshot, sse_stream
 from maas.services.steering import pause_agent, reassign_task, reprioritize_task, resume_agent, review_task
 
 
@@ -70,6 +73,10 @@ class AgentActionRequest(BaseModel):
     actor_id: str
 
 
+class AlertActionRequest(BaseModel):
+    actor_id: str
+
+
 def create_app(project_root="."):
     app = FastAPI(title="MAAS", version="0.1.0")
     paths = ProjectPaths(project_root)
@@ -84,6 +91,23 @@ def create_app(project_root="."):
     @app.get("/api/health")
     def health():
         return {"status": "ok", "project_root": paths.root}
+
+    @app.get("/api/live")
+    def live():
+        connection = connect(paths)
+        try:
+            return build_live_snapshot(connection)
+        finally:
+            connection.close()
+
+    @app.get("/api/live/stream")
+    def live_stream():
+        root = paths.root
+
+        def connection_factory():
+            return connect(project_paths(root))
+
+        return StreamingResponse(sse_stream(connection_factory), media_type="text/event-stream")
 
     @app.get("/api/board")
     def board(
@@ -170,14 +194,7 @@ def create_app(project_root="."):
     def alerts():
         connection = connect(paths)
         try:
-            rows = connection.execute(
-                """
-                SELECT alert_id, severity, title, description, status, created_at
-                FROM alerts
-                ORDER BY created_at DESC
-                """
-            ).fetchall()
-            return [dict(row) for row in rows]
+            return fetch_alerts(connection)
         finally:
             connection.close()
 
@@ -298,6 +315,26 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return resume_agent(connection, agent_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/alerts/{alert_id}/actions/acknowledge")
+    def alert_acknowledge_action(alert_id: str, payload: AlertActionRequest):
+        connection = connect(paths)
+        try:
+            return update_alert_status(connection, alert_id, payload.actor_id, "acknowledged")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/alerts/{alert_id}/actions/resolve")
+    def alert_resolve_action(alert_id: str, payload: AlertActionRequest):
+        connection = connect(paths)
+        try:
+            return update_alert_status(connection, alert_id, payload.actor_id, "resolved")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

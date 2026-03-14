@@ -1,7 +1,9 @@
 import type {
   ActivityItem,
   AgentRosterResponse,
+  AlertsResponse,
   GoalTreeResponse,
+  LiveSnapshot,
   OverviewResponse
 } from "../types";
 
@@ -103,6 +105,37 @@ const ACTIVITY_FALLBACK: ActivityItem[] = [
   }
 ];
 
+const ALERTS_FALLBACK: AlertsResponse = {
+  alerts: [
+    {
+      alert_id: "alert_provider_pending",
+      severity: "warning",
+      title: "Provider adapters pending",
+      description: "Runtime adapters are still blocked behind lifecycle implementation.",
+      status: "open",
+      created_at: new Date().toISOString()
+    }
+  ],
+  grouped: { open: [], acknowledged: [], resolved: [] },
+  summary: {
+    open: 1,
+    acknowledged: 0,
+    resolved: 0,
+    critical_open: 0
+  }
+};
+
+const LIVE_FALLBACK: LiveSnapshot = {
+  generated_at: new Date().toISOString(),
+  counts: {
+    tasks_in_progress: 2,
+    tasks_review: 1,
+    alerts_open: 1,
+    agents_running: 2
+  },
+  revision: {}
+};
+
 async function fetchJson<T>(path: string, fallback: T): Promise<T> {
   try {
     const response = await fetch(path);
@@ -134,4 +167,30 @@ export function fetchAgentRoster() {
 
 export function fetchActivity() {
   return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
+}
+
+export function fetchAlerts() {
+  return fetchJson<AlertsResponse>("/api/alerts", ALERTS_FALLBACK);
+}
+
+export function fetchLiveSnapshot() {
+  return fetchJson<LiveSnapshot>("/api/live", LIVE_FALLBACK);
+}
+
+async function postJson(path: string, body: Record<string, string>) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+}
+
+export async function updateAlertStatus(alertId: string, action: "acknowledge" | "resolve") {
+  await postJson(`/api/alerts/${alertId}/actions/${action}`, { actor_id: "agent_allocator" });
 }

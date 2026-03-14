@@ -3,7 +3,12 @@
 import json
 
 from maas.ids import generate_id
-from maas.services.security import ensure_board_action_allowed
+from maas.services.security import (
+    TASK_EXECUTION_CAPABILITIES,
+    ensure_board_action_allowed,
+    grant_task_capabilities,
+    revoke_task_capabilities,
+)
 
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
@@ -122,6 +127,14 @@ def halt_task(connection, task_id, actor_id):
         (task_id,),
     )
     if task["assigned_agent_id"]:
+        revoke_task_capabilities(
+            connection,
+            task["project_id"],
+            task_id,
+            agent_id=task["assigned_agent_id"],
+            reason="task_halted",
+            revoked_by=actor_id,
+        )
         connection.execute(
             """
             UPDATE agents
@@ -190,7 +203,7 @@ def reprioritize_task(connection, task_id, actor_id, priority):
 
 def reassign_task(connection, task_id, actor_id, agent_id):
     task = connection.execute(
-        "SELECT task_id, project_id, status FROM tasks WHERE task_id = ?",
+        "SELECT task_id, project_id, status, assigned_agent_id FROM tasks WHERE task_id = ?",
         (task_id,),
     ).fetchone()
     if task is None:
@@ -212,6 +225,23 @@ def reassign_task(connection, task_id, actor_id, agent_id):
         WHERE task_id = ?
         """,
         (agent_id, task_id),
+    )
+    if task["assigned_agent_id"] and task["assigned_agent_id"] != agent_id:
+        revoke_task_capabilities(
+            connection,
+            task["project_id"],
+            task_id,
+            agent_id=task["assigned_agent_id"],
+            reason="task_reassigned",
+            revoked_by=actor_id,
+        )
+    grant_task_capabilities(
+        connection,
+        task["project_id"],
+        task_id,
+        agent_id,
+        TASK_EXECUTION_CAPABILITIES,
+        granted_by=actor_id,
     )
     _audit(
         connection,

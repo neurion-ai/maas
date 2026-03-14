@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 
 from maas.ids import generate_id
+from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
 
 ROLE_KEYWORDS = {
@@ -247,6 +248,14 @@ def assign_next_task(connection, agent_id, actor_id="system_allocator"):
         WHERE task_id = ?
         """,
         (agent_id, task_row["task_id"]),
+    )
+    grant_task_capabilities(
+        connection,
+        task_row["project_id"],
+        task_row["task_id"],
+        agent_id,
+        TASK_EXECUTION_CAPABILITIES,
+        granted_by=actor_id,
     )
     _audit_assignment(connection, task_row["project_id"], actor_id, task_row["task_id"], agent_id, "allocator")
     _log_assignment_activity(

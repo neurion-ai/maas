@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
 
 
 def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
@@ -33,6 +34,7 @@ def start_session(connection, project_id, agent_id, task_id, provider_type, stat
         raise ValueError("Task cannot be started from status {0}".format(task_row["status"]))
     if task_row["assigned_agent_id"] and task_row["assigned_agent_id"] != agent_id:
         raise ValueError("Task is assigned to another agent")
+    ensure_task_capability_allowed(connection, project_id, task_id, agent_id, "execute")
 
     session_id = generate_id("sess")
     connection.execute(
@@ -67,6 +69,22 @@ def start_session(connection, project_id, agent_id, task_id, provider_type, stat
 
 
 def heartbeat(connection, session_id, progress_pct, status_message):
+    row = connection.execute(
+        "SELECT project_id, agent_id, task_id, status FROM sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError("Session not found")
+    if row["status"] != "active":
+        raise ValueError("Session is not active")
+    ensure_task_capability_allowed(
+        connection,
+        row["project_id"],
+        row["task_id"],
+        row["agent_id"],
+        "heartbeat",
+        session_id=session_id,
+    )
     connection.execute(
         """
         UPDATE sessions
@@ -75,10 +93,6 @@ def heartbeat(connection, session_id, progress_pct, status_message):
         """,
         (progress_pct, status_message, session_id),
     )
-    row = connection.execute(
-        "SELECT agent_id, task_id FROM sessions WHERE session_id = ?",
-        (session_id,),
-    ).fetchone()
     if row:
         connection.execute(
             "UPDATE agents SET last_heartbeat_at = CURRENT_TIMESTAMP WHERE agent_id = ?",
@@ -96,6 +110,8 @@ def heartbeat(connection, session_id, progress_pct, status_message):
 
 
 def log_activity(connection, project_id, agent_id, task_id, action, category, description, severity="info", details=None):
+    if task_id:
+        ensure_task_capability_allowed(connection, project_id, task_id, agent_id, "activity_write")
     connection.execute(
         """
         INSERT INTO activity_log (
@@ -118,6 +134,28 @@ def log_activity(connection, project_id, agent_id, task_id, action, category, de
 
 
 def produce_artifact(connection, project_id, session_id, task_id, artifact_type, path, metadata=None):
+    session_row = connection.execute(
+        """
+        SELECT project_id, agent_id, task_id, status
+        FROM sessions
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    if session_row is None:
+        raise ValueError("Session not found")
+    if session_row["status"] != "active":
+        raise ValueError("Session is not active")
+    if session_row["project_id"] != project_id or session_row["task_id"] != task_id:
+        raise ValueError("Artifact does not match session context")
+    ensure_task_capability_allowed(
+        connection,
+        project_id,
+        task_id,
+        session_row["agent_id"],
+        "artifact_write",
+        session_id=session_id,
+    )
     artifact_id = generate_id("art")
     connection.execute(
         """
@@ -133,9 +171,21 @@ def produce_artifact(connection, project_id, session_id, task_id, artifact_type,
 
 def end_session(connection, session_id, outcome, summary):
     row = connection.execute(
-        "SELECT agent_id, task_id FROM sessions WHERE session_id = ?",
+        "SELECT project_id, agent_id, task_id, status FROM sessions WHERE session_id = ?",
         (session_id,),
     ).fetchone()
+    if row is None:
+        raise ValueError("Session not found")
+    if row["status"] != "active":
+        raise ValueError("Session is not active")
+    ensure_task_capability_allowed(
+        connection,
+        row["project_id"],
+        row["task_id"],
+        row["agent_id"],
+        "complete_session",
+        session_id=session_id,
+    )
     connection.execute(
         """
         UPDATE sessions
@@ -144,22 +194,29 @@ def end_session(connection, session_id, outcome, summary):
         """,
         (outcome, summary, session_id),
     )
-    if row:
+    revoke_task_capabilities(
+        connection,
+        row["project_id"],
+        row["task_id"],
+        agent_id=row["agent_id"],
+        reason="session_{0}".format(outcome),
+        revoked_by=row["agent_id"],
+    )
+    connection.execute(
+        """
+        UPDATE agents
+        SET status = 'idle', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+        WHERE agent_id = ?
+        """,
+        (row["agent_id"],),
+    )
+    if outcome == "completed":
         connection.execute(
             """
-            UPDATE agents
-            SET status = 'idle', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
-            WHERE agent_id = ?
+            UPDATE tasks
+            SET status = 'review', updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ? AND status = 'in_progress'
             """,
-            (row["agent_id"],),
+            (row["task_id"],),
         )
-        if outcome == "completed":
-            connection.execute(
-                """
-                UPDATE tasks
-                SET status = 'review', updated_at = CURRENT_TIMESTAMP
-                WHERE task_id = ? AND status = 'in_progress'
-                """,
-                (row["task_id"],),
-            )
     connection.commit()

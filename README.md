@@ -9,6 +9,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - an allocator surface for assigning ready tasks to idle agents
 - a supervisor pass for readiness refresh, allocation, and stale-session recovery
 - a lightweight supervisor/lifecycle foundation
+- task-scoped capability grants for execution, heartbeats, activity, artifacts, and session completion
 - a React control room with operator actions for supervisor runs and idle-agent assignment
 - board-side operator controls for review, reprioritize, reassign, pause/resume, and halt
 - role-baseline permission enforcement for steering and alert actions
@@ -43,6 +44,7 @@ The project bootstrap creates:
 - `GET /api/activity`
 - `GET /api/alerts`
 - `GET /api/tasks/ready`
+- `GET /api/tasks/{task_id}/capabilities`
 - `POST /api/tasks/actions/refresh-ready`
 - `POST /api/tasks/actions/allocate-ready`
 - `POST /api/tasks/{task_id}/actions/evaluate`
@@ -60,3 +62,9 @@ The primary operational surface is the Kanban board returned by `/api/board`.
 - `maas supervisor --project-root . --once`
 
 These commands expose the current dependency-aware ready queue, allocator flow, acceptance-gate evaluation, and supervisor orchestration pass from the CLI.
+
+## Security Notes
+
+- board and alert actions are gated by role-baseline `board_actions` permissions from `project.yaml`
+- task execution now uses task-scoped capability grants, so lifecycle writes are limited to the assigned agent and task
+- board cards and the task capabilities API expose the currently active task grants

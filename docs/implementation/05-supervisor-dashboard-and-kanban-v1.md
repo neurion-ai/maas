@@ -2,11 +2,12 @@
 
 ## Scope
 
-- supervisor one-shot loop for stale heartbeats
+- supervisor one-shot loop for stale heartbeats, ready refresh, and idle-agent allocation
 - alert creation for stale sessions
 - task-first `/api/board` response
 - React board shell as the primary operator view
 - supporting reads for goals, agents, activity, alerts, and providers
+- operator controls for manual supervisor runs and assign-next actions
 
 ## Board Contract
 
@@ -40,4 +41,5 @@ Each task card should include:
 - board response groups tasks server-side
 - board summary includes active agents, blocked tasks, and review tasks
 - stale supervisor findings create alerts and block affected in-progress work
-
+- overview can trigger a supervisor pass and show structured results
+- agent roster can assign the next ready task to an idle agent

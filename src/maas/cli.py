@@ -39,6 +39,7 @@ def build_parser():
     supervisor_parser = subparsers.add_parser("supervisor")
     supervisor_parser.add_argument("--project-root", default=".")
     supervisor_parser.add_argument("--once", action="store_true")
+    supervisor_parser.add_argument("--allocate-limit", type=int)
 
     board_parser = subparsers.add_parser("board")
     board_parser.add_argument("--project-root", default=".")
@@ -148,8 +149,8 @@ def command_supervisor(args):
     while True:
         connection = connect(paths)
         try:
-            findings = run_supervisor_once(connection)
-            print(json.dumps({"stale_sessions": findings}, indent=2))
+            findings = run_supervisor_once(connection, allocate_limit=args.allocate_limit)
+            print(json.dumps(findings, indent=2))
         finally:
             connection.close()
         if args.once:

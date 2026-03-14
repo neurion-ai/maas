@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchAgentRoster } from "../lib/controlRoomApi";
+import { assignNextTask, fetchAgentRoster } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { AgentRosterResponse } from "../types";
 
@@ -15,6 +15,8 @@ function formatHeartbeat(seconds?: number | null) {
 
 export function AgentRosterPage() {
   const [roster, setRoster] = useState<AgentRosterResponse | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pendingAgentId, setPendingAgentId] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -37,6 +39,24 @@ export function AgentRosterPage() {
     };
   }, [livePulse]);
 
+  async function handleAssignNext(agentId: string) {
+    setPendingAgentId(agentId);
+    setNotice(null);
+    try {
+      const result = await assignNextTask(agentId);
+      if (result.task_id) {
+        setNotice(`Assigned ${result.task_title ?? result.task_id} to ${agentId}.`);
+      } else {
+        setNotice(`No ready task available for ${agentId}.`);
+      }
+      setRoster(await fetchAgentRoster());
+    } catch {
+      setNotice("Assign-next action failed; keeping the current roster view.");
+    } finally {
+      setPendingAgentId(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -45,6 +65,7 @@ export function AgentRosterPage() {
           <h1>Who is doing what right now</h1>
           <p>Track active ownership, current task context, and heartbeat freshness.</p>
         </div>
+        {notice ? <p className="page-hero__notice">{notice}</p> : null}
       </header>
 
       <section className="roster-grid">
@@ -67,6 +88,18 @@ export function AgentRosterPage() {
                 <dd>{formatHeartbeat(agent.heartbeat_age_seconds)}</dd>
               </div>
             </dl>
+            {agent.status === "idle" ? (
+              <div className="roster-card__actions">
+                <button
+                  type="button"
+                  className="task-action task-action--secondary"
+                  disabled={pendingAgentId === agent.agent_id}
+                  onClick={() => void handleAssignNext(agent.agent_id)}
+                >
+                  {pendingAgentId === agent.agent_id ? "Assigning..." : "Assign next task"}
+                </button>
+              </div>
+            ) : null}
           </article>
         ))}
       </section>

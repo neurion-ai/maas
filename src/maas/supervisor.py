@@ -1,12 +1,14 @@
-"""Simple supervisor loop for stale sessions and task alerts."""
+"""Supervisor orchestration pass for stale sessions, ready refresh, and allocation."""
 
 from datetime import datetime, timedelta
+import json
 
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
+from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 
 
-def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS):
+def _handle_stale_sessions(connection, stale_after_seconds):
     stale_before = datetime.utcnow() - timedelta(seconds=stale_after_seconds)
     stale_rows = connection.execute(
         """
@@ -29,14 +31,45 @@ def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS)
             """,
             (row["session_id"],),
         )
-        connection.execute(
+        has_other_agent_session = connection.execute(
             """
-            UPDATE tasks
-            SET status = 'blocked', review_state = 'stale_session', updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = ? AND status = 'in_progress'
+            SELECT COUNT(*) AS count
+            FROM sessions
+            WHERE agent_id = ?
+              AND status = 'active'
+              AND session_id != ?
             """,
-            (row["task_id"],),
-        )
+            (row["agent_id"], row["session_id"]),
+        ).fetchone()["count"] > 0
+        has_other_task_session = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM sessions
+            WHERE task_id = ?
+              AND status = 'active'
+              AND session_id != ?
+            """,
+            (row["task_id"], row["session_id"]),
+        ).fetchone()["count"] > 0
+
+        if not has_other_agent_session:
+            connection.execute(
+                """
+                UPDATE agents
+                SET status = 'error', current_task_id = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE agent_id = ? AND current_task_id = ?
+                """,
+                (row["agent_id"], row["task_id"]),
+            )
+        if not has_other_task_session:
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status = 'blocked', review_state = 'stale_session', updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ? AND status = 'in_progress'
+                """,
+                (row["task_id"],),
+            )
         connection.execute(
             """
             INSERT INTO alerts (
@@ -49,8 +82,34 @@ def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS)
                 "Agent {0} stopped heartbeating for task {1}.".format(row["agent_id"], row["task_id"]),
             ),
         )
+        connection.execute(
+            """
+            INSERT INTO activity_log (
+                activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+            ) VALUES (?, ?, ?, ?, 'session_timed_out', 'supervisor', ?, ?, 'warning')
+            """,
+            (
+                generate_id("act"),
+                row["project_id"],
+                row["agent_id"],
+                row["task_id"],
+                "Supervisor marked session {0} as timed out.".format(row["session_id"]),
+                json.dumps({"session_id": row["session_id"]}),
+            ),
+        )
         findings.append({"session_id": row["session_id"], "task_id": row["task_id"]})
 
-    connection.commit()
     return findings
 
+
+def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS, allocate_limit=None):
+    ready_changes = refresh_ready_tasks(connection)
+    allocation_result = allocate_ready_tasks(connection, actor_id="system_supervisor", limit=allocate_limit)
+    stale_sessions = _handle_stale_sessions(connection, stale_after_seconds)
+    connection.commit()
+    return {
+        "ready_changes": ready_changes,
+        "allocations": allocation_result["allocations"],
+        "assigned_count": allocation_result["assigned_count"],
+        "stale_sessions": stale_sessions,
+    }

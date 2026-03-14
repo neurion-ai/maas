@@ -14,7 +14,7 @@ This roadmap now needs to be read alongside the actual implementation status:
 | 2. Goal/task engine | Partial | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
 | 3. Runtime lifecycle and adapters | Partial | Lifecycle operations, API/CLI entrypoints, provider registry, simulated worker path |
 | 4. Greenfield onboarding | Implemented | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
-| 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, roster/overview/goal tree reads |
+| 5. Supervisor, dashboard, and Kanban V1 | Partial | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
 | 6. Security and human steering | Partial | Review, reprioritize, reassign, pause/resume actions with audit logging |
 | 7. Resilience and failure memory | Early | Stale-session detection and alerts exist; broader recovery/failure memory is still pending |
 | 8. Brownfield and multi-project | Not started | Still roadmap only |
@@ -25,6 +25,7 @@ The current development branch is extending the scheduler from storage and statu
 
 - dependency-aware ready queue refresh
 - idle-agent task allocation
+- supervisor-driven orchestration pass
 - acceptance evaluation for artifact, metric, SQL, and test-command checks
 - CLI and API task actions for refresh, assignment, and evaluation
 
@@ -57,6 +58,8 @@ This repository now includes:
 - greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
 - FastAPI read models for board, overview, goal tree, agents, activity, alerts, and providers
 - task actions for ready queue refresh, allocator assignment, and acceptance evaluation
+- supervisor run endpoint and CLI orchestration pass
+- control-room actions for manual supervisor runs and idle-agent assignment
 - lifecycle API/CLI surface
 - a React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, and Activity views
 

@@ -105,6 +105,10 @@ select {
   background: linear-gradient(180deg, rgba(255, 252, 247, 0.9), rgba(255, 248, 239, 0.82));
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 24px;
 }
 
 .page-hero h1 {
@@ -117,6 +121,20 @@ select {
   margin: 0;
   color: var(--muted);
   max-width: 60ch;
+}
+
+.page-hero__actions {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.page-hero__notice {
+  margin: 0;
+  max-width: 34ch;
+  font-size: 0.92rem;
+  color: var(--muted);
+  text-align: right;
 }
 
 .board-shell {
@@ -501,6 +519,11 @@ select {
   font-weight: 600;
 }
 
+.roster-card__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .board-toolbar {
   padding: 18px 22px;
   border-radius: 22px;
@@ -691,6 +714,18 @@ select {
 
   .stats-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .page-hero {
+    flex-direction: column;
+  }
+
+  .page-hero__actions {
+    justify-items: start;
+  }
+
+  .page-hero__notice {
+    text-align: left;
   }
 
   .overview-grid,

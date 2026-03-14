@@ -157,6 +157,30 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             connection = connect(project_paths(tmpdir))
             try:
                 project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_failure_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                repeated_failure_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                stale_agent_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'session_failed'
+                    WHERE task_id IN (?, ?)
+                    """,
+                    (task_failure_id, repeated_failure_task_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'error', current_task_id = NULL
+                    WHERE agent_id = 'agent_reviewer'
+                    """
+                )
                 connection.execute(
                     """
                     INSERT INTO alerts (
@@ -168,11 +192,13 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     """,
                     (
                         project_id,
-                        "Task task_failure_123 failed in session sess_failure_123. Session crashed",
+                        "Task {0} failed in session sess_failure_123. Session crashed".format(task_failure_id),
                         project_id,
-                        "Task task_repeat_123 (Retry-heavy task) has failed 3 times. Latest failure: Timeout",
+                        "Task {0} (Retry-heavy task) has failed 3 times. Latest failure: Timeout".format(
+                            repeated_failure_task_id
+                        ),
                         project_id,
-                        "Agent agent_ops_123 stopped heartbeating for task task_stale_123.",
+                        "Agent agent_reviewer stopped heartbeating for task {0}.".format(stale_agent_task_id),
                     ),
                 )
                 connection.commit()
@@ -193,7 +219,7 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     "action": "recover_task",
                     "label": "Recover task",
                     "resource_type": "task",
-                    "resource_id": "task_failure_123",
+                    "resource_id": task_failure_id,
                 },
             )
             self.assertEqual(
@@ -202,7 +228,7 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     "action": "recover_task",
                     "label": "Recover task",
                     "resource_type": "task",
-                    "resource_id": "task_repeat_123",
+                    "resource_id": repeated_failure_task_id,
                 },
             )
             self.assertEqual(
@@ -211,8 +237,8 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     "action": "recover_agent",
                     "label": "Recover agent",
                     "resource_type": "agent",
-                    "resource_id": "agent_ops_123",
-                    "related_task_id": "task_stale_123",
+                    "resource_id": "agent_reviewer",
+                    "related_task_id": stale_agent_task_id,
                 },
             )
 

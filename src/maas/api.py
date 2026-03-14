@@ -302,6 +302,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return review_task(connection, task_id, payload.actor_id, payload.decision)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -312,6 +314,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return halt_task(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -350,6 +354,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return reprioritize_task(connection, task_id, payload.actor_id, payload.priority)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -360,6 +366,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return reassign_task(connection, task_id, payload.actor_id, payload.agent_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -389,6 +397,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return pause_agent(connection, agent_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -399,6 +409,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return resume_agent(connection, agent_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -409,6 +421,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return update_alert_status(connection, alert_id, payload.actor_id, "acknowledged")
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -419,6 +433,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return update_alert_status(connection, alert_id, payload.actor_id, "resolved")
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

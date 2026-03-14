@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.security import ensure_board_action_allowed
 
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
@@ -46,6 +47,7 @@ def review_task(connection, task_id, actor_id, decision):
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "review_task", "task", task_id)
     if task["status"] != "review":
         raise ValueError("Task is not in review")
     if decision not in ("approve", "reject"):
@@ -99,6 +101,7 @@ def halt_task(connection, task_id, actor_id):
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "halt_task", "task", task_id)
     if task["status"] in ("done", "cancelled"):
         raise ValueError("Task cannot be halted from status {0}".format(task["status"]))
 
@@ -159,6 +162,7 @@ def reprioritize_task(connection, task_id, actor_id, priority):
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "reprioritize_task", "task", task_id)
     connection.execute(
         "UPDATE tasks SET priority = ?, updated_at = CURRENT_TIMESTAMP WHERE task_id = ?",
         (priority, task_id),
@@ -191,6 +195,7 @@ def reassign_task(connection, task_id, actor_id, agent_id):
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "reassign_task", "task", task_id)
     if task["status"] == "in_progress":
         raise ValueError("In-progress tasks cannot be reassigned")
     agent = connection.execute(
@@ -236,6 +241,7 @@ def pause_agent(connection, agent_id, actor_id):
     ).fetchone()
     if agent is None:
         raise ValueError("Agent not found")
+    ensure_board_action_allowed(connection, actor_id, agent["project_id"], "pause_agent", "agent", agent_id)
     connection.execute(
         """
         UPDATE agents
@@ -282,6 +288,7 @@ def resume_agent(connection, agent_id, actor_id):
     ).fetchone()
     if agent is None:
         raise ValueError("Agent not found")
+    ensure_board_action_allowed(connection, actor_id, agent["project_id"], "resume_agent", "agent", agent_id)
     connection.execute(
         """
         UPDATE agents

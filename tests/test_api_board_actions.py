@@ -4,6 +4,7 @@ import unittest
 from fastapi.testclient import TestClient
 
 from maas.api import create_app
+from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
 
 
@@ -203,6 +204,51 @@ class BoardApiActionsTest(unittest.TestCase):
             builder = [agent for agent in agents_payload["agents"] if agent["agent_id"] == "agent_builder"][0]
             self.assertEqual(builder["status"], "paused")
             self.assertIsNone(builder["current_task_id"])
+
+    def test_denied_board_action_returns_403_and_is_audited(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Permission Test", description="Permission test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_payload = client.get("/api/board", params={"review_only": "true"}).json()
+            review_task = board_payload["columns"][3]["tasks"][0]
+
+            denied_response = client.post(
+                "/api/tasks/{0}/actions/review".format(review_task["task_id"]),
+                json={"actor_id": "agent_builder", "decision": "approve"},
+            )
+            self.assertEqual(denied_response.status_code, 403)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                audit_row = connection.execute(
+                    """
+                    SELECT action_type, detail_json
+                    FROM audit_trail
+                    WHERE actor_id = 'agent_builder'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(audit_row["action_type"], "permission_denied")
+            self.assertIn("review_task", audit_row["detail_json"])
+
+    def test_spoofed_system_actor_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Spoof Test", description="Spoof test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_payload = client.get("/api/board", params={"review_only": "true"}).json()
+            review_task = board_payload["columns"][3]["tasks"][0]
+
+            denied_response = client.post(
+                "/api/tasks/{0}/actions/review".format(review_task["task_id"]),
+                json={"actor_id": "system_supervisor", "decision": "approve"},
+            )
+            self.assertEqual(denied_response.status_code, 403)
 
 
 if __name__ == "__main__":

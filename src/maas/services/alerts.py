@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.security import ensure_board_action_allowed
 
 
 def fetch_alerts(connection):
@@ -43,6 +44,7 @@ def update_alert_status(connection, alert_id, actor_id, status):
     ).fetchone()
     if alert is None:
         raise ValueError("Alert not found")
+    ensure_board_action_allowed(connection, actor_id, alert["project_id"], "update_alert_status", "alert", alert_id)
     if status not in ("acknowledged", "resolved"):
         raise ValueError("Unsupported alert status")
     if alert["status"] == status:
@@ -82,4 +84,3 @@ def update_alert_status(connection, alert_id, actor_id, status):
     )
     connection.commit()
     return {"alert_id": alert_id, "status": status}
-

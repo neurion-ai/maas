@@ -7,6 +7,12 @@
 - board-driven steering actions
 - append-only audit trail for sensitive changes
 
+## Current Implementation Notes
+
+- board and alert actions now enforce the role-baseline `board_actions` permission
+- denied attempts return a permission error and create audit entries
+- task-scoped capability grants and escalation queues are still ahead of the current implementation
+
 ## Non-Goals
 
 - OS-user isolation

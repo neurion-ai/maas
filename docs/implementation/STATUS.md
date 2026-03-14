@@ -100,7 +100,8 @@ The system is best described as **an operational prototype with real infrastruct
 
 - operator actions are audited
 - board-driven steering now covers most of the Batch 6 control surface
-- full permission enforcement and capability-token infrastructure are not complete
+- role-baseline `board_actions` permission enforcement now gates steering and alert actions
+- full capability-token infrastructure is not complete
 
 ## What Is Not Started
 
@@ -120,6 +121,7 @@ Current work is moving deeper into the goal/task engine with:
 - scheduler/supervisor task commands and API actions
 - operator controls for manual supervisor runs and assign-next actions
 - board-side steering controls for reprioritize, reassign, and halt
+- permission-gated steering and alert actions
 
 If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
 
@@ -130,11 +132,11 @@ If someone asks “can MAAS be used right now?”, the honest answer is:
 - Yes, as a greenfield local prototype and operator-facing foundation.
 - No, not yet as a fully autonomous production platform.
 
-If the current board-steering branch is not yet merged, treat the inline reprioritize/reassign/halt controls and cancelled column as in progress rather than available on `main`.
+If the current permission-enforcement branch is not yet merged, treat the role-gated steering and alert actions as in progress rather than available on `main`.
 
 The project is roughly in the **late Batch 2 through Batch 6 foundation zone** of the roadmap:
 
 - Batches 1 and 4 are effectively in place.
 - Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
-- Batches 3, 5, and 6 are partially in place, with the supervisor now participating in orchestration.
+- Batches 3, 5, and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
 - Batches 7 and 8 are mostly ahead of us.

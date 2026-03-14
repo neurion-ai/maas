@@ -27,6 +27,18 @@ export default function App() {
     window.location.hash = activeView;
   }, [activeView]);
 
+  useEffect(() => {
+    function handleHashChange() {
+      const nextView = getInitialView();
+      setActiveView((current) => (current === nextView ? current : nextView));
+    }
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+    };
+  }, []);
+
   return (
     <div className="app-shell">
       <header className="app-header">

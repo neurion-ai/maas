@@ -5,6 +5,8 @@ import type {
   OverviewResponse
 } from "../types";
 
+const lastSuccessfulResponses = new Map<string, unknown>();
+
 const OVERVIEW_FALLBACK: OverviewResponse = {
   project: {
     project_id: "proj_fallback",
@@ -107,8 +109,13 @@ async function fetchJson<T>(path: string, fallback: T): Promise<T> {
     if (!response.ok) {
       throw new Error(`Unexpected status: ${response.status}`);
     }
-    return (await response.json()) as T;
+    const payload = (await response.json()) as T;
+    lastSuccessfulResponses.set(path, payload);
+    return payload;
   } catch {
+    if (lastSuccessfulResponses.has(path)) {
+      return lastSuccessfulResponses.get(path) as T;
+    }
     return fallback;
   }
 }

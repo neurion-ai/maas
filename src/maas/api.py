@@ -427,7 +427,7 @@ def create_app(project_root="."):
     def lifecycle_end(payload: EndSessionRequest):
         connection = connect(paths)
         try:
-            end_session(connection, payload.session_id, payload.outcome, payload.summary)
+            end_session(connection, payload.session_id, payload.outcome, payload.summary, project_paths=paths)
             return {"status": "ok"}
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
@@ -553,7 +553,7 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             limit = None if payload is None else payload.allocate_limit
-            return run_supervisor_once(connection, allocate_limit=limit)
+            return run_supervisor_once(connection, allocate_limit=limit, project_paths=paths)
         finally:
             connection.close()
 

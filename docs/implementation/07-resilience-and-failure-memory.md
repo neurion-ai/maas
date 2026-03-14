@@ -13,7 +13,9 @@
 - [x] Failed sessions and timed-out sessions write into `failure_log`
 - [x] The supervisor raises a critical alert when the same task accumulates repeated failures
 - [x] Board cards, overview, live snapshot, and a dedicated failures API expose failure-memory state
+- [x] Operators can resolve repeated-failure incidents from the Alerts view without changing task state
 - [x] Operators can recover failure-blocked tasks
+- [x] Operators can recover-and-requeue failure-blocked tasks
 - [x] Operators can recover agents left in `error`
 
 ## Still To Do On `main`

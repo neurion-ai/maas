@@ -4,7 +4,7 @@ import json
 
 from maas.ids import generate_id
 from maas.providers import get_provider
-from maas.services.failure_memory import maybe_raise_repeated_failure_alert, record_failure
+from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
 from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
 
 
@@ -172,7 +172,7 @@ def produce_artifact(connection, project_id, session_id, task_id, artifact_type,
     return artifact_id
 
 
-def end_session(connection, session_id, outcome, summary):
+def end_session(connection, session_id, outcome, summary, project_paths=None):
     row = connection.execute(
         "SELECT project_id, agent_id, task_id, status FROM sessions WHERE session_id = ?",
         (session_id,),
@@ -256,6 +256,28 @@ def end_session(connection, session_id, outcome, summary):
                 json.dumps({"session_id": session_id, "summary": summary}),
             ),
         )
+        quarantined_artifacts = quarantine_session_artifacts(
+            connection,
+            project_paths,
+            session_id,
+            reason="session_failed",
+        )
+        if quarantined_artifacts:
+            connection.execute(
+                """
+                INSERT INTO activity_log (
+                    activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                ) VALUES (?, ?, ?, ?, 'artifacts_quarantined', 'resilience', ?, ?, 'warning')
+                """,
+                (
+                    generate_id("act"),
+                    row["project_id"],
+                    row["agent_id"],
+                    row["task_id"],
+                    "Quarantined session artifacts after failed run.",
+                    json.dumps({"session_id": session_id, "artifacts": quarantined_artifacts}),
+                ),
+            )
         connection.execute(
             """
             INSERT INTO alerts (

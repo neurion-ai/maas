@@ -1,6 +1,8 @@
 """Failure memory helpers for resilience and repeated-failure visibility."""
 
 import json
+import os
+import shutil
 
 from maas.ids import generate_id
 
@@ -29,6 +31,68 @@ def record_failure(connection, project_id, failure_type, summary, task_id=None, 
         ),
     )
     return failure_id
+
+
+def quarantine_session_artifacts(connection, project_paths, session_id, reason):
+    if project_paths is None:
+        return []
+
+    artifacts = connection.execute(
+        """
+        SELECT artifact_id, path, metadata_json
+        FROM artifacts
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchall()
+    if not artifacts:
+        return []
+
+    artifact_root = os.path.abspath(project_paths.artifacts_dir)
+    quarantine_root = os.path.abspath(project_paths.quarantine_dir)
+    quarantined = []
+    quarantined_paths = {}
+    for artifact in artifacts:
+        stored_path = artifact["path"]
+        source_path = stored_path if os.path.isabs(stored_path) else os.path.abspath(os.path.join(project_paths.root, stored_path))
+        if os.path.commonpath([artifact_root, source_path]) != artifact_root:
+            continue
+
+        relative_path = os.path.relpath(source_path, artifact_root)
+        destination_path = os.path.join(quarantine_root, session_id, relative_path)
+        if source_path not in quarantined_paths:
+            if not os.path.exists(source_path):
+                continue
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            shutil.move(source_path, destination_path)
+            quarantined_paths[source_path] = destination_path
+        else:
+            destination_path = quarantined_paths[source_path]
+
+        metadata = json.loads(artifact["metadata_json"] or "{}")
+        metadata.update(
+            {
+                "quarantined": True,
+                "quarantine_reason": reason,
+                "quarantined_from_path": stored_path,
+            }
+        )
+        connection.execute(
+            """
+            UPDATE artifacts
+            SET path = ?, metadata_json = ?
+            WHERE artifact_id = ?
+            """,
+            (destination_path, json.dumps(metadata), artifact["artifact_id"]),
+        )
+        quarantined.append(
+            {
+                "artifact_id": artifact["artifact_id"],
+                "path": destination_path,
+            }
+        )
+
+    return quarantined
 
 
 def _repeated_failure_clause():

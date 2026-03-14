@@ -34,7 +34,8 @@ Legend:
 - [x] Ready-queue refresh, acceptance evaluation, and first-pass idle-agent allocation
 - [x] Steering controls for review, reprioritize, reassign, pause/resume, and halt
 - [x] Escalation queue for risky steering approvals
-- [x] Failure-memory logging, repeated-failure alerts, and task recovery for failure-blocked work
+- [x] Failure-memory logging, repeated-failure alerts, incident-specific alert actions, and task recovery for failure-blocked work
+- [x] Manual recover-and-requeue for failure-blocked tasks
 - [x] Recovery for agents left in `error`
 
 ### Still to do on `main`
@@ -87,6 +88,8 @@ The project bootstrap creates:
 - `POST /api/tasks/actions/allocate-ready`
 - `POST /api/tasks/{task_id}/actions/evaluate`
 - `POST /api/tasks/{task_id}/actions/recover`
+- `POST /api/tasks/{task_id}/actions/recover-and-requeue`
+- `POST /api/tasks/{task_id}/actions/resolve-repeated-failures`
 - `POST /api/agents/{agent_id}/actions/assign-next`
 - `POST /api/agents/{agent_id}/actions/recover`
 - `POST /api/supervisor/run`
@@ -100,6 +103,8 @@ The primary operational surface is the Kanban board returned by `/api/board`.
 - `maas task allocate --project-root . --agent-id <agent_id>`
 - `maas task evaluate --project-root . --task-id <task_id>`
 - `maas task recover --project-root . --task-id <task_id> --actor-id <agent_id>`
+- `maas task recover-and-requeue --project-root . --task-id <task_id> --actor-id <agent_id>`
+- `maas task resolve-repeated-failures --project-root . --task-id <task_id> --actor-id <agent_id>`
 - `maas agent recover --project-root . --agent-id <agent_id> --actor-id <agent_id>`
 - `maas supervisor --project-root . --once`
 - `maas failure list --project-root .`

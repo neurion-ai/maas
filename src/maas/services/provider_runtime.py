@@ -108,7 +108,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         description=artifact_payload["status_message"],
         details={"provider_type": provider_type, "artifact_id": artifact_id},
     )
-    end_session(connection, session_id, "completed", artifact_payload["status_message"])
+    end_session(connection, session_id, "completed", artifact_payload["status_message"], project_paths=project_paths)
     return {
         "session_id": session_id,
         "artifact_id": artifact_id,

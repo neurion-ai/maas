@@ -1,3 +1,5 @@
+import json
+import os
 import tempfile
 import unittest
 
@@ -216,6 +218,142 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertEqual(failure["failure_type"], "session_failed")
             self.assertIn("Unit test simulated failure", failure["summary"])
             self.assertEqual(alert["title"], "Task session failed")
+
+    def test_failed_session_quarantines_session_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Quarantine Test",
+                description="Lifecycle quarantine test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle quarantine test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("quarantine me\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Unit test simulated failure with artifact",
+                    project_paths=result["paths"],
+                )
+
+                artifact = connection.execute(
+                    """
+                    SELECT path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id = ?
+                    """,
+                    (artifact_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            metadata = json.loads(artifact["metadata_json"])
+            self.assertFalse(os.path.exists(artifact_path))
+            self.assertTrue(os.path.exists(artifact["path"]))
+            self.assertTrue(
+                os.path.commonpath([os.path.abspath(result["paths"].quarantine_dir), os.path.abspath(artifact["path"])])
+                == os.path.abspath(result["paths"].quarantine_dir)
+            )
+            self.assertTrue(metadata["quarantined"])
+            self.assertEqual(metadata["quarantine_reason"], "session_failed")
+            self.assertEqual(metadata["quarantined_from_path"], artifact_path)
+
+    def test_failed_session_quarantines_duplicate_artifact_rows_for_same_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Duplicate Quarantine Test",
+                description="Lifecycle duplicate quarantine test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting duplicate quarantine test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "duplicate-quarantine-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("duplicate quarantine me\n")
+                first_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                second_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note_copy",
+                    path=artifact_path,
+                )
+
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Unit test simulated failure with duplicate artifacts",
+                    project_paths=result["paths"],
+                )
+
+                artifacts = connection.execute(
+                    """
+                    SELECT artifact_id, path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id IN (?, ?)
+                    ORDER BY artifact_id ASC
+                    """,
+                    (first_artifact_id, second_artifact_id),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertFalse(os.path.exists(artifact_path))
+            self.assertEqual(len(artifacts), 2)
+            self.assertEqual(artifacts[0]["path"], artifacts[1]["path"])
+            self.assertTrue(os.path.exists(artifacts[0]["path"]))
+            for artifact in artifacts:
+                metadata = json.loads(artifact["metadata_json"])
+                self.assertTrue(metadata["quarantined"])
+                self.assertEqual(metadata["quarantine_reason"], "session_failed")
+                self.assertEqual(metadata["quarantined_from_path"], artifact_path)
 
 
 if __name__ == "__main__":

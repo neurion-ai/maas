@@ -1,13 +1,53 @@
 """Alert read models and steering actions."""
 
 import json
+import re
 
 from maas.ids import generate_id
 from maas.services.security import ensure_board_action_allowed
 
 
+TASK_SESSION_FAILED_PATTERN = re.compile(r"^Task (?P<task_id>\S+) failed in session (?P<session_id>\S+)\.")
+REPEATED_TASK_FAILURE_PATTERN = re.compile(r"^Task (?P<task_id>\S+) \(")
+STALE_AGENT_HEARTBEAT_PATTERN = re.compile(
+    r"^Agent (?P<agent_id>\S+) stopped heartbeating for task (?P<task_id>\S+)\."
+)
+
+
 def _escape_like(value):
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _infer_operator_action(title, description):
+    if title == "Task session failed":
+        match = TASK_SESSION_FAILED_PATTERN.match(description)
+        if match is not None:
+            return {
+                "action": "recover_task",
+                "label": "Recover task",
+                "resource_type": "task",
+                "resource_id": match.group("task_id"),
+            }
+    if title == "Repeated task failures":
+        match = REPEATED_TASK_FAILURE_PATTERN.match(description)
+        if match is not None:
+            return {
+                "action": "recover_task",
+                "label": "Recover task",
+                "resource_type": "task",
+                "resource_id": match.group("task_id"),
+            }
+    if title == "Stale agent heartbeat":
+        match = STALE_AGENT_HEARTBEAT_PATTERN.match(description)
+        if match is not None:
+            return {
+                "action": "recover_agent",
+                "label": "Recover agent",
+                "resource_type": "agent",
+                "resource_id": match.group("agent_id"),
+                "related_task_id": match.group("task_id"),
+            }
+    return None
 
 
 def _record_alert_status_change(connection, project_id, actor_id, alert_id, status, reason=None):
@@ -131,10 +171,13 @@ def fetch_alerts(connection):
     grouped = {"open": [], "acknowledged": [], "resolved": []}
     for row in rows:
         alert = dict(row)
+        operator_action = _infer_operator_action(alert["title"], alert["description"])
+        if operator_action is not None:
+            alert["operator_action"] = operator_action
         grouped.setdefault(alert["status"], []).append(alert)
 
     return {
-        "alerts": [dict(row) for row in rows],
+        "alerts": [alert for alerts in grouped.values() for alert in alerts],
         "grouped": grouped,
         "summary": {
             "open": len(grouped.get("open", [])),

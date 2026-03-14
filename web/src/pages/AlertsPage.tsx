@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchAlerts, updateAlertStatus } from "../lib/controlRoomApi";
+import { fetchAlerts, runAlertOperatorAction, updateAlertStatus } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { AlertsResponse } from "../types";
 import { StatCard } from "../components/StatCard";
@@ -34,6 +34,25 @@ export function AlertsPage() {
       setAlerts(await fetchAlerts());
     } catch {
       setNotice("Alert action failed; keep the current alert state under review.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function handleOperatorAction(alertId: string) {
+    const alert = alerts?.alerts.find((item) => item.alert_id === alertId);
+    if (!alert?.operator_action) {
+      return;
+    }
+
+    setPendingAction(`${alertId}:${alert.operator_action.action}`);
+    setNotice(null);
+    try {
+      await runAlertOperatorAction(alert.operator_action);
+      setAlerts(await fetchAlerts());
+      setNotice(`Recovered ${alert.operator_action.resource_id} from the alert queue.`);
+    } catch {
+      setNotice("Recovery action failed; keep the alert under review.");
     } finally {
       setPendingAction(null);
     }
@@ -80,6 +99,20 @@ export function AlertsPage() {
                 </div>
               </div>
               <div className="task-card__actions">
+                {alert.status !== "resolved" && alert.operator_action ? (
+                  <button
+                    type="button"
+                    className="task-action task-action--approve"
+                    disabled={pendingAction === `${alert.alert_id}:${alert.operator_action.action}`}
+                    onClick={() => void handleOperatorAction(alert.alert_id)}
+                  >
+                    {pendingAction === `${alert.alert_id}:${alert.operator_action.action}`}
+                      ? alert.operator_action.action === "recover_task"
+                        ? "Recovering task..."
+                        : "Recovering agent..."
+                      : alert.operator_action.label}
+                  </button>
+                ) : null}
                 {alert.status === "open" ? (
                   <button
                     type="button"

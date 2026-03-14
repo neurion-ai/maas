@@ -1,6 +1,7 @@
 import type {
   ActivityItem,
   AgentRosterResponse,
+  AlertOperatorAction,
   AlertsResponse,
   EscalationsResponse,
   GoalTreeResponse,
@@ -224,6 +225,14 @@ async function postJson<T>(path: string, body: Record<string, string | number | 
 
 export async function updateAlertStatus(alertId: string, action: "acknowledge" | "resolve") {
   await postJson(`/api/alerts/${alertId}/actions/${action}`, { actor_id: "agent_allocator" });
+}
+
+export async function runAlertOperatorAction(operatorAction: AlertOperatorAction) {
+  if (operatorAction.action === "recover_task") {
+    await postJson(`/api/tasks/${operatorAction.resource_id}/actions/recover`, { actor_id: "agent_allocator" });
+    return;
+  }
+  await postJson(`/api/agents/${operatorAction.resource_id}/actions/recover`, { actor_id: "agent_allocator" });
 }
 
 export async function updateEscalationStatus(escalationId: string, action: "approve" | "reject", resolutionNote = "") {

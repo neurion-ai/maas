@@ -146,6 +146,76 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(audit_row["action_type"], "permission_denied")
             self.assertIn("update_alert_status", audit_row["detail_json"])
 
+    def test_alerts_include_operator_actions_for_recoverable_failure_cases(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Alert Operator Actions Test",
+                description="Alert operator actions test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES
+                        ('alert_task_failure', ?, 'warning', 'Task session failed', ?, 'open'),
+                        ('alert_repeated_failure', ?, 'critical', 'Repeated task failures', ?, 'open'),
+                        ('alert_stale_agent', ?, 'warning', 'Stale agent heartbeat', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task task_failure_123 failed in session sess_failure_123. Session crashed",
+                        project_id,
+                        "Task task_repeat_123 (Retry-heavy task) has failed 3 times. Latest failure: Timeout",
+                        project_id,
+                        "Agent agent_ops_123 stopped heartbeating for task task_stale_123.",
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            alerts_payload = client.get("/api/alerts").json()
+            alerts_by_id = {alert["alert_id"]: alert for alert in alerts_payload["alerts"]}
+            provider_pending = [
+                alert for alert in alerts_payload["alerts"] if alert["title"] == "Provider adapters pending"
+            ][0]
+
+            self.assertNotIn("operator_action", provider_pending)
+            self.assertEqual(
+                alerts_by_id["alert_task_failure"]["operator_action"],
+                {
+                    "action": "recover_task",
+                    "label": "Recover task",
+                    "resource_type": "task",
+                    "resource_id": "task_failure_123",
+                },
+            )
+            self.assertEqual(
+                alerts_by_id["alert_repeated_failure"]["operator_action"],
+                {
+                    "action": "recover_task",
+                    "label": "Recover task",
+                    "resource_type": "task",
+                    "resource_id": "task_repeat_123",
+                },
+            )
+            self.assertEqual(
+                alerts_by_id["alert_stale_agent"]["operator_action"],
+                {
+                    "action": "recover_agent",
+                    "label": "Recover agent",
+                    "resource_type": "agent",
+                    "resource_id": "agent_ops_123",
+                    "related_task_id": "task_stale_123",
+                },
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

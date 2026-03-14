@@ -50,7 +50,11 @@ export function AlertsPage() {
     try {
       await runAlertOperatorAction(alert.operator_action);
       setAlerts(await fetchAlerts());
-      setNotice(`Recovered ${alert.operator_action.resource_id} from the alert queue.`);
+      if (alert.operator_action.action === "resolve_repeated_failures") {
+        setNotice(`Resolved the repeated-failure incident for ${alert.operator_action.resource_id}.`);
+      } else {
+        setNotice(`Recovered ${alert.operator_action.resource_id} from the alert queue.`);
+      }
     } catch {
       setNotice("Recovery action failed; keep the alert under review.");
     } finally {
@@ -109,6 +113,8 @@ export function AlertsPage() {
                     {pendingAction === `${alert.alert_id}:${alert.operator_action.action}`}
                       ? alert.operator_action.action === "recover_task"
                         ? "Recovering task..."
+                        : alert.operator_action.action === "resolve_repeated_failures"
+                          ? "Resolving repeated failures..."
                         : "Recovering agent..."
                       : alert.operator_action.label}
                   </button>

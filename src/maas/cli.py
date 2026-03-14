@@ -15,7 +15,7 @@ from maas.services.failure_memory import fetch_failure_log
 from maas.services.provider_runtime import run_provider_task
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
-from maas.services.steering import recover_agent, recover_task
+from maas.services.steering import recover_agent, recover_task, resolve_task_repeated_failures
 from maas.supervisor import run_supervisor_once
 
 
@@ -70,6 +70,11 @@ def build_parser():
     task_recover_parser.add_argument("--project-root", default=".")
     task_recover_parser.add_argument("--task-id", required=True)
     task_recover_parser.add_argument("--actor-id", required=True)
+
+    task_resolve_repeated_failures_parser = task_subparsers.add_parser("resolve-repeated-failures")
+    task_resolve_repeated_failures_parser.add_argument("--project-root", default=".")
+    task_resolve_repeated_failures_parser.add_argument("--task-id", required=True)
+    task_resolve_repeated_failures_parser.add_argument("--actor-id", required=True)
 
     task_allocate_parser = task_subparsers.add_parser("allocate")
     task_allocate_parser.add_argument("--project-root", default=".")
@@ -229,6 +234,8 @@ def command_task(args):
             print(json.dumps(evaluate_task(connection, paths, args.task_id), indent=2))
         elif args.task_command == "recover":
             print(json.dumps(recover_task(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "resolve-repeated-failures":
+            print(json.dumps(resolve_task_repeated_failures(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "allocate":
             if args.agent_id:
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))

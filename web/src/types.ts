@@ -197,7 +197,7 @@ export interface AlertItem {
 }
 
 export interface AlertOperatorAction {
-  action: "recover_task" | "recover_agent";
+  action: "recover_task" | "recover_agent" | "resolve_repeated_failures";
   label: string;
   resource_type: "task" | "agent";
   resource_id: string;

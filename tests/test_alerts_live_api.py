@@ -225,8 +225,8 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(
                 alerts_by_id["alert_repeated_failure"]["operator_action"],
                 {
-                    "action": "recover_task",
-                    "label": "Recover task",
+                    "action": "resolve_repeated_failures",
+                    "label": "Resolve repeated failures",
                     "resource_type": "task",
                     "resource_id": repeated_failure_task_id,
                 },

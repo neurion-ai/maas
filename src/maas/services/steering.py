@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_session_failed_alerts
 from maas.services.failure_memory import resolve_repeated_failure_alerts
 from maas.services.security import (
     TASK_EXECUTION_CAPABILITIES,
@@ -238,6 +239,13 @@ def recover_task(connection, task_id, actor_id):
         task_id,
         actor_id,
         resolution_reason="task_recovered",
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        reason="task_recovered",
     )
     connection.commit()
     return {"task_id": task_id, "status": "planned"}
@@ -486,6 +494,13 @@ def recover_agent(connection, agent_id, actor_id):
         None,
         "agent_recovered",
         "Agent recovered from error state.",
+    )
+    resolve_stale_heartbeat_alerts(
+        connection,
+        agent["project_id"],
+        agent_id,
+        actor_id,
+        reason="agent_recovered",
     )
     connection.commit()
     return {"agent_id": agent_id, "status": "idle"}

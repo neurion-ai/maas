@@ -6,6 +6,116 @@ from maas.ids import generate_id
 from maas.services.security import ensure_board_action_allowed
 
 
+def _escape_like(value):
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _record_alert_status_change(connection, project_id, actor_id, alert_id, status, reason=None):
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, ?, 'alert', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            "alert_status_updated",
+            alert_id,
+            json.dumps({"status": status, "reason": reason}),
+        ),
+    )
+
+
+def _log_alert_resolution_activity(connection, project_id, actor_id, task_id, action, description, details):
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, ?, 'steering', ?, ?, 'info')
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            actor_id,
+            task_id,
+            action,
+            description,
+            json.dumps(details),
+        ),
+    )
+
+
+def _resolve_alerts_by_query(connection, query, params, project_id, actor_id, reason, task_id, activity_action, activity_description):
+    rows = connection.execute(query, params).fetchall()
+    resolved_alert_ids = []
+    for row in rows:
+        connection.execute(
+            "UPDATE alerts SET status = 'resolved' WHERE alert_id = ?",
+            (row["alert_id"],),
+        )
+        _record_alert_status_change(connection, project_id, actor_id, row["alert_id"], "resolved", reason=reason)
+        resolved_alert_ids.append(row["alert_id"])
+
+    if resolved_alert_ids:
+        _log_alert_resolution_activity(
+            connection,
+            project_id,
+            actor_id,
+            task_id,
+            activity_action,
+            activity_description,
+            {"alert_ids": resolved_alert_ids, "reason": reason},
+        )
+
+    return resolved_alert_ids
+
+
+def resolve_task_session_failed_alerts(connection, project_id, task_id, actor_id, reason):
+    return _resolve_alerts_by_query(
+        connection,
+        """
+        SELECT alert_id
+        FROM alerts
+        WHERE project_id = ?
+          AND status IN ('open', 'acknowledged')
+          AND title = 'Task session failed'
+          AND description LIKE ?
+          ESCAPE '\\'
+        """,
+        (project_id, "Task {0} failed in session %".format(_escape_like(task_id))),
+        project_id,
+        actor_id,
+        reason,
+        task_id,
+        "task_failure_alert_resolved",
+        "Task failure alerts resolved after task recovery.",
+    )
+
+
+def resolve_stale_heartbeat_alerts(connection, project_id, agent_id, actor_id, reason):
+    return _resolve_alerts_by_query(
+        connection,
+        """
+        SELECT alert_id
+        FROM alerts
+        WHERE project_id = ?
+          AND status IN ('open', 'acknowledged')
+          AND title = 'Stale agent heartbeat'
+          AND description LIKE ?
+          ESCAPE '\\'
+        """,
+        (project_id, "Agent {0} stopped heartbeating for task %".format(_escape_like(agent_id))),
+        project_id,
+        actor_id,
+        reason,
+        None,
+        "stale_heartbeat_alert_resolved",
+        "Stale heartbeat alerts resolved after agent recovery.",
+    )
+
+
 def fetch_alerts(connection):
     rows = connection.execute(
         """
@@ -61,21 +171,7 @@ def update_alert_status(connection, alert_id, actor_id, status):
         "UPDATE alerts SET status = ? WHERE alert_id = ?",
         (status, alert_id),
     )
-    connection.execute(
-        """
-        INSERT INTO audit_trail (
-            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
-        ) VALUES (?, ?, ?, ?, 'alert', ?, ?)
-        """,
-        (
-            generate_id("audit"),
-            alert["project_id"],
-            actor_id,
-            "alert_status_updated",
-            alert_id,
-            json.dumps({"status": status}),
-        ),
-    )
+    _record_alert_status_change(connection, alert["project_id"], actor_id, alert_id, status)
     connection.execute(
         """
         INSERT INTO activity_log (

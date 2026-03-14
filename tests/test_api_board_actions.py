@@ -219,6 +219,15 @@ class BoardApiActionsTest(unittest.TestCase):
                     """,
                     (task_id,),
                 ).fetchone()
+                session_failed_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
             finally:
                 connection.close()
 
@@ -230,6 +239,7 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(recovered_task["progress_pct"], 0)
             self.assertIsNone(recovered_task["last_heartbeat_at"])
             self.assertEqual(capabilities_response.json()["grants"], [])
+            self.assertEqual(session_failed_alert["status"], "resolved")
 
     def test_recover_rejects_non_failure_blocked_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:

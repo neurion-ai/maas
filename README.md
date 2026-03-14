@@ -20,6 +20,29 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - an escalation queue for risky steering approvals
 - implementation specs for the planned roadmap
 
+## Implementation Snapshot
+
+Legend:
+
+- `[x]` shipped on `main`
+- `[ ]` not fully shipped on `main`
+
+### Shipped on `main`
+
+- [x] Greenfield bootstrap with seeded goals, tasks, agents, alerts, and sessions
+- [x] Board-first API and React control room
+- [x] Ready-queue refresh, acceptance evaluation, and first-pass idle-agent allocation
+- [x] Steering controls for review, reprioritize, reassign, pause/resume, and halt
+- [x] Escalation queue for risky steering approvals
+- [x] Failure-memory logging, repeated-failure alerts, and task recovery for failure-blocked work
+
+### Still to do on `main`
+
+- [ ] Recovery for agents left in `error`
+- [ ] Real external provider integrations
+- [ ] Automated restart, retry, and DLQ workflows
+- [ ] Brownfield onboarding and multi-project support
+
 ## Quick Start
 
 ```bash

@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { fetchFailures } from "../lib/controlRoomApi";
+import { fetchFailures, restoreFailureArtifacts } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { FailuresResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 export function FailuresPage() {
   const [failures, setFailures] = useState<FailuresResponse | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -24,6 +26,20 @@ export function FailuresPage() {
     };
   }, [livePulse]);
 
+  async function handleRestore(failureId: string) {
+    setPendingRestore(failureId);
+    setNotice(null);
+    try {
+      const payload = await restoreFailureArtifacts(failureId);
+      setFailures(await fetchFailures());
+      setNotice(`Restored ${payload.restored_count} quarantined artifact(s) for ${failureId}.`);
+    } catch {
+      setNotice("Artifact restore failed; keep the quarantined files under review.");
+    } finally {
+      setPendingRestore(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -32,6 +48,7 @@ export function FailuresPage() {
           <h1>Failure memory and quarantine</h1>
           <p>Inspect recent failed or timed-out work, repeated incidents, and any artifacts isolated from normal flow.</p>
         </div>
+        {notice ? <p className="filters-panel__notice">{notice}</p> : null}
       </header>
 
       <section className="stats-grid">
@@ -66,6 +83,16 @@ export function FailuresPage() {
                 <div className="data-list__meta">
                   <span>{item.failure_type}</span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
+                  {item.quarantined_artifact_count ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingRestore === item.failure_id}
+                      onClick={() => item.failure_id && void handleRestore(item.failure_id)}
+                    >
+                      {pendingRestore === item.failure_id ? "Restoring..." : "Restore artifacts"}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}

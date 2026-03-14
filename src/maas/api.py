@@ -26,6 +26,7 @@ from maas.services.steering import (
     reassign_task,
     recover_agent,
     recover_task,
+    restore_failure_artifacts,
     resolve_task_repeated_failures,
     reprioritize_task,
     resume_agent,
@@ -280,6 +281,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_failure_log(connection, limit=int(limit))
+        finally:
+            connection.close()
+
+    @app.post("/api/failures/{failure_id}/actions/restore-artifacts")
+    def failure_restore_artifacts_action(failure_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return restore_failure_artifacts(connection, paths, failure_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 

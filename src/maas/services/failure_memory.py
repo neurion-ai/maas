@@ -95,6 +95,106 @@ def quarantine_session_artifacts(connection, project_paths, session_id, reason):
     return quarantined
 
 
+def restore_quarantined_session_artifacts(connection, project_paths, session_id):
+    if project_paths is None:
+        raise ValueError("Project paths are required to restore quarantined artifacts")
+
+    artifacts = connection.execute(
+        """
+        SELECT artifact_id, path, metadata_json
+        FROM artifacts
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchall()
+    if not artifacts:
+        return []
+
+    artifact_root = os.path.abspath(project_paths.artifacts_dir)
+    quarantine_root = os.path.abspath(project_paths.quarantine_dir)
+    planned_moves = {}
+    planned_destinations = {}
+    rows_to_restore = []
+    for artifact in artifacts:
+        metadata = json.loads(artifact["metadata_json"] or "{}")
+        if not metadata.get("quarantined"):
+            continue
+
+        original_path = metadata.get("quarantined_from_path")
+        if not original_path:
+            continue
+
+        source_path = artifact["path"]
+        if not os.path.isabs(source_path):
+            source_path = os.path.abspath(os.path.join(project_paths.root, source_path))
+        if os.path.commonpath([quarantine_root, source_path]) != quarantine_root:
+            continue
+
+        destination_path = original_path
+        if not os.path.isabs(destination_path):
+            destination_path = os.path.abspath(os.path.join(project_paths.root, destination_path))
+        if os.path.commonpath([artifact_root, destination_path]) != artifact_root:
+            raise ValueError("Quarantined artifact cannot be restored outside the artifacts directory")
+
+        existing_destination = planned_moves.get(source_path)
+        if existing_destination is None:
+            planned_moves[source_path] = destination_path
+        elif existing_destination != destination_path:
+            raise ValueError("Quarantined artifact rows disagree on the restore path")
+        existing_source = planned_destinations.get(destination_path)
+        if existing_source is None:
+            planned_destinations[destination_path] = source_path
+        elif existing_source != source_path:
+            raise ValueError("Multiple quarantined artifacts cannot be restored to the same destination")
+
+        rows_to_restore.append((artifact["artifact_id"], metadata, original_path))
+
+    if not rows_to_restore:
+        return []
+
+    for source_path, destination_path in planned_moves.items():
+        if not os.path.exists(source_path):
+            raise ValueError("Quarantined artifact file is missing")
+        if os.path.exists(destination_path):
+            raise ValueError("Restore destination already exists")
+
+    moved_paths = []
+    try:
+        for source_path, destination_path in planned_moves.items():
+            os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+            shutil.move(source_path, destination_path)
+            moved_paths.append((source_path, destination_path))
+    except OSError:
+        for rollback_source, rollback_destination in reversed(moved_paths):
+            if os.path.exists(rollback_destination) and not os.path.exists(rollback_source):
+                os.makedirs(os.path.dirname(rollback_source), exist_ok=True)
+                shutil.move(rollback_destination, rollback_source)
+        raise
+
+    restored = []
+    for artifact_id, metadata, original_path in rows_to_restore:
+        metadata.pop("quarantined", None)
+        metadata.pop("quarantine_reason", None)
+        metadata.pop("quarantined_from_path", None)
+        metadata["restored_from_quarantine"] = True
+        connection.execute(
+            """
+            UPDATE artifacts
+            SET path = ?, metadata_json = ?
+            WHERE artifact_id = ?
+            """,
+            (original_path, json.dumps(metadata), artifact_id),
+        )
+        restored.append(
+            {
+                "artifact_id": artifact_id,
+                "path": original_path,
+            }
+        )
+
+    return restored
+
+
 def _repeated_failure_clause():
     placeholders = ", ".join(["?"] * len(REPEATED_FAILURE_TYPES))
     return "failure_type IN ({0})".format(placeholders), REPEATED_FAILURE_TYPES

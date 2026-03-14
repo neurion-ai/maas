@@ -4,6 +4,7 @@ import asyncio
 import json
 from datetime import datetime
 
+from maas.services.escalations import count_open_escalations
 from maas.services.failure_memory import repeated_failure_task_count
 
 
@@ -12,6 +13,7 @@ def build_live_snapshot(connection):
     latest_activity = connection.execute("SELECT MAX(created_at) AS value FROM activity_log").fetchone()["value"]
     latest_alert = connection.execute("SELECT MAX(created_at) AS value FROM alerts").fetchone()["value"]
     latest_failure = connection.execute("SELECT MAX(created_at) AS value FROM failure_log").fetchone()["value"]
+    latest_escalation = connection.execute("SELECT MAX(created_at) AS value FROM escalation_queue").fetchone()["value"]
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "counts": {
@@ -24,6 +26,7 @@ def build_live_snapshot(connection):
             "alerts_open": connection.execute(
                 "SELECT COUNT(*) AS count FROM alerts WHERE status = 'open'"
             ).fetchone()["count"],
+            "escalations_open": count_open_escalations(connection),
             "agents_running": connection.execute(
                 "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
             ).fetchone()["count"],
@@ -37,6 +40,7 @@ def build_live_snapshot(connection):
             "latest_activity": latest_activity,
             "latest_alert": latest_alert,
             "latest_failure": latest_failure,
+            "latest_escalation": latest_escalation,
         },
     }
 

@@ -14,7 +14,8 @@
 - task-scoped capability grants now exist for assigned execution work
 - lifecycle start, heartbeat, activity, artifact, and end-session writes now enforce active task grants
 - reassignment, halt, allocation, and bootstrap flows now grant or revoke task capabilities as task ownership changes
-- escalation queues are still ahead of the current implementation
+- escalation queues now exist for halt, reassign, pause, and resume requests
+- escalation requests can be listed and resolved through API, CLI, and the control-room Escalations view
 
 ## Non-Goals
 
@@ -36,3 +37,4 @@
 - board-driven actions create audit entries
 - board UI exposes steering controls for reprioritize, reassign, pause/resume, review, and halt
 - lifecycle writes are denied when the assigned task capability grant is missing or revoked
+- escalation approvals and rejections are permission-gated, audited, and visible in the queue read model

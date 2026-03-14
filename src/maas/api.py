@@ -12,6 +12,7 @@ from maas.paths import ProjectPaths
 from maas.services.alerts import fetch_alerts, update_alert_status
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
+from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
@@ -94,6 +95,21 @@ class AllocateTasksRequest(BaseModel):
 
 class SupervisorRunRequest(BaseModel):
     allocate_limit: int = None
+
+
+class EscalationRequestPayload(BaseModel):
+    project_id: str
+    actor_id: str
+    action_type: str
+    resource_type: str
+    resource_id: str
+    reason: str = ""
+    payload: dict = {}
+
+
+class EscalationDecisionPayload(BaseModel):
+    actor_id: str
+    resolution_note: str = ""
 
 
 class ProviderRunRequest(BaseModel):
@@ -240,6 +256,14 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/escalations")
+    def escalations():
+        connection = connect(paths)
+        try:
+            return fetch_escalations(connection)
+        finally:
+            connection.close()
+
     @app.get("/api/failures")
     def failures(limit=20):
         connection = connect(paths)
@@ -251,6 +275,49 @@ def create_app(project_root="."):
     @app.get("/api/providers")
     def providers():
         return {"providers": list_provider_runtime_status()}
+
+    @app.post("/api/escalations/request")
+    def escalation_request_action(payload: EscalationRequestPayload):
+        connection = connect(paths)
+        try:
+            return request_escalation(
+                connection,
+                project_id=payload.project_id,
+                actor_id=payload.actor_id,
+                action_type=payload.action_type,
+                resource_type=payload.resource_type,
+                resource_id=payload.resource_id,
+                reason=payload.reason,
+                payload=payload.payload,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/escalations/{escalation_id}/actions/approve")
+    def escalation_approve_action(escalation_id: str, payload: EscalationDecisionPayload):
+        connection = connect(paths)
+        try:
+            return approve_escalation(connection, escalation_id, payload.actor_id, payload.resolution_note)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/escalations/{escalation_id}/actions/reject")
+    def escalation_reject_action(escalation_id: str, payload: EscalationDecisionPayload):
+        connection = connect(paths)
+        try:
+            return reject_escalation(connection, escalation_id, payload.actor_id, payload.resolution_note)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
 
     @app.post("/api/providers/{provider_id}/actions/run-task")
     def provider_run_task_action(provider_id: str, payload: ProviderRunRequest):

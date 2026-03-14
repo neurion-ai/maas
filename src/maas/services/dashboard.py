@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from maas.services.escalations import fetch_escalations
 from maas.services.failure_memory import fetch_repeated_failure_tasks, repeated_failure_task_count
 
 
@@ -114,6 +115,7 @@ def fetch_overview(connection):
         ).fetchall()
     ]
     repeated_failure_tasks = fetch_repeated_failure_tasks(connection, limit=5)
+    escalation_summary = fetch_escalations(connection)["summary"]
 
     return {
         "project": dict(project) if project else None,
@@ -126,6 +128,7 @@ def fetch_overview(connection):
             "goals_active": goal_counts.get("active", 0),
             "alerts_open": sum(alert_counts.values()),
             "alerts_critical": alert_counts.get("critical", 0),
+            "escalations_open": escalation_summary["open"],
             "failures_total": connection.execute(
                 "SELECT COUNT(*) AS count FROM failure_log"
             ).fetchone()["count"],

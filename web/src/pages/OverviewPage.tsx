@@ -75,6 +75,7 @@ export function OverviewPage() {
         <StatCard label="In progress" value={overview?.summary.tasks_in_progress ?? 0} tone="good" />
         <StatCard label="Review queue" value={overview?.summary.tasks_review ?? 0} />
         <StatCard label="Blocked" value={overview?.summary.tasks_blocked ?? 0} tone="warn" />
+        <StatCard label="Open escalations" value={overview?.summary.escalations_open ?? 0} tone="warn" />
         <StatCard label="Failures logged" value={overview?.summary.failures_total ?? 0} tone="warn" />
         <StatCard label="Repeated failures" value={overview?.summary.repeated_failure_tasks ?? 0} tone="warn" />
       </section>

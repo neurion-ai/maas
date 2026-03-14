@@ -68,12 +68,15 @@ The system is best described as **an operational prototype with real infrastruct
 - overview control for manual supervisor runs
 - agent-roster control for assigning the next task to idle agents
 - board controls for reprioritize, reassign, halt, review, and pause/resume
+- alerts and escalations queue views in the control room
 - React control-room shell with:
   - Overview
   - Board
   - Goal Tree
   - Agent Roster
   - Activity
+  - Alerts
+  - Escalations
 
 ## What Is Partial
 
@@ -108,7 +111,8 @@ The system is best described as **an operational prototype with real infrastruct
 - board-driven steering now covers most of the Batch 6 control surface
 - role-baseline `board_actions` permission enforcement now gates steering and alert actions
 - task execution now requires task-scoped capability grants for start, heartbeat, activity, artifact, and end-session writes
-- escalation queues and broader capability-token distribution are still incomplete
+- escalation queue request/approve/reject flows now exist in the API, CLI, and control room
+- broader capability-token distribution is still incomplete
 
 ## What Is Not Started
 
@@ -129,10 +133,11 @@ Current work is moving deeper into the goal/task engine with:
 - operator controls for manual supervisor runs and assign-next actions
 - board-side steering controls for reprioritize, reassign, and halt
 - permission-gated steering and alert actions
+- escalation queue approvals for risky task and agent interventions
 - failure-memory logging and repeated-failure surfacing
 - provider adapter execution through the runtime layer
 
-If the current supervisor branch is not yet merged, treat those orchestration features as in progress rather than available on `main`.
+If the current escalation-queue branch is not yet merged, treat those approval-queue features as in progress rather than available on `main`.
 
 ## Practical Assessment
 
@@ -141,7 +146,7 @@ If someone asks “can MAAS be used right now?”, the honest answer is:
 - Yes, as a greenfield local prototype and operator-facing foundation.
 - No, not yet as a fully autonomous production platform.
 
-If the current permission-enforcement branch is not yet merged, treat the role-gated steering and alert actions as in progress rather than available on `main`.
+If the current escalation-queue branch is not yet merged, treat the escalation request/approval flow as in progress rather than available on `main`.
 
 The project is roughly in the **late Batch 2 through Batch 6 foundation zone** of the roadmap:
 
@@ -149,6 +154,6 @@ The project is roughly in the **late Batch 2 through Batch 6 foundation zone** o
 - Batch 2 now includes readiness, evaluation, and first-pass assignment behavior.
 - Batch 3 now includes concrete simulated provider adapters routed through the lifecycle contract.
 - Batches 5 and 6 are partially in place, with the supervisor participating in orchestration and steering now permission-gated at the role baseline.
-- Batch 6 now also includes task-scoped execution grants tied to task assignment.
+- Batch 6 now also includes task-scoped execution grants tied to task assignment plus a first-pass escalation queue for risky steering actions.
 - Batch 7 now has its first real failure-memory foundation, but most recovery automation is still ahead of us.
 - Batch 8 is still mostly ahead of us.

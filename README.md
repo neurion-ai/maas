@@ -34,7 +34,7 @@ Legend:
 - [x] Ready-queue refresh, acceptance evaluation, and first-pass idle-agent allocation
 - [x] Steering controls for review, reprioritize, reassign, pause/resume, and halt
 - [x] Escalation queue for risky steering approvals
-- [x] Failure-memory logging, repeated-failure alerts, incident-specific alert actions, and task recovery for failure-blocked work
+- [x] Failure-memory logging, quarantine visibility, repeated-failure alerts, incident-specific alert actions, and task recovery for failure-blocked work
 - [x] Manual recover-and-requeue for failure-blocked tasks
 - [x] Recovery for agents left in `error`
 
@@ -123,6 +123,7 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - board cards and the task capabilities API expose the currently active task grants
 - risky task and agent interventions can now be routed through an escalation queue instead of being executed immediately
 - failed and timed-out sessions are now recorded in failure memory and can raise repeated-failure alerts
+- quarantined failure artifacts are isolated under `.maas/quarantine/` and surfaced through the failure-memory reads
 - operators can return failure-blocked tasks to the planning queue without resuming the old execution context
 - operators can recover timeout-stranded agents from `error` back to `idle` once no active session remains
 

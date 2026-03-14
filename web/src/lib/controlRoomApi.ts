@@ -4,6 +4,7 @@ import type {
   AlertOperatorAction,
   AlertsResponse,
   EscalationsResponse,
+  FailuresResponse,
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
@@ -144,6 +145,16 @@ const ESCALATIONS_FALLBACK: EscalationsResponse = {
   }
 };
 
+const FAILURES_FALLBACK: FailuresResponse = {
+  recent: [],
+  repeated_tasks: [],
+  summary: {
+    total_failures: 0,
+    tasks_with_failures: 0,
+    repeated_tasks: 0
+  }
+};
+
 const LIVE_FALLBACK: LiveSnapshot = {
   generated_at: new Date().toISOString(),
   counts: {
@@ -197,6 +208,10 @@ export function fetchAlerts() {
 
 export function fetchEscalations() {
   return fetchJson<EscalationsResponse>("/api/escalations", ESCALATIONS_FALLBACK);
+}
+
+export function fetchFailures() {
+  return fetchJson<FailuresResponse>("/api/failures", FAILURES_FALLBACK);
 }
 
 export function fetchLiveSnapshot() {

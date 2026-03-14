@@ -279,6 +279,50 @@ def resolve_repeated_failure_alerts(connection, project_id, task_id, actor_id, r
     return resolved_alert_ids
 
 
+def _quarantined_artifacts_by_session(connection, session_ids):
+    if not session_ids:
+        return {}
+
+    placeholders = ", ".join(["?"] * len(session_ids))
+    rows = connection.execute(
+        """
+        SELECT session_id, artifact_id, path, metadata_json
+        FROM artifacts
+        WHERE session_id IN ({0})
+        """.format(placeholders),
+        tuple(session_ids),
+    ).fetchall()
+
+    artifacts_by_session = {}
+    for row in rows:
+        metadata = json.loads(row["metadata_json"] or "{}")
+        if not metadata.get("quarantined"):
+            continue
+        artifacts_by_session.setdefault(row["session_id"], []).append(
+            {
+                "artifact_id": row["artifact_id"],
+                "path": row["path"],
+                "quarantine_reason": metadata.get("quarantine_reason"),
+                "quarantined_from_path": metadata.get("quarantined_from_path"),
+            }
+        )
+
+    return artifacts_by_session
+
+
+def enrich_failures_with_quarantine(connection, failures):
+    session_ids = [failure["session_id"] for failure in failures if failure.get("session_id")]
+    artifacts_by_session = _quarantined_artifacts_by_session(connection, session_ids)
+    enriched = []
+    for failure in failures:
+        quarantined_artifacts = artifacts_by_session.get(failure.get("session_id"), [])
+        enriched_failure = dict(failure)
+        enriched_failure["quarantined_artifacts"] = quarantined_artifacts
+        enriched_failure["quarantined_artifact_count"] = len(quarantined_artifacts)
+        enriched.append(enriched_failure)
+    return enriched
+
+
 def fetch_failure_log(connection, limit=20):
     rows = connection.execute(
         """
@@ -303,7 +347,7 @@ def fetch_failure_log(connection, limit=20):
         (limit,),
     ).fetchall()
 
-    recent = [dict(row) for row in rows]
+    recent = enrich_failures_with_quarantine(connection, [dict(row) for row in rows])
     repeated_tasks = fetch_repeated_failure_tasks(connection)
 
     return {

@@ -144,7 +144,16 @@ export interface FailureItem {
   failure_type: string;
   summary: string;
   detail_json?: string;
+  quarantined_artifact_count?: number;
+  quarantined_artifacts?: QuarantinedArtifactItem[];
   created_at: string;
+}
+
+export interface QuarantinedArtifactItem {
+  artifact_id: string;
+  path: string;
+  quarantine_reason?: string | null;
+  quarantined_from_path?: string | null;
 }
 
 export interface RepeatedFailureItem {

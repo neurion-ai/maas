@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -8,6 +9,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import request_escalation
+from maas.services.lifecycle import end_session, produce_artifact, start_session
 from maas.services.live import build_live_snapshot
 
 
@@ -71,6 +73,52 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             failures_payload = failures_response.json()
             self.assertEqual(failures_payload["summary"]["total_failures"], 1)
             self.assertEqual(failures_payload["recent"][0]["failure_type"], "session_failed")
+
+    def test_failures_api_exposes_quarantined_artifacts_for_failed_sessions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Failure Quarantine API Test", description="Failure quarantine api test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting failure quarantine api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "failure-api-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("quarantine api\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with quarantined artifact",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            failures_payload = client.get("/api/failures").json()
+            recent_failure = failures_payload["recent"][0]
+
+            self.assertEqual(recent_failure["failure_type"], "session_failed")
+            self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
+            self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
     def test_live_snapshot_includes_open_escalation_count(self):
         with tempfile.TemporaryDirectory() as tmpdir:

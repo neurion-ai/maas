@@ -171,11 +171,21 @@ class SupervisorApiTest(unittest.TestCase):
                 agent = connection.execute(
                     "SELECT status, current_task_id FROM agents WHERE agent_id = 'agent_builder'"
                 ).fetchone()
+                stale_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Stale agent heartbeat'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
             finally:
                 connection.close()
 
             self.assertEqual(agent["status"], "idle")
             self.assertIsNone(agent["current_task_id"])
+            self.assertEqual(stale_alert["status"], "resolved")
 
     def test_agent_recover_rejects_non_error_agents(self):
         with tempfile.TemporaryDirectory() as tmpdir:

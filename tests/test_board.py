@@ -21,6 +21,8 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertGreater(board["summary"]["total_tasks"], 0)
             self.assertIn("generated_at", board)
             self.assertIn("filters", board)
+            self.assertIn("filter_options", board)
+            self.assertIn("selected_filters", board)
 
 
 if __name__ == "__main__":

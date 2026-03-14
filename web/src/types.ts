@@ -20,6 +20,7 @@ export interface BoardGoal {
 export interface BoardTask {
   task_id: string;
   title: string;
+  description?: string;
   status: BoardColumnKey | "assigned" | "cancelled";
   priority: number;
   progress_pct?: number | null;
@@ -39,12 +40,42 @@ export interface BoardColumn {
 export interface BoardSummary {
   total_tasks: number;
   active_agents: number;
+  active_tasks?: number;
   blocked_tasks: number;
   review_tasks: number;
+}
+
+export interface FilterOption {
+  id: string;
+  label: string;
+}
+
+export interface BoardFilterOptions {
+  agents?: FilterOption[];
+  goals?: FilterOption[];
+}
+
+export interface BoardFiltersInput {
+  search?: string;
+  blockedOnly?: boolean;
+  reviewOnly?: boolean;
+  priorityMin?: number;
+  agentId?: string;
+  goalId?: string;
 }
 
 export interface BoardResponse {
   generated_at: string;
   summary: BoardSummary;
   columns: BoardColumn[];
+  filters?: string[];
+  filter_options?: BoardFilterOptions;
+  selected_filters?: {
+    search?: string;
+    blocked_only?: boolean;
+    review_only?: boolean;
+    priority_min?: number | null;
+    agent_id?: string | null;
+    goal_id?: string | null;
+  };
 }

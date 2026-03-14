@@ -28,7 +28,46 @@ def _age_seconds(value):
     return int((datetime.utcnow() - created_at).total_seconds())
 
 
-def fetch_board(connection):
+def _matches_filters(row, filters):
+    if not filters:
+        return True
+
+    search = (filters.get("search") or "").strip().lower()
+    if search:
+        haystack = " ".join(
+            [
+                row["task_id"] or "",
+                row["title"] or "",
+                row["description"] or "",
+                row["goal_title"] or "",
+                row["agent_name"] or "",
+            ]
+        ).lower()
+        if search not in haystack:
+            return False
+
+    agent_id = filters.get("agent_id")
+    if agent_id and row["agent_id"] != agent_id:
+        return False
+
+    goal_id = filters.get("goal_id")
+    if goal_id and row["goal_id"] != goal_id:
+        return False
+
+    priority_min = filters.get("priority_min")
+    if priority_min is not None and row["priority"] < priority_min:
+        return False
+
+    if filters.get("blocked_only") and row["status"] != "blocked":
+        return False
+
+    if filters.get("review_only") and row["status"] != "review":
+        return False
+
+    return True
+
+
+def fetch_board(connection, filters=None):
     rows = connection.execute(
         """
         SELECT
@@ -55,7 +94,8 @@ def fetch_board(connection):
     ).fetchall()
 
     cards_by_status = {}
-    for row in rows:
+    filtered_rows = [row for row in rows if _matches_filters(row, filters or {})]
+    for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
         card = {
             "task_id": row["task_id"],
@@ -90,15 +130,45 @@ def fetch_board(connection):
             }
         )
 
+    agent_options = connection.execute(
+        """
+        SELECT agent_id AS id, display_name AS label
+        FROM agents
+        ORDER BY display_name ASC
+        """
+    ).fetchall()
+    goal_options = connection.execute(
+        """
+        SELECT goal_id AS id, title AS label
+        FROM goals
+        ORDER BY priority DESC, created_at ASC
+        """
+    ).fetchall()
+
+    selected_filters = {
+        "search": (filters or {}).get("search") or "",
+        "agent_id": (filters or {}).get("agent_id"),
+        "goal_id": (filters or {}).get("goal_id"),
+        "priority_min": (filters or {}).get("priority_min"),
+        "blocked_only": bool((filters or {}).get("blocked_only")),
+        "review_only": bool((filters or {}).get("review_only")),
+    }
+
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "columns": columns,
         "summary": {
-            "total_tasks": len(rows),
+            "total_tasks": len(filtered_rows),
             "active_agents": active_agents,
             "active_tasks": len(cards_by_status.get("in_progress", [])),
             "review_tasks": len(cards_by_status.get("review", [])),
             "blocked_tasks": len(cards_by_status.get("blocked", [])),
         },
         "filters": ["agent", "goal", "priority", "blocked_only", "review_only"],
+        "filter_options": {
+            "agents": [dict(row) for row in agent_options],
+            "goals": [dict(row) for row in goal_options],
+            "priority_min_values": [0, 50, 75, 90],
+        },
+        "selected_filters": selected_filters,
     }

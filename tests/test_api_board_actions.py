@@ -1,0 +1,94 @@
+import tempfile
+import unittest
+
+from fastapi.testclient import TestClient
+
+from maas.api import create_app
+from maas.services.bootstrap import bootstrap_project
+
+
+class BoardApiActionsTest(unittest.TestCase):
+    def test_board_filters_and_review_action(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="API Test", description="API board actions", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.get("/api/board", params={"review_only": "true"})
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["summary"]["review_tasks"], 1)
+            self.assertEqual(payload["summary"]["total_tasks"], 1)
+            self.assertTrue(payload["selected_filters"]["review_only"])
+
+            review_task_id = payload["columns"][3]["tasks"][0]["task_id"]
+            action_response = client.post(
+                "/api/tasks/{0}/actions/review".format(review_task_id),
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(action_response.status_code, 200)
+
+            after_response = client.get("/api/board", params={"search": "Validate seeded lifecycle semantics"})
+            self.assertEqual(after_response.status_code, 200)
+            after_payload = after_response.json()
+            matching_cards = [
+                task
+                for column in after_payload["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == review_task_id
+            ]
+            self.assertEqual(len(matching_cards), 1)
+            self.assertEqual(matching_cards[0]["status"], "done")
+
+    def test_pause_resume_and_reprioritize_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Steering Test", description="Operator actions", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_response = client.get("/api/board")
+            self.assertEqual(board_response.status_code, 200)
+            payload = board_response.json()
+            in_progress_task = payload["columns"][2]["tasks"][0]
+
+            pause_response = client.post(
+                "/api/agents/agent_builder/actions/pause",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(pause_response.status_code, 200)
+
+            blocked_board = client.get("/api/board", params={"blocked_only": "true"}).json()
+            blocked_task_ids = {
+                task["task_id"]
+                for column in blocked_board["columns"]
+                for task in column["tasks"]
+            }
+            self.assertIn(in_progress_task["task_id"], blocked_task_ids)
+
+            reprioritize_response = client.post(
+                "/api/tasks/{0}/actions/reprioritize".format(in_progress_task["task_id"]),
+                json={"actor_id": "agent_allocator", "priority": 97},
+            )
+            self.assertEqual(reprioritize_response.status_code, 200)
+
+            resume_response = client.post(
+                "/api/agents/agent_builder/actions/resume",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(resume_response.status_code, 200)
+
+            search_payload = client.get(
+                "/api/board",
+                params={"search": "Implement FastAPI board endpoint"},
+            ).json()
+            matching_cards = [
+                task
+                for column in search_payload["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == in_progress_task["task_id"]
+            ]
+            self.assertEqual(len(matching_cards), 1)
+            self.assertEqual(matching_cards[0]["priority"], 97)
+            self.assertEqual(matching_cards[0]["status"], "in_progress")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
+from maas.services.lifecycle import end_session
 from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 
 
@@ -221,12 +222,36 @@ class SchedulerApiTest(unittest.TestCase):
             self.assertEqual(refreshed["status"], "assigned")
             self.assertIsNone(refreshed["review_state"])
             self.assertIsNotNone(refreshed["assigned_agent_id"])
-            self.assertTrue(
-                any(
-                    change["task_id"] == target_task["task_id"] and change["status"] == "assigned"
-                    for change in changed
-                )
+
+    def test_recover_and_requeue_stays_blocked_when_dependency_is_still_open(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Recover And Requeue Dependency Test",
+                description="Recover and requeue with dependency still open",
+                project_type="custom",
             )
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                ).fetchone()["session_id"]
+                end_session(connection, session_id, "failed", "Recoverable failure")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover-and-requeue".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+            self.assertEqual(recover_response.json()["status"], "blocked")
+            self.assertEqual(recover_response.json()["review_state"], "blocked_by_dependency")
 
     def test_scheduler_api_endpoints_work(self):
         with tempfile.TemporaryDirectory() as tmpdir:

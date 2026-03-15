@@ -260,7 +260,9 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     UPDATE tasks
                     SET retry_count = 1,
                         last_retry_at = CURRENT_TIMESTAMP,
-                        last_retry_reason = 'session_timed_out'
+                        last_retry_reason = 'session_timed_out',
+                        next_retry_at = '2999-01-01 00:00:00',
+                        next_retry_reason = 'session_timed_out'
                     WHERE task_id = ?
                     """,
                     (task_id,),
@@ -289,6 +291,8 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["retry_count"], 1)
             self.assertEqual(recent_failure["last_retry_reason"], "session_timed_out")
             self.assertIsNotNone(recent_failure["last_retry_at"])
+            self.assertEqual(recent_failure["next_retry_at"], "2999-01-01 00:00:00")
+            self.assertEqual(recent_failure["next_retry_reason"], "session_timed_out")
 
     def test_quarantine_restore_action_restores_quarantined_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 
@@ -10,6 +11,24 @@ from maas.services.lifecycle import end_session, start_session
 
 
 class BoardApiActionsTest(unittest.TestCase):
+    def _update_recovery_config(self, project_root, **recovery_updates):
+        connection = connect(project_paths(project_root))
+        try:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects LIMIT 1"
+            ).fetchone()
+            config = json.loads(project["config_json"] or "{}")
+            recovery = dict(config.get("recovery") or {})
+            recovery.update(recovery_updates)
+            config["recovery"] = recovery
+            connection.execute(
+                "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                (json.dumps(config), project["project_id"]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
     def test_board_filters_and_review_action(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="API Test", description="API board actions", project_type="custom")
@@ -434,13 +453,19 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(task["review_state"], "session_failed")
             self.assertEqual(resolved_alert["status"], "resolved")
 
-    def test_recover_and_requeue_returns_recoverable_task_to_ready_queue(self):
+    def test_recover_and_requeue_applies_retry_backoff_before_returning_to_ready_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(
                 tmpdir,
                 name="Recover And Requeue Test",
                 description="Recover failure-blocked task directly to ready",
                 project_type="custom",
+            )
+            self._update_recovery_config(
+                tmpdir,
+                recover_and_requeue_cooldown_seconds=30,
+                retry_backoff_multiplier=2,
+                retry_backoff_max_seconds=900,
             )
             connection = connect(result["paths"])
             try:
@@ -466,14 +491,23 @@ class BoardApiActionsTest(unittest.TestCase):
                 json={"actor_id": "agent_allocator"},
             )
             self.assertEqual(recover_response.status_code, 200)
-            self.assertEqual(recover_response.json()["status"], "ready")
-            self.assertIsNone(recover_response.json()["review_state"])
+            self.assertEqual(recover_response.json()["status"], "planned")
+            self.assertEqual(recover_response.json()["review_state"], "retry_backoff")
+            self.assertEqual(recover_response.json()["next_retry_reason"], "recover_and_requeue")
+            self.assertIsNotNone(recover_response.json()["next_retry_at"])
 
             connection = connect(project_paths(tmpdir))
             try:
                 recovered_task = connection.execute(
                     """
-                    SELECT status, assigned_agent_id, review_state, progress_pct, last_heartbeat_at
+                    SELECT
+                        status,
+                        assigned_agent_id,
+                        review_state,
+                        progress_pct,
+                        last_heartbeat_at,
+                        next_retry_at,
+                        next_retry_reason
                     FROM tasks
                     WHERE task_id = ?
                     """,
@@ -488,18 +522,110 @@ class BoardApiActionsTest(unittest.TestCase):
                     LIMIT 1
                     """
                 ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET next_retry_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            refresh_response = client.post("/api/tasks/actions/refresh-ready")
+            self.assertEqual(refresh_response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_after_cooldown = connection.execute(
+                    """
+                    SELECT status, review_state, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
             finally:
                 connection.close()
 
             capabilities_response = client.get("/api/tasks/{0}/capabilities".format(task_id))
             self.assertEqual(capabilities_response.status_code, 200)
-            self.assertEqual(recovered_task["status"], "ready")
+            self.assertEqual(recovered_task["status"], "planned")
             self.assertIsNone(recovered_task["assigned_agent_id"])
-            self.assertIsNone(recovered_task["review_state"])
+            self.assertEqual(recovered_task["review_state"], "retry_backoff")
             self.assertEqual(recovered_task["progress_pct"], 0)
             self.assertIsNone(recovered_task["last_heartbeat_at"])
+            self.assertIsNotNone(recovered_task["next_retry_at"])
+            self.assertEqual(recovered_task["next_retry_reason"], "recover_and_requeue")
             self.assertEqual(capabilities_response.json()["grants"], [])
             self.assertEqual(session_failed_alert["status"], "resolved")
+            self.assertEqual(task_after_cooldown["status"], "ready")
+            self.assertIsNone(task_after_cooldown["review_state"])
+            self.assertIsNone(task_after_cooldown["next_retry_at"])
+            self.assertIsNone(task_after_cooldown["next_retry_reason"])
+
+    def test_recover_and_requeue_without_cooldown_returns_ready_without_retry_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Recover And Requeue No Cooldown Test",
+                description="Recover failure-blocked task without retry cooldown",
+                project_type="custom",
+            )
+            self._update_recovery_config(
+                tmpdir,
+                recover_and_requeue_cooldown_seconds=0,
+                retry_backoff_multiplier=2,
+                retry_backoff_max_seconds=900,
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting recover-and-requeue no cooldown test",
+                )
+                end_session(connection, session_id, "failed", "Recoverable failure")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recover_response = client.post(
+                "/api/tasks/{0}/actions/recover-and-requeue".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(recover_response.status_code, 200)
+            self.assertEqual(recover_response.json()["status"], "ready")
+            self.assertIsNone(recover_response.json()["review_state"])
+            self.assertIsNone(recover_response.json()["next_retry_at"])
+            self.assertIsNone(recover_response.json()["next_retry_reason"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                recovered_task = connection.execute(
+                    """
+                    SELECT status, review_state, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(recovered_task["status"], "ready")
+            self.assertIsNone(recovered_task["review_state"])
+            self.assertIsNone(recovered_task["next_retry_at"])
+            self.assertIsNone(recovered_task["next_retry_reason"])
 
     def test_halt_preserves_paused_agent_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:

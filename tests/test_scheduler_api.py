@@ -223,6 +223,72 @@ class SchedulerApiTest(unittest.TestCase):
             self.assertIsNone(refreshed["review_state"])
             self.assertIsNotNone(refreshed["assigned_agent_id"])
 
+    def test_refresh_ready_honors_retry_backoff_until_timestamp_expires(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Retry Cooldown Test", description="Retry cooldown test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'planned',
+                        review_state = 'retry_backoff',
+                        next_retry_at = '2999-01-01 00:00:00',
+                        next_retry_reason = 'recover_and_requeue'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                changed_before = refresh_ready_tasks(connection)
+                not_ready_yet = connection.execute(
+                    """
+                    SELECT status, review_state, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                ready_ids_before = {task["task_id"] for task in resolve_ready_tasks(connection)}
+
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET next_retry_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                changed_after = refresh_ready_tasks(connection)
+                ready_now = connection.execute(
+                    """
+                    SELECT status, review_state, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                ready_ids_after = {task["task_id"] for task in resolve_ready_tasks(connection)}
+            finally:
+                connection.close()
+
+            self.assertFalse(any(change["task_id"] == task_id for change in changed_before))
+            self.assertEqual(not_ready_yet["status"], "planned")
+            self.assertEqual(not_ready_yet["review_state"], "retry_backoff")
+            self.assertNotIn(task_id, ready_ids_before)
+            self.assertTrue(any(change["task_id"] == task_id and change["status"] == "ready" for change in changed_after))
+            self.assertEqual(ready_now["status"], "ready")
+            self.assertIsNone(ready_now["review_state"])
+            self.assertIsNone(ready_now["next_retry_at"])
+            self.assertIsNone(ready_now["next_retry_reason"])
+            self.assertIn(task_id, ready_ids_after)
+
     def test_recover_and_requeue_stays_blocked_when_dependency_is_still_open(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

@@ -28,6 +28,8 @@ export interface BoardTask {
   retry_count?: number;
   last_retry_at?: string | null;
   last_retry_reason?: string | null;
+  next_retry_at?: string | null;
+  next_retry_reason?: string | null;
   heartbeat_age_seconds?: number | null;
   age_hours?: number | null;
   review_state?: string | null;
@@ -116,6 +118,8 @@ export interface OverviewWorkItem {
   priority: number;
   retry_count?: number;
   last_retry_reason?: string | null;
+  next_retry_at?: string | null;
+  next_retry_reason?: string | null;
   goal_title?: string | null;
   agent_name?: string | null;
 }
@@ -149,6 +153,8 @@ export interface FailureItem {
   retry_count?: number;
   last_retry_at?: string | null;
   last_retry_reason?: string | null;
+  next_retry_at?: string | null;
+  next_retry_reason?: string | null;
   failure_type: string;
   summary: string;
   detail_json?: string;

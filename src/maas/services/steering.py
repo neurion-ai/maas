@@ -3,9 +3,15 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.recovery_policy import (
+    fetch_project_recovery_policy,
+    recover_and_requeue_cooldown_seconds,
+    retry_deadline,
+)
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_session_failed_alerts
 from maas.services.failure_memory import (
+    failure_attempt_count,
     dismiss_quarantine_queue_entry,
     resolve_repeated_failure_alerts,
     restore_quarantined_session_artifacts,
@@ -193,6 +199,11 @@ def recover_task(connection, task_id, actor_id):
 
 def recover_and_requeue_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
+    recovery_policy = fetch_project_recovery_policy(connection, task["project_id"])
+    failure_count = failure_attempt_count(connection, task_id)
+    cooldown_seconds = recover_and_requeue_cooldown_seconds(recovery_policy, failure_count)
+    next_retry_at = retry_deadline(cooldown_seconds)
+    next_retry_reason = "recover_and_requeue" if next_retry_at is not None else None
     _reset_recoverable_task(
         connection,
         task,
@@ -200,11 +211,17 @@ def recover_and_requeue_task(connection, task_id, actor_id):
         audit_action_type="recover_and_requeue_task",
         activity_action="recovered_and_requeued",
         activity_description="Task recovered from failure and returned to readiness evaluation.",
+        next_retry_at=next_retry_at,
+        next_retry_reason=next_retry_reason,
+        extra_audit_detail={
+            "failure_count": failure_count,
+            "cooldown_seconds": cooldown_seconds,
+        },
     )
     refresh_ready_tasks(connection)
     refreshed_task = connection.execute(
         """
-        SELECT status, review_state
+        SELECT status, review_state, next_retry_at, next_retry_reason
         FROM tasks
         WHERE task_id = ?
         """,
@@ -215,6 +232,8 @@ def recover_and_requeue_task(connection, task_id, actor_id):
         "task_id": task_id,
         "status": refreshed_task["status"],
         "review_state": refreshed_task["review_state"],
+        "next_retry_at": refreshed_task["next_retry_at"],
+        "next_retry_reason": refreshed_task["next_retry_reason"],
     }
 
 
@@ -237,7 +256,17 @@ def _load_recoverable_task(connection, task_id, actor_id):
     return task
 
 
-def _reset_recoverable_task(connection, task, actor_id, audit_action_type, activity_action, activity_description):
+def _reset_recoverable_task(
+    connection,
+    task,
+    actor_id,
+    audit_action_type,
+    activity_action,
+    activity_description,
+    next_retry_at=None,
+    next_retry_reason=None,
+    extra_audit_detail=None,
+):
     if task["assigned_agent_id"]:
         revoke_task_capabilities(
             connection,
@@ -256,11 +285,23 @@ def _reset_recoverable_task(connection, task, actor_id, audit_action_type, activ
             progress_pct = 0,
             review_state = NULL,
             last_heartbeat_at = NULL,
+            next_retry_at = ?,
+            next_retry_reason = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE task_id = ?
         """,
-        (task["task_id"],),
+        (next_retry_at, next_retry_reason, task["task_id"]),
     )
+    audit_detail = {
+        "previous_status": task["status"],
+        "previous_review_state": task["review_state"],
+        "previous_agent_id": task["assigned_agent_id"],
+    }
+    if next_retry_at is not None:
+        audit_detail["next_retry_at"] = next_retry_at
+        audit_detail["next_retry_reason"] = next_retry_reason
+    if extra_audit_detail:
+        audit_detail.update(extra_audit_detail)
     _audit(
         connection,
         task["project_id"],
@@ -268,11 +309,7 @@ def _reset_recoverable_task(connection, task, actor_id, audit_action_type, activ
         audit_action_type,
         "task",
         task["task_id"],
-        {
-            "previous_status": task["status"],
-            "previous_review_state": task["review_state"],
-            "previous_agent_id": task["assigned_agent_id"],
-        },
+        audit_detail,
     )
     _activity(
         connection,

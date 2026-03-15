@@ -66,6 +66,10 @@ def build_default_project_config(name, description, project_type):
         "recovery": {
             "auto_retry_timeout_sessions": False,
             "max_timed_out_retries": 1,
+            "timed_out_retry_cooldown_seconds": 60,
+            "recover_and_requeue_cooldown_seconds": 30,
+            "retry_backoff_multiplier": 2,
+            "retry_backoff_max_seconds": 900,
         },
     }
 

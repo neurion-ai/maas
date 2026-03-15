@@ -467,6 +467,10 @@ def _failure_count_for_task(connection, task_id):
     ).fetchone()["count"]
 
 
+def failure_attempt_count(connection, task_id):
+    return _failure_count_for_task(connection, task_id)
+
+
 def fetch_repeated_failure_tasks(connection, limit=None):
     clause, params = _repeated_failure_clause()
     query = """
@@ -738,6 +742,8 @@ def fetch_failure_log(connection, limit=20):
             tasks.retry_count,
             tasks.last_retry_at,
             tasks.last_retry_reason,
+            tasks.next_retry_at,
+            tasks.next_retry_reason,
             agents.display_name AS agent_name
         FROM failure_log
         LEFT JOIN tasks ON tasks.task_id = failure_log.task_id

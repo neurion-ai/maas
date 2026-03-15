@@ -5,7 +5,12 @@ import json
 
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
-from maas.services.recovery_policy import fetch_project_recovery_policy, task_timed_out_retry_limit
+from maas.services.recovery_policy import (
+    fetch_project_recovery_policy,
+    retry_deadline,
+    task_timed_out_retry_limit,
+    timed_out_retry_cooldown_seconds,
+)
 from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 from maas.services.security import revoke_task_capabilities
@@ -79,6 +84,8 @@ def _maybe_auto_retry_timed_out_task(connection, project_id, task_id, actor_id):
         )
 
     next_retry_count = task["retry_count"] + 1
+    cooldown_seconds = timed_out_retry_cooldown_seconds(recovery_policy, next_retry_count)
+    next_retry_at = retry_deadline(cooldown_seconds)
     connection.execute(
         """
         UPDATE tasks
@@ -90,10 +97,12 @@ def _maybe_auto_retry_timed_out_task(connection, project_id, task_id, actor_id):
             retry_count = ?,
             last_retry_at = CURRENT_TIMESTAMP,
             last_retry_reason = 'session_timed_out',
+            next_retry_at = ?,
+            next_retry_reason = CASE WHEN ? IS NULL THEN NULL ELSE 'session_timed_out' END,
             updated_at = CURRENT_TIMESTAMP
         WHERE task_id = ?
         """,
-        (next_retry_count, task_id),
+        (next_retry_count, next_retry_at, next_retry_at, task_id),
     )
     _audit_auto_retry(
         connection,
@@ -104,6 +113,8 @@ def _maybe_auto_retry_timed_out_task(connection, project_id, task_id, actor_id):
             "failure_type": "session_timed_out",
             "retry_count": next_retry_count,
             "retry_limit": retry_limit,
+            "cooldown_seconds": cooldown_seconds,
+            "next_retry_at": next_retry_at,
         },
     )
     _activity_auto_retry(
@@ -116,12 +127,15 @@ def _maybe_auto_retry_timed_out_task(connection, project_id, task_id, actor_id):
             "failure_type": "session_timed_out",
             "retry_count": next_retry_count,
             "retry_limit": retry_limit,
+            "cooldown_seconds": cooldown_seconds,
+            "next_retry_at": next_retry_at,
         },
     )
     return {
         "task_id": task_id,
         "retry_count": next_retry_count,
         "retry_limit": retry_limit,
+        "next_retry_at": next_retry_at,
     }
 
 
@@ -271,6 +285,7 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
                 "quarantined_artifacts": quarantined_artifacts,
                 "auto_retried": auto_retry is not None,
                 "retry_count": None if auto_retry is None else auto_retry["retry_count"],
+                "next_retry_at": None if auto_retry is None else auto_retry["next_retry_at"],
             }
         )
 

@@ -102,6 +102,12 @@ export function FailuresPage() {
                       {item.last_retry_reason ? ` (${item.last_retry_reason})` : ""}
                     </p>
                   ) : null}
+                  {item.next_retry_at ? (
+                    <p>
+                      Next retry window: {new Date(item.next_retry_at).toLocaleString()}
+                      {item.next_retry_reason ? ` (${item.next_retry_reason})` : ""}
+                    </p>
+                  ) : null}
                   {item.quarantined_artifact_count ? (
                     <p>
                       Quarantined artifacts: {item.quarantined_artifact_count}

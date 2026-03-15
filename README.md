@@ -36,12 +36,14 @@ Legend:
 - [x] Escalation queue for risky steering approvals
 - [x] Failure-memory logging, quarantine visibility, repeated-failure alerts, incident-specific alert actions, and task recovery for failure-blocked work
 - [x] Manual recover-and-requeue for failure-blocked tasks
+- [x] Timed-out session auto-retry with tracked retry state
+- [x] Quarantine queue workflow with restore and dismiss actions
 - [x] Recovery for agents left in `error`
 
 ### Still to do on `main`
 
 - [ ] Real external provider integrations
-- [ ] Automated restart, retry, and DLQ workflows
+- [ ] Broader automated restart, retry, backoff, and DLQ workflows
 - [ ] Brownfield onboarding and multi-project support
 
 ## Quick Start
@@ -74,6 +76,7 @@ The project bootstrap creates:
 - `GET /api/alerts`
 - `GET /api/escalations`
 - `GET /api/failures`
+- `GET /api/quarantine`
 - `GET /api/live`
 - `GET /api/overview`
 - `GET /api/goals/tree`
@@ -90,6 +93,8 @@ The project bootstrap creates:
 - `POST /api/tasks/{task_id}/actions/recover`
 - `POST /api/tasks/{task_id}/actions/recover-and-requeue`
 - `POST /api/tasks/{task_id}/actions/resolve-repeated-failures`
+- `POST /api/quarantine/{queue_id}/actions/restore`
+- `POST /api/quarantine/{queue_id}/actions/dismiss`
 - `POST /api/agents/{agent_id}/actions/assign-next`
 - `POST /api/agents/{agent_id}/actions/recover`
 - `POST /api/supervisor/run`
@@ -108,6 +113,9 @@ The primary operational surface is the Kanban board returned by `/api/board`.
 - `maas agent recover --project-root . --agent-id <agent_id> --actor-id <agent_id>`
 - `maas supervisor --project-root . --once`
 - `maas failure list --project-root .`
+- `maas quarantine list --project-root .`
+- `maas quarantine restore --project-root . --queue-id <queue_id> --actor-id <agent_id>`
+- `maas quarantine dismiss --project-root . --queue-id <queue_id> --actor-id <agent_id>`
 - `maas escalation list --project-root .`
 - `maas escalation request --project-root . --project-id <project_id> --actor-id <agent_id> --action-type halt_task|reassign_task|pause_agent|resume_agent --resource-type task|agent --resource-id <resource_id>`
 - `maas escalation approve --project-root . --escalation-id <escalation_id> --actor-id <agent_id>`
@@ -124,7 +132,9 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - risky task and agent interventions can now be routed through an escalation queue instead of being executed immediately
 - failed and timed-out sessions are now recorded in failure memory and can raise repeated-failure alerts
 - quarantined failure artifacts are isolated under `.maas/quarantine/` and surfaced through the failure-memory reads
+- first-class quarantine queue reads and actions now track open, restored, and dismissed artifact incidents
 - operators can return failure-blocked tasks to the planning queue without resuming the old execution context
+- timed-out sessions can auto-retry under project recovery policy with tracked retry state
 - operators can recover timeout-stranded agents from `error` back to `idle` once no active session remains
 
 ## Provider Notes

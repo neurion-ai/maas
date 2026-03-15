@@ -94,7 +94,9 @@ class BoardReadModelTest(unittest.TestCase):
                     UPDATE tasks
                     SET retry_count = 2,
                         last_retry_at = CURRENT_TIMESTAMP,
-                        last_retry_reason = 'session_timed_out'
+                        last_retry_reason = 'session_timed_out',
+                        next_retry_at = '2999-01-01 00:00:00',
+                        next_retry_reason = 'session_timed_out'
                     WHERE task_id = ?
                     """,
                     (task_id,),
@@ -113,6 +115,8 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertEqual(matching_cards[0]["retry_count"], 2)
             self.assertEqual(matching_cards[0]["last_retry_reason"], "session_timed_out")
             self.assertIsNotNone(matching_cards[0]["last_retry_at"])
+            self.assertEqual(matching_cards[0]["next_retry_at"], "2999-01-01 00:00:00")
+            self.assertEqual(matching_cards[0]["next_retry_reason"], "session_timed_out")
 
 
 if __name__ == "__main__":

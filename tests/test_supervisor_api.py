@@ -15,7 +15,7 @@ from maas.supervisor import run_supervisor_once
 
 
 class SupervisorApiTest(unittest.TestCase):
-    def _enable_timeout_auto_retry(self, connection, max_retries=1):
+    def _enable_timeout_auto_retry(self, connection, max_retries=1, cooldown_seconds=60):
         project = connection.execute(
             "SELECT project_id, config_json FROM projects LIMIT 1"
         ).fetchone()
@@ -23,6 +23,10 @@ class SupervisorApiTest(unittest.TestCase):
         config["recovery"] = {
             "auto_retry_timeout_sessions": True,
             "max_timed_out_retries": max_retries,
+            "timed_out_retry_cooldown_seconds": cooldown_seconds,
+            "recover_and_requeue_cooldown_seconds": 30,
+            "retry_backoff_multiplier": 2,
+            "retry_backoff_max_seconds": 900,
         }
         connection.execute(
             "UPDATE projects SET config_json = ? WHERE project_id = ?",
@@ -136,7 +140,14 @@ class SupervisorApiTest(unittest.TestCase):
                 supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
                 task = connection.execute(
                     """
-                    SELECT status, review_state, assigned_agent_id, retry_count, last_retry_reason
+                    SELECT
+                        status,
+                        review_state,
+                        assigned_agent_id,
+                        retry_count,
+                        last_retry_reason,
+                        next_retry_at,
+                        next_retry_reason
                     FROM tasks
                     WHERE task_id = ?
                     """,
@@ -151,11 +162,14 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(len(supervisor_result["stale_sessions"]), 1)
             self.assertTrue(supervisor_result["stale_sessions"][0]["auto_retried"])
             self.assertEqual(supervisor_result["stale_sessions"][0]["retry_count"], 1)
-            self.assertEqual(task["status"], "ready")
-            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["status"], "planned")
+            self.assertEqual(task["review_state"], "retry_backoff")
             self.assertIsNone(task["assigned_agent_id"])
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "session_timed_out")
+            self.assertEqual(task["next_retry_reason"], "session_timed_out")
+            self.assertIsNotNone(task["next_retry_at"])
+            self.assertEqual(supervisor_result["stale_sessions"][0]["next_retry_at"], task["next_retry_at"])
             self.assertEqual(agent["status"], "error")
             self.assertIsNone(agent["current_task_id"])
 

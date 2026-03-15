@@ -134,6 +134,14 @@ export function TaskCard({
               : "None"}
           </dd>
         </div>
+        <div>
+          <dt>Next retry</dt>
+          <dd>
+            {task.next_retry_at
+              ? `${new Date(task.next_retry_at).toLocaleString()}${task.next_retry_reason ? ` (${task.next_retry_reason})` : ""}`
+              : "Ready now"}
+          </dd>
+        </div>
       </dl>
       {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue) && (
         <div className="task-card__actions">

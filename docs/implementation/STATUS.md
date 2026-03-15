@@ -61,9 +61,11 @@
 
 - [x] Stale-session detection in the supervisor pass
 - [x] Failure-memory logging for failed and timed-out sessions
+- [x] Timed-out session auto-retry with retry state surfaced in task and failure reads
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
 - [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces
+- [x] First-class quarantine queue reads plus restore and dismiss actions
 - [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
 - [x] Operator recovery for failure-blocked tasks
 - [x] Operator recover-and-requeue for failure-blocked tasks
@@ -85,8 +87,8 @@
 
 ### Resilience and recovery
 
-- [ ] Automated restart and retry policies
-- [ ] DLQ and quarantine workflows
+- [ ] Broader automated restart and retry policies
+- [ ] Broader DLQ and quarantine workflows
 - [ ] Broader failure-specific resolution flows beyond the current repeated-failure and recovery-linked incidents
 - [ ] Broader self-healing and recovery orchestration
 

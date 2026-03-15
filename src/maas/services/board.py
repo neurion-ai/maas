@@ -109,6 +109,8 @@ def fetch_board(connection, filters=None):
             tasks.retry_count,
             tasks.last_retry_at,
             tasks.last_retry_reason,
+            tasks.next_retry_at,
+            tasks.next_retry_reason,
             tasks.progress_pct,
             tasks.review_state,
             tasks.created_at,
@@ -141,6 +143,8 @@ def fetch_board(connection, filters=None):
             "retry_count": row["retry_count"],
             "last_retry_at": row["last_retry_at"],
             "last_retry_reason": row["last_retry_reason"],
+            "next_retry_at": row["next_retry_at"],
+            "next_retry_reason": row["next_retry_reason"],
             "review_state": row["review_state"],
             "goal": {"id": row["goal_id"], "title": row["goal_title"]},
             "agent": {

@@ -15,14 +15,17 @@
 - [x] Board cards, overview, live snapshot, and a dedicated failures API expose failure-memory state
 - [x] Failed and timed-out session artifacts are isolated under `.maas/quarantine/`
 - [x] Quarantine details are visible in failure reads and overview failure surfaces
+- [x] Timed-out sessions can auto-retry under project recovery policy
+- [x] A first-class quarantine queue exposes open, restored, and dismissed incidents
 - [x] Operators can resolve repeated-failure incidents from the Alerts view without changing task state
 - [x] Operators can recover failure-blocked tasks
 - [x] Operators can recover-and-requeue failure-blocked tasks
+- [x] Operators can restore or dismiss quarantine-queue incidents
 - [x] Operators can recover agents left in `error`
 
 ## Still To Do On `main`
 
-- [ ] Automated restart policies
+- [ ] Broader automated restart and retry policies
 - [ ] Broader DLQ and quarantine workflows
 - [ ] Broader automated recovery orchestration
 

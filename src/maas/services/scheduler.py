@@ -1,5 +1,6 @@
 """Task scheduling and acceptance evaluation helpers."""
 
+from datetime import datetime
 import json
 import os
 import sqlite3
@@ -63,10 +64,26 @@ def _task_has_conflict(connection, task_id):
     return row["count"] > 0
 
 
+def _parse_timestamp(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def _cooldown_active(value):
+    next_retry_at = _parse_timestamp(value)
+    if next_retry_at is None:
+        return False
+    return next_retry_at > datetime.utcnow()
+
+
 def resolve_ready_tasks(connection):
     rows = connection.execute(
         """
-        SELECT task_id, title, priority, status
+        SELECT task_id, title, priority, status, next_retry_at, next_retry_reason
         FROM tasks
         WHERE status IN ('planned', 'assigned', 'ready')
         ORDER BY priority DESC, created_at ASC
@@ -74,6 +91,8 @@ def resolve_ready_tasks(connection):
     ).fetchall()
     ready = []
     for row in rows:
+        if _cooldown_active(row["next_retry_at"]):
+            continue
         if _task_is_blocked(connection, row["task_id"]) or _task_has_conflict(connection, row["task_id"]):
             continue
         ready.append(
@@ -82,6 +101,8 @@ def resolve_ready_tasks(connection):
                 "title": row["title"],
                 "priority": row["priority"],
                 "status": row["status"],
+                "next_retry_at": row["next_retry_at"],
+                "next_retry_reason": row["next_retry_reason"],
             }
         )
     return ready
@@ -90,7 +111,7 @@ def resolve_ready_tasks(connection):
 def refresh_ready_tasks(connection):
     task_rows = connection.execute(
         """
-        SELECT task_id, status, assigned_agent_id, review_state
+        SELECT task_id, status, assigned_agent_id, review_state, next_retry_at, next_retry_reason
         FROM tasks
         WHERE status IN ('planned', 'assigned', 'ready', 'blocked')
         """
@@ -100,35 +121,62 @@ def refresh_ready_tasks(connection):
         blocked_by_dependency = _task_is_blocked(connection, row["task_id"])
         blocked_by_conflict = _task_has_conflict(connection, row["task_id"])
         blocked = blocked_by_dependency or blocked_by_conflict
+        cooldown_active = _cooldown_active(row["next_retry_at"])
         next_status = row["status"]
         next_review_state = row["review_state"]
+        next_retry_at = row["next_retry_at"]
+        next_retry_reason = row["next_retry_reason"]
 
         if blocked and row["status"] in ("planned", "assigned", "ready"):
             next_status = "blocked"
             next_review_state = "blocked_by_conflict" if blocked_by_conflict else "blocked_by_dependency"
+        elif cooldown_active and row["status"] in ("planned", "assigned", "ready"):
+            next_status = "planned"
+            next_review_state = "retry_backoff"
         elif not blocked and row["status"] == "planned":
             next_status = "ready"
+            if row["review_state"] == "retry_backoff":
+                next_review_state = None
         elif not blocked and row["status"] == "blocked" and row["review_state"] in (
             "blocked_by_dependency",
             "blocked_by_conflict",
         ):
-            next_status = "assigned" if row["assigned_agent_id"] else "ready"
-            next_review_state = None
+            if cooldown_active:
+                next_status = "planned"
+                next_review_state = "retry_backoff"
+            else:
+                next_status = "assigned" if row["assigned_agent_id"] else "ready"
+                next_review_state = None
 
-        if next_status != row["status"] or next_review_state != row["review_state"]:
+        if not cooldown_active and row["next_retry_at"] is not None:
+            next_retry_at = None
+            next_retry_reason = None
+
+        if (
+            next_status != row["status"]
+            or next_review_state != row["review_state"]
+            or next_retry_at != row["next_retry_at"]
+            or next_retry_reason != row["next_retry_reason"]
+        ):
             connection.execute(
                 """
                 UPDATE tasks
-                SET status = ?, review_state = ?, updated_at = CURRENT_TIMESTAMP
+                SET status = ?,
+                    review_state = ?,
+                    next_retry_at = ?,
+                    next_retry_reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE task_id = ?
                 """,
-                (next_status, next_review_state, row["task_id"]),
+                (next_status, next_review_state, next_retry_at, next_retry_reason, row["task_id"]),
             )
             changed.append(
                 {
                     "task_id": row["task_id"],
                     "status": next_status,
                     "review_state": next_review_state,
+                    "next_retry_at": next_retry_at,
+                    "next_retry_reason": next_retry_reason,
                 }
             )
     connection.commit()
@@ -244,7 +292,12 @@ def assign_next_task(connection, agent_id, actor_id="system_allocator"):
     connection.execute(
         """
         UPDATE tasks
-        SET assigned_agent_id = ?, status = 'assigned', review_state = NULL, updated_at = CURRENT_TIMESTAMP
+        SET assigned_agent_id = ?,
+            status = 'assigned',
+            review_state = NULL,
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
         WHERE task_id = ?
         """,
         (agent_id, task_row["task_id"]),

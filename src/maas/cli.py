@@ -368,6 +368,7 @@ def command_worker(args):
                     "artifact_id": result["artifact_id"],
                     "artifact_path": result["artifact_path"],
                     "provider": result["provider"],
+                    "execution": result["execution"],
                 },
                 indent=2,
             )

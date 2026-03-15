@@ -565,6 +565,45 @@ class ProviderRuntimeTest(unittest.TestCase):
             with open(artifact_full_path, "r", encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "preexisting artifact content")
 
+    def test_openai_codex_cli_failure_preserves_preexisting_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex CLI Failure Test", description="Codex CLI failure test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_openai_codex_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Run failing Codex CLI adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "existing-codex-artifact.txt"
+            artifact_full_path = os.path.join(tmpdir, ".maas", "artifacts", artifact_name)
+            with open(artifact_full_path, "w", encoding="utf-8") as handle:
+                handle.write("preexisting codex artifact")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.subprocess.run",
+                        return_value=mock.Mock(returncode=1, stdout="", stderr="codex exploded"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_reviewer",
+                            task_id=task_id,
+                            provider_type="openai_codex",
+                            artifact_path=artifact_name,
+                        )
+            finally:
+                connection.close()
+
+            self.assertTrue(os.path.exists(artifact_full_path))
+            with open(artifact_full_path, "r", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "preexisting codex artifact")
 
 if __name__ == "__main__":
     unittest.main()

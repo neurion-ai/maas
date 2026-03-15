@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -9,6 +10,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.provider_runtime import run_provider_task
 from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
 
@@ -45,6 +47,20 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(provider_ids, {"python_script", "claude_code", "openai_codex"})
             self.assertTrue(all(provider["supports_worker_execution"] for provider in payload["providers"]))
             self.assertTrue(all(provider["execution_mode"] == "local_simulation" for provider in payload["providers"]))
+            self.assertTrue(all(provider["lifecycle_version"] == "provider_runtime_v1" for provider in payload["providers"]))
+            self.assertTrue(
+                all(
+                    provider["lifecycle_phases"]
+                    == [
+                        "session_started",
+                        "workspace_prepared",
+                        "execution_running",
+                        "artifact_recorded",
+                        "session_completed",
+                    ]
+                    for provider in payload["providers"]
+                )
+            )
 
     def test_provider_run_task_executes_each_adapter_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -87,6 +103,19 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 payload = response.json()
                 self.assertEqual(payload["provider"]["id"], provider_id)
+                self.assertEqual(payload["execution"]["execution_mode"], "local_simulation")
+                self.assertEqual(payload["execution"]["lifecycle_version"], "provider_runtime_v1")
+                self.assertEqual(payload["execution"]["artifact_type"], "provider_report")
+                self.assertEqual(
+                    payload["execution"]["lifecycle_phases"],
+                    [
+                        "session_started",
+                        "workspace_prepared",
+                        "execution_running",
+                        "artifact_recorded",
+                        "session_completed",
+                    ],
+                )
 
             connection = connect(project_paths(tmpdir))
             try:
@@ -115,20 +144,68 @@ class ProviderRuntimeTest(unittest.TestCase):
                         """,
                         (task_id,),
                     ).fetchone()
-                    activity_count = connection.execute(
+                    activity_rows = connection.execute(
                         """
-                        SELECT COUNT(*) AS count
+                        SELECT action, details_json
                         FROM activity_log
-                        WHERE task_id = ? AND action IN ('provider_adapter_started', 'provider_adapter_completed')
+                        WHERE task_id = ?
+                          AND action IN (
+                              'provider_adapter_started',
+                              'provider_workspace_prepared',
+                              'provider_execution_progress',
+                              'provider_artifact_recorded',
+                              'provider_adapter_completed'
+                          )
+                        ORDER BY rowid ASC
                         """,
                         (task_id,),
-                    ).fetchone()["count"]
+                    ).fetchall()
 
                     self.assertEqual(session["provider_type"], provider_id)
                     self.assertEqual(session["status"], "completed")
                     self.assertEqual(task["status"], "review")
-                    self.assertEqual(json.loads(artifact["metadata_json"])["provider_type"], provider_id)
-                    self.assertGreaterEqual(activity_count, 2)
+                    self.assertEqual(artifact["artifact_type"], "provider_report")
+                    artifact_metadata = json.loads(artifact["metadata_json"])
+                    self.assertEqual(artifact_metadata["provider_type"], provider_id)
+                    self.assertEqual(artifact_metadata["execution_mode"], "local_simulation")
+                    self.assertEqual(artifact_metadata["lifecycle_version"], "provider_runtime_v1")
+                    self.assertEqual(
+                        artifact_metadata["lifecycle_phases"],
+                        [
+                            "session_started",
+                            "workspace_prepared",
+                            "execution_running",
+                            "artifact_recorded",
+                            "session_completed",
+                        ],
+                    )
+                    self.assertEqual(len(activity_rows), 5)
+                    self.assertEqual(
+                        [row["action"] for row in activity_rows],
+                        [
+                            "provider_adapter_started",
+                            "provider_workspace_prepared",
+                            "provider_execution_progress",
+                            "provider_artifact_recorded",
+                            "provider_adapter_completed",
+                        ],
+                    )
+                    self.assertEqual(
+                        [json.loads(row["details_json"])["phase"] for row in activity_rows],
+                        [
+                            "session_started",
+                            "workspace_prepared",
+                            "execution_running",
+                            "artifact_recorded",
+                            "session_completed",
+                        ],
+                    )
+                    self.assertTrue(
+                        all(
+                            json.loads(row["details_json"])["lifecycle_version"] == "provider_runtime_v1"
+                            for row in activity_rows
+                        )
+                    )
             finally:
                 connection.close()
 
@@ -196,6 +273,15 @@ class ProviderRuntimeTest(unittest.TestCase):
                 )
                 self.assertEqual(response.status_code, 400)
                 self.assertIn(".maas/artifacts", response.json()["detail"])
+                connection = connect(project_paths(tmpdir))
+                try:
+                    session_count = connection.execute(
+                        "SELECT COUNT(*) AS count FROM sessions WHERE task_id = ?",
+                        (task_id,),
+                    ).fetchone()["count"]
+                    self.assertEqual(session_count, 0)
+                finally:
+                    connection.close()
 
     def test_provider_run_task_does_not_write_artifact_when_session_start_fails(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -229,6 +315,133 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertFalse(os.path.exists(artifact_full_path))
+
+    def test_provider_run_task_marks_session_failed_and_cleans_up_untracked_artifact_on_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Failure Test", description="Provider failure test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(
+                    connection, project_id, goal_id, "agent_allocator", "Run adapter with runtime failure"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "provider-failure.txt"
+            artifact_full_path = os.path.join(tmpdir, ".maas", "artifacts", artifact_name)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.produce_artifact",
+                        side_effect=RuntimeError("artifact store unavailable"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_allocator",
+                            task_id=task_id,
+                            provider_type="python_script",
+                            artifact_path=artifact_name,
+                        )
+            finally:
+                connection.close()
+
+            self.assertFalse(os.path.exists(artifact_full_path))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                session = connection.execute(
+                    """
+                    SELECT status, status_message
+                    FROM sessions
+                    WHERE task_id = ?
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                failure = connection.execute(
+                    """
+                    SELECT failure_type, summary
+                    FROM failure_log
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                failed_activity = connection.execute(
+                    """
+                    SELECT details_json
+                    FROM activity_log
+                    WHERE task_id = ? AND action = 'provider_adapter_failed'
+                    ORDER BY rowid DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+
+                self.assertEqual(session["status"], "failed")
+                self.assertIn("artifact store unavailable", session["status_message"])
+                self.assertEqual(task["status"], "blocked")
+                self.assertEqual(task["review_state"], "session_failed")
+                self.assertEqual(failure["failure_type"], "session_failed")
+                self.assertIn("artifact store unavailable", failure["summary"])
+                self.assertEqual(json.loads(failed_activity["details_json"])["phase"], "session_failed")
+            finally:
+                connection.close()
+
+    def test_provider_run_task_restores_preexisting_artifact_on_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preserve Artifact Test", description="Provider preserve test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(
+                    connection, project_id, goal_id, "agent_allocator", "Run adapter against existing artifact"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "existing-provider-artifact.txt"
+            artifact_full_path = os.path.join(tmpdir, ".maas", "artifacts", artifact_name)
+            with open(artifact_full_path, "w", encoding="utf-8") as handle:
+                handle.write("preexisting artifact content")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.produce_artifact",
+                        side_effect=RuntimeError("artifact store unavailable"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_allocator",
+                            task_id=task_id,
+                            provider_type="python_script",
+                            artifact_path=artifact_name,
+                        )
+            finally:
+                connection.close()
+
+            self.assertTrue(os.path.exists(artifact_full_path))
+            with open(artifact_full_path, "r", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "preexisting artifact content")
 
 
 if __name__ == "__main__":

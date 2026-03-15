@@ -171,6 +171,31 @@ def _codex_cli_activity_details(project_paths, provider_settings, task_prompt):
     }
 
 
+def _claude_cli_command(project_paths, provider_settings, prompt):
+    command = [
+        provider_settings.get("cli_command") or "claude",
+        "-p",
+    ]
+    permission_mode = (provider_settings.get("permission_mode") or "").strip()
+    if permission_mode:
+        command.extend(["--permission-mode", permission_mode])
+    model = (provider_settings.get("model") or "").strip()
+    if model:
+        command.extend(["--model", model])
+    command.extend(["--add-dir", project_paths.root])
+    command.append(prompt)
+    return command
+
+
+def _claude_cli_activity_details(project_paths, provider_settings, task_prompt):
+    command = _claude_cli_command(project_paths, provider_settings, task_prompt)
+    return {
+        "command": command,
+        "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
+        "external_runtime": "claude_cli",
+    }
+
+
 def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
     os.makedirs(project_paths.runtime_dir, exist_ok=True)
@@ -208,6 +233,44 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
             os.remove(output_path)
 
 
+def _run_claude_code_cli(project_paths, provider_settings, task_prompt):
+    timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
+    command = _claude_cli_command(project_paths, provider_settings, task_prompt)
+    result = subprocess.run(
+        command,
+        cwd=project_paths.root,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            "Claude CLI exited with status {0}: {1}".format(result.returncode, (result.stderr or "").strip() or "unknown error")
+        )
+    return {
+        "summary_text": (result.stdout or "").strip() or "Claude CLI completed without a final message.",
+        "stdout": result.stdout or "",
+        "stderr": result.stderr or "",
+    }
+
+
+def _claude_cli_artifact_payload(provider, task_id, external_result):
+    return {
+        "artifact_type": provider["default_artifact_type"],
+        "content": (
+            "# Claude Code Runtime Report\n\n"
+            "- Task ID: {0}\n"
+            "- Provider: Claude Code CLI\n"
+            "- Outcome: External Claude CLI execution completed.\n\n"
+            "## Final Message\n\n{1}\n\n"
+            "## Stdout\n\n```\n{2}\n```\n\n"
+            "## Stderr\n\n```\n{3}\n```\n"
+        ).format(task_id, external_result["summary_text"], external_result["stdout"].strip(), external_result["stderr"].strip()),
+        "status_message": "Claude Code CLI completed task execution",
+    }
+
+
 def _codex_cli_artifact_payload(provider, task_id, external_result):
     return {
         "artifact_type": provider["default_artifact_type"],
@@ -228,8 +291,14 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     provider = get_provider(provider_type)
     task_title = _task_title(connection, task_id)
     provider_settings = _project_provider_settings(connection, project_id, provider_type)
+    claude_cli_enabled = provider_type == "claude_code" and provider_settings.get("mode") == "claude_cli"
     codex_cli_enabled = provider_type == "openai_codex" and provider_settings.get("mode") == "codex_cli"
-    if codex_cli_enabled:
+    if claude_cli_enabled:
+        provider["execution_mode"] = "claude_cli"
+        provider["status"] = "configured"
+        task_prompt = _task_prompt(connection, task_id)
+        extra_activity_details = _claude_cli_activity_details(project_paths, provider_settings, task_prompt)
+    elif codex_cli_enabled:
         provider["execution_mode"] = "codex_cli"
         provider["status"] = "configured"
         task_prompt = _task_prompt(connection, task_id)
@@ -301,7 +370,10 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_type=provider["default_artifact_type"],
             **extra_activity_details
         )
-        if codex_cli_enabled:
+        if claude_cli_enabled:
+            external_result = _run_claude_code_cli(project_paths, provider_settings, task_prompt)
+            artifact_payload = _claude_cli_artifact_payload(provider, task_id, external_result)
+        elif codex_cli_enabled:
             external_result = _run_openai_codex_cli(project_paths, provider_settings, task_prompt)
             artifact_payload = _codex_cli_artifact_payload(provider, task_id, external_result)
         else:

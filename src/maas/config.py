@@ -72,6 +72,13 @@ def build_default_project_config(name, description, project_type):
             "retry_backoff_max_seconds": 900,
         },
         "providers": {
+            "claude_code": {
+                "mode": "simulated",
+                "cli_command": "claude",
+                "timeout_seconds": 300,
+                "permission_mode": "acceptEdits",
+                "model": "",
+            },
             "openai_codex": {
                 "mode": "simulated",
                 "cli_command": "codex",

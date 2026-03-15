@@ -39,10 +39,11 @@ Legend:
 - [x] Timed-out session auto-retry with tracked retry state
 - [x] Quarantine queue workflow with restore and dismiss actions
 - [x] Recovery for agents left in `error`
+- [x] Real local OpenAI Codex CLI integration behind explicit provider config
 
 ### Still to do on `main`
 
-- [ ] Real external provider integrations
+- [ ] Real external Claude Code integration
 - [ ] Broader automated restart, retry, backoff, and DLQ workflows
 - [ ] Brownfield onboarding and multi-project support
 
@@ -140,4 +141,5 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 ## Provider Notes
 
 - `python_script` is the reference local worker adapter
-- `claude_code` and `openai_codex` now execute through concrete simulated adapters, producing provider-specific activity and artifacts without live external API calls
+- `claude_code` executes through a concrete simulated adapter today, producing provider-specific activity and artifacts without live external API calls
+- `openai_codex` supports both the simulated adapter and a real local `codex exec` path when enabled in `project.yaml`

@@ -36,6 +36,23 @@ def _insert_assigned_task(connection, project_id, goal_id, agent_id, title):
 
 
 class ProviderRuntimeTest(unittest.TestCase):
+    def _enable_openai_codex_cli(self, connection):
+        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        config = json.loads(project["config_json"] or "{}")
+        providers = config.setdefault("providers", {})
+        providers["openai_codex"] = {
+            "mode": "codex_cli",
+            "cli_command": "codex",
+            "timeout_seconds": 120,
+            "sandbox": "workspace-write",
+            "model": "gpt-5-codex",
+        }
+        connection.execute(
+            "UPDATE projects SET config_json = ? WHERE project_id = ?",
+            (json.dumps(config), project["project_id"]),
+        )
+        return project["project_id"]
+
     def test_providers_endpoint_reports_runtime_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Endpoint Test", description="Provider endpoint test", project_type="custom")
@@ -47,6 +64,9 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(provider_ids, {"python_script", "claude_code", "openai_codex"})
             self.assertTrue(all(provider["supports_worker_execution"] for provider in payload["providers"]))
             self.assertTrue(all(provider["execution_mode"] == "local_simulation" for provider in payload["providers"]))
+            self.assertTrue(
+                all(provider["configured_execution_mode"] == "local_simulation" for provider in payload["providers"])
+            )
             self.assertTrue(all(provider["lifecycle_version"] == "provider_runtime_v1" for provider in payload["providers"]))
             self.assertTrue(
                 all(
@@ -61,6 +81,25 @@ class ProviderRuntimeTest(unittest.TestCase):
                     for provider in payload["providers"]
                 )
             )
+
+    def test_providers_endpoint_reflects_configured_openai_codex_cli_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._enable_openai_codex_cli(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in payload["providers"]}
+
+            self.assertEqual(providers["openai_codex"]["execution_mode"], "codex_cli")
+            self.assertEqual(providers["openai_codex"]["configured_execution_mode"], "codex_cli")
+            self.assertEqual(providers["openai_codex"]["status"], "configured")
+            self.assertTrue(providers["openai_codex"]["supports_live_api"])
 
     def test_provider_run_task_executes_each_adapter_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -235,6 +274,89 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("Unsupported provider type", response.json()["detail"])
+
+    def test_openai_codex_cli_mode_executes_real_command_path_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex CLI Test", description="Codex CLI test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_openai_codex_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Run Codex CLI adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            def write_codex_output(command, cwd, capture_output, text, timeout, check):
+                self.assertEqual(command[0:2], ["codex", "exec"])
+                self.assertIn("--model", command)
+                output_file = command[command.index("-o") + 1]
+                with open(output_file, "w", encoding="utf-8") as handle:
+                    handle.write("Codex completed the task.")
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = "{\"event\":\"done\"}\n"
+                completed.stderr = ""
+                return completed
+
+            with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_codex_output) as run_mock:
+                response = client.post(
+                    "/api/providers/openai_codex/actions/run-task",
+                    json={
+                        "project_id": project_id,
+                        "agent_id": "agent_reviewer",
+                        "task_id": task_id,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["execution"]["execution_mode"], "codex_cli")
+            self.assertEqual(payload["provider"]["status"], "configured")
+            self.assertEqual(run_mock.call_count, 1)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                artifact = connection.execute(
+                    """
+                    SELECT artifact_type, metadata_json, path
+                    FROM artifacts
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                with open(artifact["path"], "r", encoding="utf-8") as handle:
+                    artifact_content = handle.read()
+                activity_rows = connection.execute(
+                    """
+                    SELECT action, details_json
+                    FROM activity_log
+                    WHERE task_id = ? AND action IN (
+                        'provider_adapter_started',
+                        'provider_workspace_prepared',
+                        'provider_execution_progress',
+                        'provider_artifact_recorded',
+                        'provider_adapter_completed'
+                    )
+                    ORDER BY rowid ASC
+                    """,
+                    (task_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(artifact["artifact_type"], "provider_report")
+            self.assertIn("Codex completed the task.", artifact_content)
+            artifact_metadata = json.loads(artifact["metadata_json"])
+            self.assertEqual(artifact_metadata["execution_mode"], "codex_cli")
+            self.assertEqual(len(activity_rows), 5)
+            self.assertTrue(
+                all(json.loads(row["details_json"]).get("external_runtime") == "codex_cli" for row in activity_rows)
+            )
 
     def test_provider_run_task_rejects_paths_outside_workspace(self):
         with tempfile.TemporaryDirectory() as tmpdir:

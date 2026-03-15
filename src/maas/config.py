@@ -71,6 +71,15 @@ def build_default_project_config(name, description, project_type):
             "retry_backoff_multiplier": 2,
             "retry_backoff_max_seconds": 900,
         },
+        "providers": {
+            "openai_codex": {
+                "mode": "simulated",
+                "cli_command": "codex",
+                "timeout_seconds": 300,
+                "sandbox": "workspace-write",
+                "model": "",
+            }
+        },
     }
 
 

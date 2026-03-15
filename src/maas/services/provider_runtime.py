@@ -1,8 +1,11 @@
 """Provider adapter execution helpers."""
 
+import json
 import os
+import subprocess
+import tempfile
 
-from maas.providers import get_provider, list_providers
+from maas.providers import get_provider, list_provider_status
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 
 
@@ -106,10 +109,135 @@ def _rollback_untracked_artifact(artifact_full_path, artifact_existed_before_run
         return
 
 
+def _project_provider_settings(connection, project_id, provider_type):
+    row = connection.execute(
+        "SELECT config_json FROM projects WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        config = json.loads(row["config_json"] or "{}")
+    except json.JSONDecodeError:
+        return {}
+    providers = config.get("providers") or {}
+    return providers.get(provider_type) or {}
+
+
+def _task_prompt(connection, task_id):
+    row = connection.execute(
+        """
+        SELECT title, description
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if row is None:
+        return "Complete task {0} and summarize the result.".format(task_id)
+    description = (row["description"] or "").strip()
+    if description:
+        return "Task: {0}\n\nContext:\n{1}\n\nReturn a concise completion summary.".format(row["title"], description)
+    return "Task: {0}\n\nReturn a concise completion summary.".format(row["title"])
+
+
+def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
+    command = [
+        provider_settings.get("cli_command") or "codex",
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        provider_settings.get("sandbox") or "workspace-write",
+        "--color",
+        "never",
+        "-C",
+        project_paths.root,
+        "-o",
+        output_path,
+    ]
+    model = (provider_settings.get("model") or "").strip()
+    if model:
+        command.extend(["--model", model])
+    command.append(prompt)
+    return command
+
+
+def _codex_cli_activity_details(project_paths, provider_settings, task_prompt):
+    command = _codex_cli_command(project_paths, provider_settings, task_prompt, "<runtime-output>")
+    return {
+        "command": command,
+        "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
+        "external_runtime": "codex_cli",
+    }
+
+
+def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
+    timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
+    os.makedirs(project_paths.runtime_dir, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        prefix="openai-codex-",
+        suffix=".txt",
+        dir=project_paths.runtime_dir,
+        delete=False,
+    ) as handle:
+        output_path = handle.name
+
+    command = _codex_cli_command(project_paths, provider_settings, task_prompt, output_path)
+    try:
+        result = subprocess.run(
+            command,
+            cwd=project_paths.root,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Codex CLI exited with status {0}: {1}".format(result.returncode, (result.stderr or "").strip() or "unknown error")
+            )
+        with open(output_path, "r", encoding="utf-8") as output_handle:
+            final_message = output_handle.read().strip()
+        return {
+            "summary_text": final_message or "Codex CLI completed without a final message.",
+            "stdout": result.stdout or "",
+            "stderr": result.stderr or "",
+        }
+    finally:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
+def _codex_cli_artifact_payload(provider, task_id, external_result):
+    return {
+        "artifact_type": provider["default_artifact_type"],
+        "content": (
+            "# OpenAI Codex Runtime Report\n\n"
+            "- Task ID: {0}\n"
+            "- Provider: OpenAI Codex CLI\n"
+            "- Outcome: External Codex CLI execution completed.\n\n"
+            "## Final Message\n\n{1}\n\n"
+            "## Stdout\n\n```\n{2}\n```\n\n"
+            "## Stderr\n\n```\n{3}\n```\n"
+        ).format(task_id, external_result["summary_text"], external_result["stdout"].strip(), external_result["stderr"].strip()),
+        "status_message": "OpenAI Codex CLI completed task execution",
+    }
+
+
 def run_provider_task(connection, project_paths, project_id, agent_id, task_id, provider_type, artifact_path=None):
     provider = get_provider(provider_type)
     task_title = _task_title(connection, task_id)
-    artifact_payload = _provider_artifact_payload(provider, task_title, task_id)
+    provider_settings = _project_provider_settings(connection, project_id, provider_type)
+    codex_cli_enabled = provider_type == "openai_codex" and provider_settings.get("mode") == "codex_cli"
+    if codex_cli_enabled:
+        provider["execution_mode"] = "codex_cli"
+        provider["status"] = "configured"
+        task_prompt = _task_prompt(connection, task_id)
+        extra_activity_details = _codex_cli_activity_details(project_paths, provider_settings, task_prompt)
+    else:
+        task_prompt = None
+        extra_activity_details = {}
+
     artifact_full_path = _resolve_artifact_path(project_paths, provider_type, task_id, artifact_path)
     artifact_existed_before_run = os.path.exists(artifact_full_path)
     original_artifact_bytes = None
@@ -139,6 +267,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             session_id=session_id,
             task_title=task_title,
             progress_pct=0,
+            **extra_activity_details
         )
         os.makedirs(os.path.dirname(artifact_full_path), exist_ok=True)
         heartbeat(connection, session_id, 15, "{0} adapter prepared the local workspace".format(provider["name"]))
@@ -154,6 +283,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             session_id=session_id,
             progress_pct=15,
             artifact_path=artifact_full_path,
+            **extra_activity_details
         )
         heartbeat(connection, session_id, 60, "{0} adapter is executing simulated work".format(provider["name"]))
         _log_provider_phase(
@@ -168,8 +298,15 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             session_id=session_id,
             progress_pct=60,
             artifact_path=artifact_full_path,
-            artifact_type=artifact_payload["artifact_type"],
+            artifact_type=provider["default_artifact_type"],
+            **extra_activity_details
         )
+        if codex_cli_enabled:
+            external_result = _run_openai_codex_cli(project_paths, provider_settings, task_prompt)
+            artifact_payload = _codex_cli_artifact_payload(provider, task_id, external_result)
+        else:
+            artifact_payload = _provider_artifact_payload(provider, task_title, task_id)
+
         with open(artifact_full_path, "w", encoding="utf-8") as handle:
             handle.write(artifact_payload["content"])
 
@@ -187,6 +324,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
                 "execution_mode": provider["execution_mode"],
                 "lifecycle_version": provider["lifecycle_version"],
                 "lifecycle_phases": provider["lifecycle_phases"],
+                "configured_execution_mode": provider["execution_mode"],
             },
         )
         heartbeat(connection, session_id, 90, "{0} adapter recorded the runtime artifact".format(provider["name"]))
@@ -204,6 +342,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_path=artifact_full_path,
             artifact_type=artifact_payload["artifact_type"],
             progress_pct=90,
+            **extra_activity_details
         )
         heartbeat(connection, session_id, 100, artifact_payload["status_message"])
         _log_provider_phase(
@@ -220,6 +359,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_path=artifact_full_path,
             artifact_type=artifact_payload["artifact_type"],
             progress_pct=100,
+            **extra_activity_details
         )
         end_session(connection, session_id, "completed", artifact_payload["status_message"], project_paths=project_paths)
     except Exception as exc:
@@ -246,6 +386,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
                         session_id=session_id,
                         error=str(exc),
                         progress_pct=100,
+                        **extra_activity_details
                     ),
                 )
             except Exception:
@@ -269,5 +410,5 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     }
 
 
-def list_provider_runtime_status():
-    return list_providers()
+def list_provider_runtime_status(connection=None, project_id=None):
+    return list_provider_status(connection=connection, project_id=project_id)

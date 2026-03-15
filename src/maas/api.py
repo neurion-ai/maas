@@ -332,7 +332,13 @@ def create_app(project_root="."):
 
     @app.get("/api/providers")
     def providers():
-        return {"providers": list_provider_runtime_status()}
+        connection = connect(paths)
+        try:
+            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+            project_id = project["project_id"] if project else None
+            return {"providers": list_provider_runtime_status(connection=connection, project_id=project_id)}
+        finally:
+            connection.close()
 
     @app.post("/api/escalations/request")
     def escalation_request_action(payload: EscalationRequestPayload):

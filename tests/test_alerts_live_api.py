@@ -175,6 +175,78 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(queue_entry["failure_type"], "session_failed")
             self.assertEqual(queue_entry["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
+    def test_quarantine_api_persists_backfilled_legacy_queue_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Backfill API Test",
+                description="Quarantine backfill api test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine backfill api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-backfill-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("backfill me\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure that needs queue backfill persistence",
+                    project_paths=result["paths"],
+                )
+                connection.execute("DELETE FROM quarantine_queue WHERE session_id = ?", (session_id,))
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            first_payload = client.get("/api/quarantine").json()
+            backfilled_entry = first_payload["entries"][0]
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                persisted_row = connection.execute(
+                    """
+                    SELECT queue_id, status
+                    FROM quarantine_queue
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(backfilled_entry["queue_id"], persisted_row["queue_id"])
+            self.assertEqual(persisted_row["status"], "open")
+
+            restore_response = client.post(
+                "/api/quarantine/{0}/actions/restore".format(backfilled_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(restore_response.status_code, 200)
+            self.assertEqual(restore_response.json()["status"], "restored")
+
     def test_failures_api_exposes_retry_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Failure Retry API Test", description="Failure retry api test", project_type="custom")

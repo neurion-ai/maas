@@ -659,7 +659,9 @@ def enrich_failures_with_quarantine(connection, failures):
 
 
 def fetch_quarantine_queue(connection, limit=20):
-    backfill_quarantine_queue(connection)
+    inserted_queue_ids = backfill_quarantine_queue(connection)
+    if inserted_queue_ids:
+        connection.commit()
     rows = connection.execute(
         """
         SELECT

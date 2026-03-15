@@ -1,5 +1,6 @@
 """Failure memory helpers for resilience and repeated-failure visibility."""
 
+from datetime import datetime
 import json
 import os
 import shutil
@@ -33,7 +34,196 @@ def record_failure(connection, project_id, failure_type, summary, task_id=None, 
     return failure_id
 
 
-def quarantine_session_artifacts(connection, project_paths, session_id, reason):
+def _utc_now():
+    return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _insert_quarantine_queue_entry(
+    connection,
+    project_id,
+    session_id,
+    task_id,
+    failure_id,
+    reason,
+    artifact_count,
+    status="open",
+    resolution_note="",
+    resolved_at=None,
+):
+    queue_id = generate_id("quar")
+    connection.execute(
+        """
+        INSERT INTO quarantine_queue (
+            queue_id, project_id, session_id, task_id, failure_id, status, reason,
+            artifact_count, resolution_note, resolved_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            queue_id,
+            project_id,
+            session_id,
+            task_id,
+            failure_id,
+            status,
+            reason,
+            artifact_count,
+            resolution_note,
+            resolved_at,
+        ),
+    )
+    return queue_id
+
+
+def _upsert_quarantine_queue_entry(connection, project_id, session_id, task_id, failure_id, reason, artifact_count):
+    existing = connection.execute(
+        """
+        SELECT queue_id, status
+        FROM quarantine_queue
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    if existing is None:
+        queue_id = _insert_quarantine_queue_entry(
+            connection,
+            project_id,
+            session_id,
+            task_id,
+            failure_id,
+            reason,
+            artifact_count,
+        )
+        return {"queue_id": queue_id, "status": "open"}
+
+    connection.execute(
+        """
+        UPDATE quarantine_queue
+        SET task_id = COALESCE(?, task_id),
+            failure_id = COALESCE(?, failure_id),
+            reason = ?,
+            artifact_count = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE session_id = ?
+        """,
+        (task_id, failure_id, reason, artifact_count, session_id),
+    )
+    return {"queue_id": existing["queue_id"], "status": existing["status"]}
+
+
+def _set_quarantine_queue_status_for_session(connection, session_id, status, resolution_note):
+    connection.execute(
+        """
+        UPDATE quarantine_queue
+        SET status = ?,
+            resolution_note = ?,
+            updated_at = CURRENT_TIMESTAMP,
+            resolved_at = CASE WHEN ? = 'open' THEN NULL ELSE CURRENT_TIMESTAMP END
+        WHERE session_id = ?
+        """,
+        (status, resolution_note, status, session_id),
+    )
+
+
+def _artifact_quarantine_snapshot(connection, session_ids=None):
+    params = []
+    query = """
+        SELECT project_id, task_id, session_id, metadata_json
+        FROM artifacts
+        WHERE session_id IS NOT NULL
+    """
+    if session_ids:
+        placeholders = ", ".join(["?"] * len(session_ids))
+        query += " AND session_id IN ({0})".format(placeholders)
+        params.extend(session_ids)
+
+    snapshots = {}
+    for row in connection.execute(query, tuple(params)).fetchall():
+        metadata = json.loads(row["metadata_json"] or "{}")
+        if not metadata.get("quarantined") and not metadata.get("restored_from_quarantine"):
+            continue
+        snapshot = snapshots.setdefault(
+            row["session_id"],
+            {
+                "project_id": row["project_id"],
+                "task_id": row["task_id"],
+                "reason": "",
+                "quarantined_count": 0,
+                "restored_count": 0,
+            },
+        )
+        if metadata.get("quarantined"):
+            snapshot["quarantined_count"] += 1
+            if not snapshot["reason"]:
+                snapshot["reason"] = metadata.get("quarantine_reason") or ""
+        if metadata.get("restored_from_quarantine"):
+            snapshot["restored_count"] += 1
+    return snapshots
+
+
+def _latest_failures_by_session(connection, session_ids):
+    if not session_ids:
+        return {}
+
+    placeholders = ", ".join(["?"] * len(session_ids))
+    rows = connection.execute(
+        """
+        SELECT failure_id, session_id, task_id, failure_type
+        FROM failure_log
+        WHERE session_id IN ({0})
+        ORDER BY created_at DESC
+        """.format(placeholders),
+        tuple(session_ids),
+    ).fetchall()
+
+    latest = {}
+    for row in rows:
+        latest.setdefault(row["session_id"], dict(row))
+    return latest
+
+
+def backfill_quarantine_queue(connection, session_ids=None):
+    snapshots = _artifact_quarantine_snapshot(connection, session_ids=session_ids)
+    if not snapshots:
+        return []
+
+    if session_ids:
+        placeholders = ", ".join(["?"] * len(session_ids))
+        existing_rows = connection.execute(
+            "SELECT session_id FROM quarantine_queue WHERE session_id IN ({0})".format(placeholders),
+            tuple(session_ids),
+        ).fetchall()
+    else:
+        existing_rows = connection.execute("SELECT session_id FROM quarantine_queue").fetchall()
+    existing_session_ids = {row["session_id"] for row in existing_rows}
+    latest_failures = _latest_failures_by_session(connection, list(snapshots.keys()))
+
+    inserted_queue_ids = []
+    for session_id, snapshot in snapshots.items():
+        if session_id in existing_session_ids:
+            continue
+        status = "open" if snapshot["quarantined_count"] else "restored"
+        artifact_count = snapshot["quarantined_count"] or snapshot["restored_count"]
+        if artifact_count <= 0:
+            continue
+        failure = latest_failures.get(session_id)
+        queue_id = _insert_quarantine_queue_entry(
+            connection,
+            snapshot["project_id"],
+            session_id,
+            (failure or {}).get("task_id") or snapshot["task_id"],
+            (failure or {}).get("failure_id"),
+            snapshot["reason"] or (failure or {}).get("failure_type") or "",
+            artifact_count,
+            status=status,
+            resolution_note="" if status == "open" else "backfilled_restored_entry",
+            resolved_at=None if status == "open" else _utc_now(),
+        )
+        inserted_queue_ids.append(queue_id)
+
+    return inserted_queue_ids
+
+
+def quarantine_session_artifacts(connection, project_paths, session_id, reason, project_id=None, task_id=None, failure_id=None):
     if project_paths is None:
         return []
 
@@ -92,12 +282,37 @@ def quarantine_session_artifacts(connection, project_paths, session_id, reason):
             }
         )
 
+    if quarantined:
+        if project_id is None or task_id is None:
+            session_row = connection.execute(
+                """
+                SELECT project_id, task_id
+                FROM sessions
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if session_row is not None:
+                project_id = project_id or session_row["project_id"]
+                task_id = task_id or session_row["task_id"]
+        if project_id is not None:
+            _upsert_quarantine_queue_entry(
+                connection,
+                project_id,
+                session_id,
+                task_id,
+                failure_id,
+                reason,
+                len(quarantined),
+            )
+
     return quarantined
 
 
 def restore_quarantined_session_artifacts(connection, project_paths, session_id):
     if project_paths is None:
         raise ValueError("Project paths are required to restore quarantined artifacts")
+    backfill_quarantine_queue(connection, session_ids=[session_id])
 
     artifacts = connection.execute(
         """
@@ -192,7 +407,27 @@ def restore_quarantined_session_artifacts(connection, project_paths, session_id)
             }
         )
 
+    _set_quarantine_queue_status_for_session(connection, session_id, "restored", "artifacts_restored")
     return restored
+
+
+def dismiss_quarantine_queue_entry(connection, queue_id):
+    backfill_quarantine_queue(connection)
+    entry = connection.execute(
+        """
+        SELECT queue_id, project_id, session_id, task_id, failure_id, status, artifact_count
+        FROM quarantine_queue
+        WHERE queue_id = ?
+        """,
+        (queue_id,),
+    ).fetchone()
+    if entry is None:
+        raise ValueError("Quarantine entry not found")
+    if entry["status"] != "open":
+        raise ValueError("Only open quarantine entries can be dismissed")
+
+    _set_quarantine_queue_status_for_session(connection, entry["session_id"], "dismissed", "quarantine_dismissed")
+    return dict(entry)
 
 
 def _repeated_failure_clause():
@@ -408,6 +643,8 @@ def _quarantined_artifacts_by_session(connection, session_ids):
         )
 
     return artifacts_by_session
+
+
 def enrich_failures_with_quarantine(connection, failures):
     session_ids = [failure["session_id"] for failure in failures if failure.get("session_id")]
     artifacts_by_session = _quarantined_artifacts_by_session(connection, session_ids)
@@ -419,6 +656,69 @@ def enrich_failures_with_quarantine(connection, failures):
         enriched_failure["quarantined_artifact_count"] = len(quarantined_artifacts)
         enriched.append(enriched_failure)
     return enriched
+
+
+def fetch_quarantine_queue(connection, limit=20):
+    inserted_queue_ids = backfill_quarantine_queue(connection)
+    if inserted_queue_ids:
+        connection.commit()
+    rows = connection.execute(
+        """
+        SELECT
+            quarantine_queue.queue_id,
+            quarantine_queue.project_id,
+            quarantine_queue.session_id,
+            quarantine_queue.task_id,
+            quarantine_queue.failure_id,
+            quarantine_queue.status,
+            quarantine_queue.reason,
+            quarantine_queue.artifact_count,
+            quarantine_queue.resolution_note,
+            quarantine_queue.created_at,
+            quarantine_queue.updated_at,
+            quarantine_queue.resolved_at,
+            failure_log.failure_type,
+            failure_log.summary,
+            tasks.title AS task_title,
+            agents.display_name AS agent_name
+        FROM quarantine_queue
+        LEFT JOIN failure_log ON failure_log.failure_id = quarantine_queue.failure_id
+        LEFT JOIN tasks ON tasks.task_id = quarantine_queue.task_id
+        LEFT JOIN agents ON agents.agent_id = failure_log.agent_id
+        ORDER BY
+            CASE quarantine_queue.status
+                WHEN 'open' THEN 0
+                WHEN 'dismissed' THEN 1
+                ELSE 2
+            END,
+            quarantine_queue.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+    entries = [dict(row) for row in rows]
+    artifacts_by_session = _quarantined_artifacts_by_session(
+        connection,
+        [entry["session_id"] for entry in entries if entry.get("session_id")],
+    )
+    for entry in entries:
+        entry["quarantined_artifacts"] = artifacts_by_session.get(entry["session_id"], [])
+
+    return {
+        "entries": entries,
+        "summary": {
+            "open": connection.execute(
+                "SELECT COUNT(*) AS count FROM quarantine_queue WHERE status = 'open'"
+            ).fetchone()["count"],
+            "restored": connection.execute(
+                "SELECT COUNT(*) AS count FROM quarantine_queue WHERE status = 'restored'"
+            ).fetchone()["count"],
+            "dismissed": connection.execute(
+                "SELECT COUNT(*) AS count FROM quarantine_queue WHERE status = 'dismissed'"
+            ).fetchone()["count"],
+        },
+    }
 
 
 def fetch_failure_log(connection, limit=20):

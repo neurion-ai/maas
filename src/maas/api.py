@@ -13,19 +13,21 @@ from maas.services.alerts import fetch_alerts, update_alert_status
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
-from maas.services.failure_memory import fetch_failure_log
+from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
 from maas.services.provider_runtime import list_provider_runtime_status, run_provider_task
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
+    dismiss_quarantine_entry,
     recover_and_requeue_task,
     halt_task,
     pause_agent,
     reassign_task,
     recover_agent,
     recover_task,
+    restore_quarantine_entry,
     restore_failure_artifacts,
     resolve_task_repeated_failures,
     reprioritize_task,
@@ -289,6 +291,38 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return restore_failure_artifacts(connection, paths, failure_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.get("/api/quarantine")
+    def quarantine(limit=20):
+        connection = connect(paths)
+        try:
+            return fetch_quarantine_queue(connection, limit=int(limit))
+        finally:
+            connection.close()
+
+    @app.post("/api/quarantine/{queue_id}/actions/restore")
+    def quarantine_restore_action(queue_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return restore_quarantine_entry(connection, paths, queue_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/quarantine/{queue_id}/actions/dismiss")
+    def quarantine_dismiss_action(queue_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return dismiss_quarantine_entry(connection, queue_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

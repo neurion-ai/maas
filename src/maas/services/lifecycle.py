@@ -231,7 +231,7 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
             """,
             (row["task_id"],),
         )
-        record_failure(
+        failure_id = record_failure(
             connection,
             row["project_id"],
             "session_failed",
@@ -261,6 +261,9 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
             project_paths,
             session_id,
             reason="session_failed",
+            project_id=row["project_id"],
+            task_id=row["task_id"],
+            failure_id=failure_id,
         )
         if quarantined_artifacts:
             connection.execute(

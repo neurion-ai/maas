@@ -5,7 +5,11 @@ import json
 from maas.ids import generate_id
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_session_failed_alerts
-from maas.services.failure_memory import resolve_repeated_failure_alerts, restore_quarantined_session_artifacts
+from maas.services.failure_memory import (
+    dismiss_quarantine_queue_entry,
+    resolve_repeated_failure_alerts,
+    restore_quarantined_session_artifacts,
+)
 from maas.services.security import (
     TASK_EXECUTION_CAPABILITIES,
     ensure_board_action_allowed,
@@ -333,6 +337,74 @@ def resolve_task_repeated_failures(connection, task_id, actor_id):
     }
 
 
+def _restore_quarantine_session(connection, project_paths, queue_row, actor_id, resource_type, resource_id):
+    ensure_board_action_allowed(
+        connection,
+        actor_id,
+        queue_row["project_id"],
+        "restore_quarantine_artifacts",
+        resource_type,
+        resource_id,
+    )
+    if queue_row["session_id"] is None:
+        raise ValueError("Quarantine entry is not linked to a session")
+
+    restored_artifacts = restore_quarantined_session_artifacts(connection, project_paths, queue_row["session_id"])
+    if not restored_artifacts:
+        raise ValueError("Quarantine entry has no quarantined artifacts to restore")
+
+    _audit(
+        connection,
+        queue_row["project_id"],
+        actor_id,
+        "restore_quarantine_artifacts",
+        resource_type,
+        resource_id,
+        {"session_id": queue_row["session_id"], "restored_count": len(restored_artifacts)},
+    )
+    _activity(
+        connection,
+        queue_row["project_id"],
+        actor_id,
+        queue_row["task_id"],
+        "artifacts_restored",
+        "Quarantined artifacts restored to the active artifact workspace.",
+    )
+    return restored_artifacts
+
+
+def restore_quarantine_entry(connection, project_paths, queue_id, actor_id):
+    queue_entry = connection.execute(
+        """
+        SELECT queue_id, project_id, task_id, session_id, status
+        FROM quarantine_queue
+        WHERE queue_id = ?
+        """,
+        (queue_id,),
+    ).fetchone()
+    if queue_entry is None:
+        raise ValueError("Quarantine entry not found")
+    if queue_entry["status"] != "open":
+        raise ValueError("Only open quarantine entries can be restored")
+
+    restored_artifacts = _restore_quarantine_session(
+        connection,
+        project_paths,
+        queue_entry,
+        actor_id,
+        resource_type="quarantine",
+        resource_id=queue_id,
+    )
+    connection.commit()
+    return {
+        "queue_id": queue_id,
+        "session_id": queue_entry["session_id"],
+        "restored_artifacts": restored_artifacts,
+        "restored_count": len(restored_artifacts),
+        "status": "restored",
+    }
+
+
 def restore_failure_artifacts(connection, project_paths, failure_id, actor_id):
     failure = connection.execute(
         """
@@ -355,26 +427,13 @@ def restore_failure_artifacts(connection, project_paths, failure_id, actor_id):
     if failure["session_id"] is None:
         raise ValueError("Failure is not linked to a session")
 
-    restored_artifacts = restore_quarantined_session_artifacts(connection, project_paths, failure["session_id"])
-    if not restored_artifacts:
-        raise ValueError("Failure has no quarantined artifacts to restore")
-
-    _audit(
+    restored_artifacts = _restore_quarantine_session(
         connection,
-        failure["project_id"],
+        project_paths,
+        failure,
         actor_id,
-        "restore_failure_artifacts",
-        "failure",
-        failure_id,
-        {"session_id": failure["session_id"], "restored_count": len(restored_artifacts)},
-    )
-    _activity(
-        connection,
-        failure["project_id"],
-        actor_id,
-        failure["task_id"],
-        "artifacts_restored",
-        "Quarantined artifacts restored to the active artifact workspace.",
+        resource_type="failure",
+        resource_id=failure_id,
     )
     connection.commit()
     return {
@@ -382,6 +441,54 @@ def restore_failure_artifacts(connection, project_paths, failure_id, actor_id):
         "session_id": failure["session_id"],
         "restored_artifacts": restored_artifacts,
         "restored_count": len(restored_artifacts),
+    }
+
+
+def dismiss_quarantine_entry(connection, queue_id, actor_id):
+    queue_entry = connection.execute(
+        """
+        SELECT queue_id, project_id, task_id, session_id, status, artifact_count
+        FROM quarantine_queue
+        WHERE queue_id = ?
+        """,
+        (queue_id,),
+    ).fetchone()
+    if queue_entry is None:
+        raise ValueError("Quarantine entry not found")
+    ensure_board_action_allowed(
+        connection,
+        actor_id,
+        queue_entry["project_id"],
+        "dismiss_quarantine_entry",
+        "quarantine",
+        queue_id,
+    )
+    dismissed_entry = dismiss_quarantine_queue_entry(connection, queue_id)
+
+    _audit(
+        connection,
+        queue_entry["project_id"],
+        actor_id,
+        "dismiss_quarantine_entry",
+        "quarantine",
+        queue_id,
+        {"session_id": queue_entry["session_id"], "artifact_count": queue_entry["artifact_count"]},
+    )
+    _activity(
+        connection,
+        queue_entry["project_id"],
+        actor_id,
+        queue_entry["task_id"],
+        "quarantine_dismissed",
+        "Quarantined artifacts left isolated after operator review.",
+        severity="warning",
+    )
+    connection.commit()
+    return {
+        "queue_id": queue_id,
+        "session_id": dismissed_entry["session_id"],
+        "status": "dismissed",
+        "artifact_count": dismissed_entry["artifact_count"],
     }
 
 

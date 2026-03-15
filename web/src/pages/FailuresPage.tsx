@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import { fetchFailures, restoreFailureArtifacts } from "../lib/controlRoomApi";
+import { dismissQuarantineEntry, fetchFailures, fetchQuarantineQueue, restoreQuarantineEntry } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { FailuresResponse } from "../types";
+import type { FailuresResponse, QuarantineQueueResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 export function FailuresPage() {
   const [failures, setFailures] = useState<FailuresResponse | null>(null);
-  const [pendingRestore, setPendingRestore] = useState<string | null>(null);
+  const [quarantineQueue, setQuarantineQueue] = useState<QuarantineQueueResponse | null>(null);
+  const [pendingQueueAction, setPendingQueueAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
@@ -14,9 +15,10 @@ export function FailuresPage() {
     let mounted = true;
 
     async function loadFailures() {
-      const failuresPayload = await fetchFailures();
+      const [failuresPayload, quarantinePayload] = await Promise.all([fetchFailures(), fetchQuarantineQueue()]);
       if (mounted) {
         setFailures(failuresPayload);
+        setQuarantineQueue(quarantinePayload);
       }
     }
 
@@ -26,18 +28,37 @@ export function FailuresPage() {
     };
   }, [livePulse]);
 
-  async function handleRestore(failureId: string) {
-    setPendingRestore(failureId);
+  async function reload() {
+    const [failuresPayload, quarantinePayload] = await Promise.all([fetchFailures(), fetchQuarantineQueue()]);
+    setFailures(failuresPayload);
+    setQuarantineQueue(quarantinePayload);
+  }
+
+  async function handleRestore(queueId: string) {
+    setPendingQueueAction(`restore:${queueId}`);
     setNotice(null);
     try {
-      const payload = await restoreFailureArtifacts(failureId);
-      const failuresPayload = await fetchFailures();
-      setFailures(failuresPayload);
-      setNotice(`Restored ${payload.restored_count} quarantined artifact(s) for ${failureId}.`);
+      const payload = await restoreQuarantineEntry(queueId);
+      await reload();
+      setNotice(`Restored ${payload.restored_count} quarantined artifact(s) for ${queueId}.`);
     } catch {
       setNotice("Artifact restore failed; keep the quarantined files under review.");
     } finally {
-      setPendingRestore(null);
+      setPendingQueueAction(null);
+    }
+  }
+
+  async function handleDismiss(queueId: string) {
+    setPendingQueueAction(`dismiss:${queueId}`);
+    setNotice(null);
+    try {
+      await dismissQuarantineEntry(queueId);
+      await reload();
+      setNotice(`Dismissed quarantine entry ${queueId}; artifacts remain isolated.`);
+    } catch {
+      setNotice("Quarantine dismissal failed; leave the entry open for operator review.");
+    } finally {
+      setPendingQueueAction(null);
     }
   }
 
@@ -56,6 +77,9 @@ export function FailuresPage() {
         <StatCard label="Failures logged" value={failures?.summary.total_failures ?? 0} tone="warn" />
         <StatCard label="Tasks hit" value={failures?.summary.tasks_with_failures ?? 0} />
         <StatCard label="Repeated tasks" value={failures?.summary.repeated_tasks ?? 0} tone="warn" />
+        <StatCard label="Quarantine open" value={quarantineQueue?.summary.open ?? 0} tone="warn" />
+        <StatCard label="Restored" value={quarantineQueue?.summary.restored ?? 0} />
+        <StatCard label="Dismissed" value={quarantineQueue?.summary.dismissed ?? 0} />
       </section>
 
       <section className="overview-grid">
@@ -63,7 +87,7 @@ export function FailuresPage() {
           <header className="data-panel__header">
             <div>
               <h2>Recent failures</h2>
-              <p>Latest failed or timed-out sessions, including quarantine details when artifacts were isolated.</p>
+              <p>Latest failed or timed-out sessions, including quarantine details when artifacts were isolated into the queue.</p>
             </div>
           </header>
           <div className="data-list">
@@ -90,16 +114,57 @@ export function FailuresPage() {
                 <div className="data-list__meta">
                   <span>{item.failure_type}</span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
-                  {item.quarantined_artifact_count ? (
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Quarantine queue</h2>
+              <p>Operator workflow for isolated artifacts. Restore returns files to the artifact workspace; dismiss keeps them quarantined.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(quarantineQueue?.entries ?? []).map((item) => (
+              <div key={item.queue_id} className="data-list__item">
+                <div>
+                  <strong>{item.task_title ?? item.task_id ?? item.session_id}</strong>
+                  <p>{item.summary ?? "Quarantined artifacts awaiting review."}</p>
+                  <p>
+                    Status: {item.status} | Artifacts: {item.artifact_count}
+                    {item.reason ? ` | Reason: ${item.reason}` : ""}
+                  </p>
+                  {item.quarantined_artifacts?.[0]?.quarantined_from_path ? (
+                    <p>Original path: {item.quarantined_artifacts[0].quarantined_from_path}</p>
+                  ) : null}
+                </div>
+                <div className="data-list__meta">
+                  <span>{item.failure_type ?? "quarantine"}</span>
+                  <span>{new Date(item.created_at).toLocaleString()}</span>
+                  {item.status === "open" ? (
                     <button
                       type="button"
                       className="task-action task-action--secondary"
-                      disabled={pendingRestore === item.failure_id}
-                      onClick={() => item.failure_id && void handleRestore(item.failure_id)}
+                      disabled={pendingQueueAction === `restore:${item.queue_id}`}
+                      onClick={() => void handleRestore(item.queue_id)}
                     >
-                      {pendingRestore === item.failure_id ? "Restoring..." : "Restore artifacts"}
+                      {pendingQueueAction === `restore:${item.queue_id}` ? "Restoring..." : "Restore"}
                     </button>
                   ) : null}
+                  {item.status === "open" ? (
+                    <button
+                      type="button"
+                      className="task-action"
+                      disabled={pendingQueueAction === `dismiss:${item.queue_id}`}
+                      onClick={() => void handleDismiss(item.queue_id)}
+                    >
+                      {pendingQueueAction === `dismiss:${item.queue_id}` ? "Dismissing..." : "Dismiss"}
+                    </button>
+                  ) : null}
+                  {item.resolved_at ? <span>{new Date(item.resolved_at).toLocaleString()}</span> : null}
                 </div>
               </div>
             ))}

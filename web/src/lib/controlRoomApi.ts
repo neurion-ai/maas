@@ -3,12 +3,15 @@ import type {
   AgentRosterResponse,
   AlertOperatorAction,
   AlertsResponse,
+  DismissQuarantineEntryResponse,
   EscalationsResponse,
   FailuresResponse,
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  QuarantineQueueResponse,
   RestoreFailureArtifactsResponse,
+  RestoreQuarantineEntryResponse,
   SupervisorRunResponse
 } from "../types";
 
@@ -156,6 +159,15 @@ const FAILURES_FALLBACK: FailuresResponse = {
   }
 };
 
+const QUARANTINE_FALLBACK: QuarantineQueueResponse = {
+  entries: [],
+  summary: {
+    open: 0,
+    restored: 0,
+    dismissed: 0
+  }
+};
+
 const LIVE_FALLBACK: LiveSnapshot = {
   generated_at: new Date().toISOString(),
   counts: {
@@ -215,11 +227,29 @@ export function fetchFailures() {
   return fetchJson<FailuresResponse>("/api/failures", FAILURES_FALLBACK);
 }
 
+export function fetchQuarantineQueue() {
+  return fetchJson<QuarantineQueueResponse>("/api/quarantine", QUARANTINE_FALLBACK);
+}
+
 export async function restoreFailureArtifacts(failureId: string) {
   const payload = await postJson<RestoreFailureArtifactsResponse>(`/api/failures/${failureId}/actions/restore-artifacts`, {
     actor_id: "agent_allocator"
   });
   return payload as RestoreFailureArtifactsResponse;
+}
+
+export async function restoreQuarantineEntry(queueId: string) {
+  const payload = await postJson<RestoreQuarantineEntryResponse>(`/api/quarantine/${queueId}/actions/restore`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as RestoreQuarantineEntryResponse;
+}
+
+export async function dismissQuarantineEntry(queueId: string) {
+  const payload = await postJson<DismissQuarantineEntryResponse>(`/api/quarantine/${queueId}/actions/dismiss`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as DismissQuarantineEntryResponse;
 }
 
 export function fetchLiveSnapshot() {

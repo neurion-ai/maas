@@ -11,15 +11,17 @@ from maas.db import connect, project_paths, run_migrations
 from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
-from maas.services.failure_memory import fetch_failure_log
+from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.provider_runtime import run_provider_task
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import (
+    dismiss_quarantine_entry,
     recover_agent,
     recover_and_requeue_task,
     recover_task,
     resolve_task_repeated_failures,
+    restore_quarantine_entry,
     restore_failure_artifacts,
 )
 from maas.supervisor import run_supervisor_once
@@ -104,6 +106,23 @@ def build_parser():
     failure_restore_parser.add_argument("--project-root", default=".")
     failure_restore_parser.add_argument("--failure-id", required=True)
     failure_restore_parser.add_argument("--actor-id", required=True)
+
+    quarantine_parser = subparsers.add_parser("quarantine")
+    quarantine_subparsers = quarantine_parser.add_subparsers(dest="quarantine_command", required=True)
+
+    quarantine_list_parser = quarantine_subparsers.add_parser("list")
+    quarantine_list_parser.add_argument("--project-root", default=".")
+    quarantine_list_parser.add_argument("--limit", type=int, default=20)
+
+    quarantine_restore_parser = quarantine_subparsers.add_parser("restore")
+    quarantine_restore_parser.add_argument("--project-root", default=".")
+    quarantine_restore_parser.add_argument("--queue-id", required=True)
+    quarantine_restore_parser.add_argument("--actor-id", required=True)
+
+    quarantine_dismiss_parser = quarantine_subparsers.add_parser("dismiss")
+    quarantine_dismiss_parser.add_argument("--project-root", default=".")
+    quarantine_dismiss_parser.add_argument("--queue-id", required=True)
+    quarantine_dismiss_parser.add_argument("--actor-id", required=True)
 
     escalation_parser = subparsers.add_parser("escalation")
     escalation_subparsers = escalation_parser.add_subparsers(dest="escalation_command", required=True)
@@ -285,6 +304,20 @@ def command_failure(args):
         connection.close()
 
 
+def command_quarantine(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.quarantine_command == "list":
+            print(json.dumps(fetch_quarantine_queue(connection, limit=args.limit), indent=2))
+        elif args.quarantine_command == "restore":
+            print(json.dumps(restore_quarantine_entry(connection, paths, args.queue_id, args.actor_id), indent=2))
+        elif args.quarantine_command == "dismiss":
+            print(json.dumps(dismiss_quarantine_entry(connection, args.queue_id, args.actor_id), indent=2))
+    finally:
+        connection.close()
+
+
 def command_escalation(args):
     paths = project_paths(args.project_root)
     connection = connect(paths)
@@ -409,6 +442,8 @@ def main(argv=None):
         command_task(args)
     elif args.command == "failure":
         command_failure(args)
+    elif args.command == "quarantine":
+        command_quarantine(args)
     elif args.command == "escalation":
         command_escalation(args)
     elif args.command == "worker":

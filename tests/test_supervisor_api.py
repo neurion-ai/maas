@@ -615,6 +615,14 @@ class SupervisorApiTest(unittest.TestCase):
                     """,
                     (artifact_id,),
                 ).fetchone()
+                queue_row = connection.execute(
+                    """
+                    SELECT session_id, status, artifact_count, reason
+                    FROM quarantine_queue
+                    WHERE session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchone()
             finally:
                 connection.close()
 
@@ -630,6 +638,10 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertTrue(metadata["quarantined"])
             self.assertEqual(metadata["quarantine_reason"], "session_timed_out")
             self.assertEqual(metadata["quarantined_from_path"], artifact_path)
+            self.assertEqual(queue_row["session_id"], session_id)
+            self.assertEqual(queue_row["status"], "open")
+            self.assertEqual(queue_row["artifact_count"], 1)
+            self.assertEqual(queue_row["reason"], "session_timed_out")
 
     def test_cancelled_sessions_do_not_count_toward_repeated_failure_alerts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

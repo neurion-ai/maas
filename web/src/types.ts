@@ -164,6 +164,25 @@ export interface QuarantinedArtifactItem {
   quarantined_from_path?: string | null;
 }
 
+export interface QuarantineQueueItem {
+  queue_id: string;
+  session_id: string;
+  failure_id?: string | null;
+  task_id?: string | null;
+  task_title?: string | null;
+  agent_name?: string | null;
+  failure_type?: string | null;
+  summary?: string | null;
+  status: "open" | "restored" | "dismissed";
+  reason?: string | null;
+  artifact_count: number;
+  resolution_note?: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at?: string | null;
+  quarantined_artifacts?: QuarantinedArtifactItem[];
+}
+
 export interface RepeatedFailureItem {
   task_id: string;
   task_title?: string | null;
@@ -186,6 +205,30 @@ export interface RestoreFailureArtifactsResponse {
   session_id: string;
   restored_artifacts: QuarantinedArtifactItem[];
   restored_count: number;
+}
+
+export interface QuarantineQueueResponse {
+  entries: QuarantineQueueItem[];
+  summary: {
+    open: number;
+    restored: number;
+    dismissed: number;
+  };
+}
+
+export interface RestoreQuarantineEntryResponse {
+  queue_id: string;
+  session_id: string;
+  restored_artifacts: QuarantinedArtifactItem[];
+  restored_count: number;
+  status: "restored";
+}
+
+export interface DismissQuarantineEntryResponse {
+  queue_id: string;
+  session_id: string;
+  status: "dismissed";
+  artifact_count: number;
 }
 
 export interface GoalTreeNode {

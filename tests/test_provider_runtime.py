@@ -401,6 +401,48 @@ class ProviderRuntimeTest(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_provider_run_task_restores_preexisting_artifact_on_runtime_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preserve Artifact Test", description="Provider preserve test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(
+                    connection, project_id, goal_id, "agent_allocator", "Run adapter against existing artifact"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "existing-provider-artifact.txt"
+            artifact_full_path = os.path.join(tmpdir, ".maas", "artifacts", artifact_name)
+            with open(artifact_full_path, "w", encoding="utf-8") as handle:
+                handle.write("preexisting artifact content")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.produce_artifact",
+                        side_effect=RuntimeError("artifact store unavailable"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_allocator",
+                            task_id=task_id,
+                            provider_type="python_script",
+                            artifact_path=artifact_name,
+                        )
+            finally:
+                connection.close()
+
+            self.assertTrue(os.path.exists(artifact_full_path))
+            with open(artifact_full_path, "r", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "preexisting artifact content")
+
 
 if __name__ == "__main__":
     unittest.main()

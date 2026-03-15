@@ -93,12 +93,17 @@ def _log_provider_phase(connection, project_id, agent_id, task_id, provider, act
     )
 
 
-def _cleanup_untracked_artifact(artifact_full_path):
-    if artifact_full_path and os.path.exists(artifact_full_path):
-        try:
+def _rollback_untracked_artifact(artifact_full_path, artifact_existed_before_run, original_artifact_bytes):
+    if not artifact_full_path:
+        return
+    try:
+        if artifact_existed_before_run:
+            with open(artifact_full_path, "wb") as handle:
+                handle.write(original_artifact_bytes or b"")
+        elif os.path.exists(artifact_full_path):
             os.remove(artifact_full_path)
-        except OSError:
-            return
+    except OSError:
+        return
 
 
 def run_provider_task(connection, project_paths, project_id, agent_id, task_id, provider_type, artifact_path=None):
@@ -106,6 +111,11 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     task_title = _task_title(connection, task_id)
     artifact_payload = _provider_artifact_payload(provider, task_title, task_id)
     artifact_full_path = _resolve_artifact_path(project_paths, provider_type, task_id, artifact_path)
+    artifact_existed_before_run = os.path.exists(artifact_full_path)
+    original_artifact_bytes = None
+    if artifact_existed_before_run:
+        with open(artifact_full_path, "rb") as handle:
+            original_artifact_bytes = handle.read()
     session_id = None
     artifact_id = None
     session_id = start_session(
@@ -213,7 +223,11 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         )
         end_session(connection, session_id, "completed", artifact_payload["status_message"], project_paths=project_paths)
     except Exception as exc:
-        _cleanup_untracked_artifact(artifact_full_path if artifact_id is None else None)
+        _rollback_untracked_artifact(
+            artifact_full_path if artifact_id is None else None,
+            artifact_existed_before_run=artifact_existed_before_run,
+            original_artifact_bytes=original_artifact_bytes,
+        )
         failure_summary = "{0} adapter failed: {1}".format(provider["name"], exc)
         if session_id is not None:
             try:

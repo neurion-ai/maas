@@ -203,6 +203,7 @@ def recover_and_requeue_task(connection, task_id, actor_id):
     failure_count = failure_attempt_count(connection, task_id)
     cooldown_seconds = recover_and_requeue_cooldown_seconds(recovery_policy, failure_count)
     next_retry_at = retry_deadline(cooldown_seconds)
+    next_retry_reason = "recover_and_requeue" if next_retry_at is not None else None
     _reset_recoverable_task(
         connection,
         task,
@@ -211,7 +212,7 @@ def recover_and_requeue_task(connection, task_id, actor_id):
         activity_action="recovered_and_requeued",
         activity_description="Task recovered from failure and returned to readiness evaluation.",
         next_retry_at=next_retry_at,
-        next_retry_reason="recover_and_requeue",
+        next_retry_reason=next_retry_reason,
         extra_audit_detail={
             "failure_count": failure_count,
             "cooldown_seconds": cooldown_seconds,

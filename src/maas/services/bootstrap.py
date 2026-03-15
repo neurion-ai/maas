@@ -207,7 +207,7 @@ def seed_project(connection, config):
         """
         INSERT INTO alerts (
             alert_id, project_id, severity, title, description, status
-        ) VALUES (?, ?, 'warning', 'Provider adapters pending', 'Runtime adapters are still blocked behind lifecycle implementation.', 'open')
+        ) VALUES (?, ?, 'warning', 'Live provider integrations pending', 'Simulated provider adapters are available locally, but live external provider integrations are still pending.', 'open')
         """,
         (generate_id("alert"), project_id),
     )

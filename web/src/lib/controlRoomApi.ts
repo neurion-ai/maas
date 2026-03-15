@@ -123,8 +123,8 @@ const ALERTS_FALLBACK: AlertsResponse = {
     {
       alert_id: "alert_provider_pending",
       severity: "warning",
-      title: "Provider adapters pending",
-      description: "Runtime adapters are still blocked behind lifecycle implementation.",
+      title: "Live provider integrations pending",
+      description: "Simulated provider adapters are available locally, but live external provider integrations are still pending.",
       status: "open",
       created_at: new Date().toISOString()
     }

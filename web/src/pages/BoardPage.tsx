@@ -7,6 +7,7 @@ import {
   recoverTask,
   reprioritizeTask,
   reviewTask,
+  setTaskRetryLimit,
   setAgentState
 } from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -199,6 +200,25 @@ export function BoardPage() {
     }
   }
 
+  async function handleRetryLimitChange(taskId: string, autoRetryLimit: number | null) {
+    const actionKey = `retry-limit:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await setTaskRetryLimit(taskId, autoRetryLimit);
+      setNotice(
+        autoRetryLimit == null
+          ? `Task ${taskId} now follows the project retry policy.`
+          : `Task ${taskId} retry limit set to ${autoRetryLimit}.`
+      );
+      await loadBoard();
+    } catch {
+      setNotice("Task retry limit update failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <main className="board-shell">
       <section className="hero-panel">
@@ -317,6 +337,7 @@ export function BoardPage() {
             onHalt={handleHalt}
             onRecover={handleRecover}
             onRecoverAndRequeue={handleRecoverAndRequeue}
+            onRetryLimitChange={handleRetryLimitChange}
           />
         ))}
       </section>

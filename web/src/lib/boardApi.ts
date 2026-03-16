@@ -244,7 +244,7 @@ function buildBoardQuery(filters: BoardFiltersInput) {
   return query.toString();
 }
 
-async function postJson(path: string, body: Record<string, string | number>) {
+async function postJson(path: string, body: Record<string, string | number | null>) {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -318,5 +318,12 @@ export async function recoverTask(taskId: string) {
 export async function recoverAndRequeueTask(taskId: string) {
   await postJson(`/api/tasks/${taskId}/actions/recover-and-requeue`, {
     actor_id: DEFAULT_ACTOR_ID
+  });
+}
+
+export async function setTaskRetryLimit(taskId: string, autoRetryLimit: number | null) {
+  await postJson(`/api/tasks/${taskId}/actions/set-retry-limit`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    auto_retry_limit: autoRetryLimit
   });
 }

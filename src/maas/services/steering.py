@@ -198,6 +198,69 @@ def recover_task(connection, task_id, actor_id):
     return {"task_id": task_id, "status": "planned"}
 
 
+def set_task_retry_limit(connection, task_id, actor_id, auto_retry_limit=None):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, auto_retry_limit
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "set_task_retry_limit", "task", task_id)
+    if task["status"] in ("done", "cancelled"):
+        raise ValueError("Retry limit cannot be changed for tasks in status {0}".format(task["status"]))
+    if auto_retry_limit is not None:
+        try:
+            normalized_limit = int(auto_retry_limit)
+        except (TypeError, ValueError):
+            raise ValueError("Retry limit must be an integer")
+        if normalized_limit < 0:
+            raise ValueError("Retry limit must be greater than or equal to zero")
+    else:
+        normalized_limit = None
+
+    if task["auto_retry_limit"] == normalized_limit:
+        return {"task_id": task_id, "auto_retry_limit": normalized_limit}
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET auto_retry_limit = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (normalized_limit, task_id),
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "set_task_retry_limit",
+        "task",
+        task_id,
+        {
+            "previous_auto_retry_limit": task["auto_retry_limit"],
+            "auto_retry_limit": normalized_limit,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "retry_limit_updated",
+        (
+            "Task retry override cleared; task now follows the project recovery policy."
+            if normalized_limit is None
+            else "Task retry override set to {0}.".format(normalized_limit)
+        ),
+    )
+    connection.commit()
+    return {"task_id": task_id, "auto_retry_limit": normalized_limit}
+
+
 def recover_and_requeue_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
     refreshed_task = _recover_and_requeue_task(connection, task, actor_id)

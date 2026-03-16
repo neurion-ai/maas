@@ -49,6 +49,7 @@ interface TaskCardProps {
   onHalt?: (taskId: string) => void;
   onRecover?: (taskId: string) => void;
   onRecoverAndRequeue?: (taskId: string) => void;
+  onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
 export function TaskCard({
@@ -61,7 +62,8 @@ export function TaskCard({
   onReassign,
   onHalt,
   onRecover,
-  onRecoverAndRequeue
+  onRecoverAndRequeue,
+  onRetryLimitChange
 }: TaskCardProps) {
   const reviewApproveKey = `review:${task.task_id}:approve`;
   const reviewRejectKey = `review:${task.task_id}:reject`;
@@ -71,6 +73,7 @@ export function TaskCard({
   const haltKey = `halt:${task.task_id}`;
   const recoverKey = `recover:${task.task_id}`;
   const recoverAndRequeueKey = `recover-and-requeue:${task.task_id}`;
+  const retryLimitKey = `retry-limit:${task.task_id}`;
   const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
   const isPendingReviewReject = pendingActionKey === reviewRejectKey;
   const isPendingAgentAction = pendingActionKey === agentActionKey;
@@ -79,6 +82,7 @@ export function TaskCard({
   const isPendingHalt = pendingActionKey === haltKey;
   const isPendingRecover = pendingActionKey === recoverKey;
   const isPendingRecoverAndRequeue = pendingActionKey === recoverAndRequeueKey;
+  const isPendingRetryLimit = pendingActionKey === retryLimitKey;
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
   const canSteerTask = task.status !== "done" && task.status !== "cancelled";
@@ -89,6 +93,12 @@ export function TaskCard({
     task.status === "blocked" && !!onRecover && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
   const canRecoverAndRequeue =
     task.status === "blocked" && !!onRecoverAndRequeue && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
+  const canSetRetryLimit = canSteerTask && !!onRetryLimitChange;
+  const retryLimitOptions = Array.from(
+    new Set(
+      [null, 0, 1, 2, 3, 5, 10, task.auto_retry_limit ?? null].filter((value) => value === null || value >= 0)
+    )
+  ) as Array<number | null>;
 
   return (
     <article className={`task-card task-card--${task.status}`}>
@@ -135,6 +145,10 @@ export function TaskCard({
           </dd>
         </div>
         <div>
+          <dt>Retry budget</dt>
+          <dd>{task.auto_retry_limit == null ? "Project default" : `${task.auto_retry_limit} max auto retries`}</dd>
+        </div>
+        <div>
           <dt>Next retry</dt>
           <dd>
             {task.next_retry_at
@@ -143,7 +157,7 @@ export function TaskCard({
           </dd>
         </div>
       </dl>
-      {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue) && (
+      {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue || canSetRetryLimit) && (
         <div className="task-card__actions">
           {canReview && (
             <>
@@ -195,6 +209,27 @@ export function TaskCard({
                 {agentOptions.map((option) => (
                   <option key={option.id} value={option.id}>
                     {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {canSetRetryLimit && (
+            <label className="task-inline-control">
+              <span>Retry limit</span>
+              <select
+                value={task.auto_retry_limit == null ? "" : String(task.auto_retry_limit)}
+                disabled={isPendingRetryLimit}
+                onChange={(event) =>
+                  onRetryLimitChange?.(
+                    task.task_id,
+                    event.target.value === "" ? null : Number(event.target.value)
+                  )
+                }
+              >
+                {retryLimitOptions.map((value) => (
+                  <option key={value == null ? "default" : value} value={value == null ? "" : String(value)}>
+                    {value == null ? "Project default" : value}
                   </option>
                 ))}
               </select>

@@ -920,6 +920,7 @@ def fetch_failure_log(connection, limit=20):
             tasks.status AS task_status,
             tasks.review_state AS task_review_state,
             tasks.retry_count,
+            tasks.auto_retry_limit,
             tasks.last_retry_at,
             tasks.last_retry_reason,
             tasks.next_retry_at,

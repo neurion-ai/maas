@@ -36,6 +36,7 @@ from maas.services.steering import (
     resolve_task_repeated_failures,
     reprioritize_task,
     resume_agent,
+    set_task_retry_limit,
     review_task,
 )
 from maas.supervisor import run_supervisor_once
@@ -92,6 +93,11 @@ class ReprioritizeTaskRequest(BaseModel):
 class ReassignTaskRequest(BaseModel):
     actor_id: str
     agent_id: str
+
+
+class TaskRetryLimitRequest(BaseModel):
+    actor_id: str
+    auto_retry_limit: Optional[int] = None
 
 
 class AgentActionRequest(BaseModel):
@@ -701,6 +707,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return recover_and_requeue_task(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/set-retry-limit")
+    def task_set_retry_limit_action(task_id: str, payload: TaskRetryLimitRequest):
+        connection = connect(paths)
+        try:
+            return set_task_retry_limit(connection, task_id, payload.actor_id, payload.auto_retry_limit)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

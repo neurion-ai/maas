@@ -3,6 +3,9 @@ import os
 import tempfile
 import unittest
 
+from fastapi.testclient import TestClient
+
+from maas.api import create_app
 from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
@@ -371,6 +374,66 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertEqual(task["retry_count"], 1)
             self.assertIsNone(task["next_retry_at"])
             self.assertIsNone(task["next_retry_reason"])
+
+    def test_failed_session_auto_retry_respects_task_retry_limit_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Failed Retry Override Test",
+                description="Lifecycle failed retry override test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries=3,
+                    failed_session_retry_cooldown_seconds=45,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            override_response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task_id),
+                json={"actor_id": "agent_allocator", "auto_retry_limit": 0},
+            )
+            self.assertEqual(override_response.status_code, 200)
+
+            connection = connect(result["paths"])
+            try:
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle failed retry override test",
+                )
+
+                end_session(connection, session_id, "failed", "Override disabled retries")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, auto_retry_limit, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+            self.assertEqual(task["retry_count"], 0)
+            self.assertEqual(task["auto_retry_limit"], 0)
+            self.assertIsNone(task["last_retry_reason"])
 
     def test_failed_session_stays_blocked_when_failed_retry_budget_is_exhausted(self):
         with tempfile.TemporaryDirectory() as tmpdir:

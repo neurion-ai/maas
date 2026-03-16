@@ -36,6 +36,18 @@ def _insert_assigned_task(connection, project_id, goal_id, agent_id, title):
 
 
 class ProviderRuntimeTest(unittest.TestCase):
+    def _update_recovery_config(self, connection, **recovery_updates):
+        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        config = json.loads(project["config_json"] or "{}")
+        recovery = dict(config.get("recovery") or {})
+        recovery.update(recovery_updates)
+        config["recovery"] = recovery
+        connection.execute(
+            "UPDATE projects SET config_json = ? WHERE project_id = ?",
+            (json.dumps(config), project["project_id"]),
+        )
+        return project["project_id"]
+
     def _enable_claude_code_cli(self, connection):
         project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
         config = json.loads(project["config_json"] or "{}")
@@ -1035,6 +1047,154 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertEqual(json.loads(failed_activity["details_json"])["phase"], "session_failed")
             finally:
                 connection.close()
+
+    def test_provider_run_task_auto_retries_failed_session_when_policy_allows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Failed Retry Test", description="Provider failed retry test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries=1,
+                    failed_session_retry_cooldown_seconds=75,
+                    retry_backoff_multiplier=2,
+                    retry_backoff_max_seconds=900,
+                )
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(
+                    connection, project_id, goal_id, "agent_allocator", "Run adapter with auto-retried runtime failure"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "provider-failed-retry.txt"
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.produce_artifact",
+                        side_effect=RuntimeError("artifact store unavailable"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_allocator",
+                            task_id=task_id,
+                            provider_type="python_script",
+                            artifact_path=artifact_name,
+                        )
+            finally:
+                connection.close()
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                failure = connection.execute(
+                    """
+                    SELECT failure_type, summary
+                    FROM failure_log
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "planned")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_failed")
+            self.assertEqual(task["next_retry_reason"], "session_failed")
+            self.assertIsNotNone(task["next_retry_at"])
+            self.assertEqual(failure["failure_type"], "session_failed")
+            self.assertIn("artifact store unavailable", failure["summary"])
+
+    def test_provider_run_task_handles_invalid_failed_retry_config_during_failure_teardown(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Provider Invalid Recovery Config Test",
+                description="Provider invalid recovery config test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries="",
+                    failed_session_retry_cooldown_seconds="",
+                )
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(
+                    connection, project_id, goal_id, "agent_allocator", "Run adapter with invalid failed retry config"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.produce_artifact",
+                        side_effect=RuntimeError("artifact store unavailable"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_allocator",
+                            task_id=task_id,
+                            provider_type="python_script",
+                            artifact_path="provider-invalid-config.txt",
+                        )
+            finally:
+                connection.close()
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                session = connection.execute(
+                    """
+                    SELECT status, status_message
+                    FROM sessions
+                    WHERE task_id = ?
+                    ORDER BY started_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(session["status"], "failed")
+            self.assertIn("artifact store unavailable", session["status_message"])
+            self.assertEqual(task["status"], "planned")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_failed")
+            self.assertIsNotNone(task["next_retry_at"])
+            self.assertEqual(task["next_retry_reason"], "session_failed")
 
     def test_provider_run_task_restores_preexisting_artifact_on_runtime_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

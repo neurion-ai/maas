@@ -10,6 +10,20 @@ from maas.services.security import revoke_task_capabilities
 
 
 class LifecycleStateTransitionTest(unittest.TestCase):
+    def _update_recovery_config(self, connection, **recovery_updates):
+        project = connection.execute(
+            "SELECT project_id, config_json FROM projects LIMIT 1"
+        ).fetchone()
+        config = json.loads(project["config_json"] or "{}")
+        recovery = dict(config.get("recovery") or {})
+        recovery.update(recovery_updates)
+        config["recovery"] = recovery
+        connection.execute(
+            "UPDATE projects SET config_json = ? WHERE project_id = ?",
+            (json.dumps(config), project["project_id"]),
+        )
+        connection.commit()
+
     def test_completed_session_moves_ready_task_into_review(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Lifecycle Test", description="Lifecycle test", project_type="custom")
@@ -218,6 +232,140 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertEqual(failure["failure_type"], "session_failed")
             self.assertIn("Unit test simulated failure", failure["summary"])
             self.assertEqual(alert["title"], "Task session failed")
+
+    def test_failed_session_auto_retries_when_policy_allows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Failed Retry Test",
+                description="Lifecycle failed retry test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries=1,
+                    failed_session_retry_cooldown_seconds=45,
+                    retry_backoff_multiplier=2,
+                    retry_backoff_max_seconds=900,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle failed retry test",
+                )
+
+                end_session(connection, session_id, "failed", "Retryable lifecycle failure")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, assigned_agent_id, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                failure = connection.execute(
+                    """
+                    SELECT failure_type, summary
+                    FROM failure_log
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                auto_retry_audit = connection.execute(
+                    """
+                    SELECT detail_json
+                    FROM audit_trail
+                    WHERE resource_id = ? AND action_type = 'auto_retry_task'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "planned")
+            self.assertEqual(task["review_state"], None)
+            self.assertIsNone(task["assigned_agent_id"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_failed")
+            self.assertEqual(task["next_retry_reason"], "session_failed")
+            self.assertIsNotNone(task["next_retry_at"])
+            self.assertEqual(failure["failure_type"], "session_failed")
+            self.assertIn("Retryable lifecycle failure", failure["summary"])
+            self.assertIsNotNone(auto_retry_audit)
+            self.assertEqual(json.loads(auto_retry_audit["detail_json"])["failure_type"], "session_failed")
+
+    def test_failed_session_stays_blocked_when_failed_retry_budget_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Failed Retry Limit Test",
+                description="Lifecycle failed retry limit test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries=1,
+                    failed_session_retry_cooldown_seconds=45,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle failed retry limit test",
+                )
+
+                end_session(connection, session_id, "failed", "No retry budget remaining")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_failed")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
 
     def test_failed_session_quarantines_session_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

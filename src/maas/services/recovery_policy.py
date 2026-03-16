@@ -6,12 +6,40 @@ import json
 
 DEFAULT_RECOVERY_POLICY = {
     "auto_retry_timeout_sessions": False,
+    "auto_retry_failed_sessions": False,
     "max_timed_out_retries": 1,
+    "max_failed_session_retries": 1,
     "timed_out_retry_cooldown_seconds": 60,
+    "failed_session_retry_cooldown_seconds": 120,
     "recover_and_requeue_cooldown_seconds": 30,
     "retry_backoff_multiplier": 2,
     "retry_backoff_max_seconds": 900,
 }
+
+
+def _parse_bool(value, default):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            return True
+        if normalized in ("0", "false", "no", "off", ""):
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _parse_int(value, default, minimum=None):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(default)
+    if minimum is not None:
+        parsed = max(int(minimum), parsed)
+    return parsed
 
 
 def fetch_project_recovery_policy(connection, project_id):
@@ -33,30 +61,48 @@ def fetch_project_recovery_policy(connection, project_id):
 
     recovery = config.get("recovery") or {}
     return {
-        "auto_retry_timeout_sessions": bool(
-            recovery.get("auto_retry_timeout_sessions", DEFAULT_RECOVERY_POLICY["auto_retry_timeout_sessions"])
+        "auto_retry_timeout_sessions": _parse_bool(
+            recovery.get("auto_retry_timeout_sessions"),
+            DEFAULT_RECOVERY_POLICY["auto_retry_timeout_sessions"],
         ),
-        "max_timed_out_retries": int(
-            recovery.get("max_timed_out_retries", DEFAULT_RECOVERY_POLICY["max_timed_out_retries"])
+        "auto_retry_failed_sessions": _parse_bool(
+            recovery.get("auto_retry_failed_sessions"),
+            DEFAULT_RECOVERY_POLICY["auto_retry_failed_sessions"],
         ),
-        "timed_out_retry_cooldown_seconds": int(
-            recovery.get(
-                "timed_out_retry_cooldown_seconds",
-                DEFAULT_RECOVERY_POLICY["timed_out_retry_cooldown_seconds"],
-            )
+        "max_timed_out_retries": _parse_int(
+            recovery.get("max_timed_out_retries"),
+            DEFAULT_RECOVERY_POLICY["max_timed_out_retries"],
+            minimum=0,
         ),
-        "recover_and_requeue_cooldown_seconds": int(
-            recovery.get(
-                "recover_and_requeue_cooldown_seconds",
-                DEFAULT_RECOVERY_POLICY["recover_and_requeue_cooldown_seconds"],
-            )
+        "max_failed_session_retries": _parse_int(
+            recovery.get("max_failed_session_retries"),
+            DEFAULT_RECOVERY_POLICY["max_failed_session_retries"],
+            minimum=0,
         ),
-        "retry_backoff_multiplier": max(
-            1,
-            int(recovery.get("retry_backoff_multiplier", DEFAULT_RECOVERY_POLICY["retry_backoff_multiplier"])),
+        "timed_out_retry_cooldown_seconds": _parse_int(
+            recovery.get("timed_out_retry_cooldown_seconds"),
+            DEFAULT_RECOVERY_POLICY["timed_out_retry_cooldown_seconds"],
+            minimum=0,
         ),
-        "retry_backoff_max_seconds": int(
-            recovery.get("retry_backoff_max_seconds", DEFAULT_RECOVERY_POLICY["retry_backoff_max_seconds"])
+        "failed_session_retry_cooldown_seconds": _parse_int(
+            recovery.get("failed_session_retry_cooldown_seconds"),
+            DEFAULT_RECOVERY_POLICY["failed_session_retry_cooldown_seconds"],
+            minimum=0,
+        ),
+        "recover_and_requeue_cooldown_seconds": _parse_int(
+            recovery.get("recover_and_requeue_cooldown_seconds"),
+            DEFAULT_RECOVERY_POLICY["recover_and_requeue_cooldown_seconds"],
+            minimum=0,
+        ),
+        "retry_backoff_multiplier": _parse_int(
+            recovery.get("retry_backoff_multiplier"),
+            DEFAULT_RECOVERY_POLICY["retry_backoff_multiplier"],
+            minimum=1,
+        ),
+        "retry_backoff_max_seconds": _parse_int(
+            recovery.get("retry_backoff_max_seconds"),
+            DEFAULT_RECOVERY_POLICY["retry_backoff_max_seconds"],
+            minimum=0,
         ),
     }
 
@@ -65,6 +111,12 @@ def task_timed_out_retry_limit(task_row, project_policy):
     if task_row["auto_retry_limit"] is not None:
         return int(task_row["auto_retry_limit"])
     return int(project_policy["max_timed_out_retries"])
+
+
+def task_failed_session_retry_limit(task_row, project_policy):
+    if task_row["auto_retry_limit"] is not None:
+        return int(task_row["auto_retry_limit"])
+    return int(project_policy["max_failed_session_retries"])
 
 
 def retry_backoff_seconds(base_seconds, attempt_count, project_policy):
@@ -80,6 +132,10 @@ def retry_backoff_seconds(base_seconds, attempt_count, project_policy):
 
 def timed_out_retry_cooldown_seconds(project_policy, retry_count):
     return retry_backoff_seconds(project_policy["timed_out_retry_cooldown_seconds"], retry_count, project_policy)
+
+
+def failed_session_retry_cooldown_seconds(project_policy, retry_count):
+    return retry_backoff_seconds(project_policy["failed_session_retry_cooldown_seconds"], retry_count, project_policy)
 
 
 def recover_and_requeue_cooldown_seconds(project_policy, failure_count):

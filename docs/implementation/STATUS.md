@@ -6,11 +6,6 @@
 - `[ ]` not fully shipped on `main`
 - In-flight branch work should be tracked in open PRs, not in this file.
 
-## Current Checkout
-
-- [x] The current branch extends `main` with editable provider runtime settings from the Providers view.
-- [ ] The current branch does not yet change the broader roadmap areas like brownfield, multi-project, or external network-backed providers.
-
 ## Current Snapshot
 
 - [x] MAAS is usable today as a greenfield local prototype with a real operator-facing control room.
@@ -45,8 +40,7 @@
 - [x] Shared lifecycle contract for provider activity and artifact output
 - [x] Real local Claude Code CLI execution path behind explicit provider config
 - [x] Real local OpenAI Codex CLI execution path behind explicit provider config
-- [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, and mode switching
-- [ ] Editable provider runtime settings from the Providers view are not yet on `main`
+- [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
 
 ### Control room and steering
 
@@ -58,6 +52,7 @@
 - [x] Operator controls for manual supervisor runs and assign-next from the roster
 - [x] Operator controls for safe manual provider runs from the Providers view
 - [x] Operator controls for switching provider execution mode from the Providers view
+- [x] Operator controls for editing provider runtime settings from the Providers view
 - [x] Role-baseline `board_actions` permission enforcement for steering and alert actions
 - [x] Audit logging for steering actions
 - [x] Escalation queue request, approve, and reject flows in API, CLI, and control room

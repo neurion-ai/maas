@@ -318,6 +318,153 @@ class ArtifactsApiTest(unittest.TestCase):
             download_response = client.get(f"/api/artifacts/{artifact_id}/download")
             self.assertEqual(download_response.status_code, 404)
 
+    def test_artifact_detail_api_does_not_expose_download_for_external_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Artifacts External Download Test",
+                description="Artifacts external download test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_external_download", project_id, "Artifact External Download Agent"),
+                )
+                task_id = "task_artifact_external_download"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact external download task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_external_download",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_external_download",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting external download test",
+                )
+                artifact_path = os.path.join(tempfile.gettempdir(), "external-download-artifact.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("external artifact\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            detail_response = client.get(f"/api/artifacts/{artifact_id}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertIsNone(detail_payload["download_url"])
+            self.assertIsNone(detail_payload["download_content_type"])
+
+            download_response = client.get(f"/api/artifacts/{artifact_id}/download")
+            self.assertEqual(download_response.status_code, 404)
+
+            os.remove(artifact_path)
+
+    def test_artifact_detail_api_does_not_expose_download_for_directory_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Directory Download Test",
+                description="Artifacts directory download test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_directory_download", project_id, "Artifact Directory Download Agent"),
+                )
+                task_id = "task_artifact_directory_download"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact directory download task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_directory_download",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_directory_download",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting directory download test",
+                )
+                artifact_dir_path = os.path.join(result["paths"].artifacts_dir, "directory-artifact")
+                os.makedirs(artifact_dir_path, exist_ok=True)
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_dir_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            detail_response = client.get(f"/api/artifacts/{artifact_id}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertTrue(detail_payload["exists"])
+            self.assertEqual(detail_payload["preview"]["kind"], "unavailable")
+            self.assertEqual(detail_payload["preview"]["reason"], "not_a_file")
+            self.assertIsNone(detail_payload["download_url"])
+
+            download_response = client.get(f"/api/artifacts/{artifact_id}/download")
+            self.assertEqual(download_response.status_code, 404)
+
     def test_artifacts_api_tracks_external_and_missing_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(

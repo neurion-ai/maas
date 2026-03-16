@@ -64,6 +64,10 @@ def _download_content_type(absolute_path):
     return content_type or "application/octet-stream"
 
 
+def _can_download_artifact(project_paths, absolute_path):
+    return bool(absolute_path and os.path.isfile(absolute_path) and _path_within(project_paths.root, absolute_path))
+
+
 def _metadata_snapshot(metadata):
     return metadata if isinstance(metadata, dict) else {}
 
@@ -494,6 +498,7 @@ def fetch_artifact_detail(connection, project_paths, artifact_id):
     enriched_item = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, row)])[0]
     metadata = _load_metadata(row["metadata_json"])
     absolute_path = _absolute_path(project_paths, row["path"])
+    can_download = _can_download_artifact(project_paths, absolute_path)
 
     quarantine_entry = None
     if enriched_item.get("session_id"):
@@ -513,8 +518,8 @@ def fetch_artifact_detail(connection, project_paths, artifact_id):
         **enriched_item,
         "metadata": _metadata_snapshot(metadata),
         "absolute_path": absolute_path,
-        "download_url": "/api/artifacts/{0}/download".format(artifact_id) if enriched_item["exists"] else None,
-        "download_content_type": _download_content_type(absolute_path) if enriched_item["exists"] else None,
+        "download_url": "/api/artifacts/{0}/download".format(artifact_id) if can_download else None,
+        "download_content_type": _download_content_type(absolute_path) if can_download else None,
         "preview": _artifact_preview(absolute_path),
         "quarantine_entry": quarantine_entry,
     }
@@ -529,7 +534,7 @@ def resolve_artifact_download(connection, project_paths, artifact_id):
         return None
 
     absolute_path = _absolute_path(project_paths, row["path"])
-    if not absolute_path or not os.path.isfile(absolute_path):
+    if not _can_download_artifact(project_paths, absolute_path):
         return None
 
     return {

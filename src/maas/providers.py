@@ -3,6 +3,8 @@
 from copy import deepcopy
 import json
 
+from maas.config import DEFAULT_PROVIDER_SETTINGS
+
 
 STANDARD_PROVIDER_LIFECYCLE_VERSION = "provider_runtime_v1"
 STANDARD_PROVIDER_LIFECYCLE_PHASES = [
@@ -57,6 +59,37 @@ PROVIDER_REGISTRY = {
 }
 
 
+PROVIDER_RUNTIME_RULES = {
+    "claude_code": {
+        "available_execution_modes": ["local_simulation", "claude_cli"],
+        "live_mode": "claude_cli",
+        "runtime_controls": ["cli_command", "timeout_seconds", "permission_mode", "model"],
+        "notes": {
+            "configured": "Local Claude Code CLI integration enabled by project config.",
+            "misconfigured": "Claude Code runtime configuration is invalid; task execution is blocked until fixed.",
+        },
+    },
+    "openai_codex": {
+        "available_execution_modes": ["local_simulation", "codex_cli"],
+        "live_mode": "codex_cli",
+        "runtime_controls": ["cli_command", "timeout_seconds", "sandbox", "model"],
+        "notes": {
+            "configured": "Local Codex CLI integration enabled by project config.",
+            "misconfigured": "OpenAI Codex runtime configuration is invalid; task execution is blocked until fixed.",
+        },
+    },
+    "python_script": {
+        "available_execution_modes": ["local_simulation"],
+        "live_mode": None,
+        "runtime_controls": [],
+        "notes": {
+            "configured": "Reference local runtime with normalized runtime phase reporting.",
+            "misconfigured": "Python Script runtime configuration is invalid; task execution is blocked until fixed.",
+        },
+    },
+}
+
+
 def list_providers():
     return [deepcopy(provider) for provider in PROVIDER_REGISTRY.values()]
 
@@ -88,27 +121,147 @@ def _project_provider_config(connection, project_id):
     return config.get("providers") or {}
 
 
-def list_provider_status(connection=None, project_id=None):
-    providers = list_providers()
+def _merged_provider_settings(provider_id, config):
+    settings = deepcopy(DEFAULT_PROVIDER_SETTINGS.get(provider_id) or {})
+    if isinstance(config, dict):
+        settings.update(config)
+    return settings
+
+
+def _validate_timeout(provider_name, timeout_seconds, warnings):
+    try:
+        timeout_value = int(timeout_seconds)
+    except (TypeError, ValueError):
+        warnings.append("{0} timeout_seconds must be a positive integer.".format(provider_name))
+        return None
+    if timeout_value <= 0:
+        warnings.append("{0} timeout_seconds must be greater than zero.".format(provider_name))
+        return None
+    return timeout_value
+
+
+def _normalize_string_setting(provider_name, setting_name, value, warnings, required=False):
+    if value in (None, ""):
+        if required:
+            warnings.append("{0} {1} must not be empty.".format(provider_name, setting_name))
+        return ""
+    if not isinstance(value, str):
+        warnings.append("{0} {1} must be a string.".format(provider_name, setting_name))
+        return ""
+    normalized_value = value.strip()
+    if required and not normalized_value:
+        warnings.append("{0} {1} must not be empty.".format(provider_name, setting_name))
+    return normalized_value
+
+
+def _mark_provider_misconfigured(provider, rules):
+    provider["status"] = "misconfigured"
+    provider["execution_mode"] = "unavailable"
+    provider["effective_execution_mode"] = None
+    provider["supports_live_api"] = False
+    provider["notes"] = rules["notes"]["misconfigured"]
+    provider["is_runnable"] = False
+    return provider
+
+
+def _resolve_provider_status(provider, config):
+    rules = PROVIDER_RUNTIME_RULES[provider["id"]]
+    merged_settings = _merged_provider_settings(provider["id"], config)
+    warnings = []
+    raw_mode = _normalize_string_setting(provider["name"], "mode", merged_settings.get("mode"), warnings) or "local_simulation"
+    configured_mode = "local_simulation" if raw_mode in ("simulated", "local_simulation") else raw_mode
+
+    provider["available_execution_modes"] = list(rules["available_execution_modes"])
+    provider["configured_execution_mode"] = configured_mode
+    provider["effective_execution_mode"] = provider["execution_mode"]
+    provider["runtime_controls"] = {}
+    provider["config_warnings"] = warnings
+    provider["is_runnable"] = True
+
+    if warnings:
+        return _mark_provider_misconfigured(provider, rules), merged_settings
+
+    if configured_mode not in rules["available_execution_modes"]:
+        warnings.append(
+            "Unsupported execution mode '{0}' for {1}; expected one of: {2}.".format(
+                configured_mode,
+                provider["name"],
+                ", ".join(rules["available_execution_modes"]),
+            )
+        )
+        return _mark_provider_misconfigured(provider, rules), merged_settings
+
+    live_mode = rules["live_mode"]
+    if live_mode and configured_mode == live_mode:
+        timeout_value = _validate_timeout(provider["name"], merged_settings.get("timeout_seconds"), warnings)
+        cli_command = _normalize_string_setting(
+            provider["name"],
+            "cli_command",
+            merged_settings.get("cli_command"),
+            warnings,
+            required=True,
+        )
+        merged_settings["model"] = _normalize_string_setting(
+            provider["name"],
+            "model",
+            merged_settings.get("model"),
+            warnings,
+        )
+        if "permission_mode" in rules["runtime_controls"]:
+            merged_settings["permission_mode"] = _normalize_string_setting(
+                provider["name"],
+                "permission_mode",
+                merged_settings.get("permission_mode"),
+                warnings,
+            )
+        if "sandbox" in rules["runtime_controls"]:
+            merged_settings["sandbox"] = _normalize_string_setting(
+                provider["name"],
+                "sandbox",
+                merged_settings.get("sandbox"),
+                warnings,
+            )
+        merged_settings["cli_command"] = cli_command
+        merged_settings["timeout_seconds"] = timeout_value
+
+        provider["runtime_controls"] = {
+            key: merged_settings.get(key)
+            for key in rules["runtime_controls"]
+            if merged_settings.get(key) not in (None, "")
+        }
+        if warnings:
+            return _mark_provider_misconfigured(provider, rules), merged_settings
+
+        provider["execution_mode"] = live_mode
+        provider["effective_execution_mode"] = live_mode
+        provider["status"] = "configured"
+        provider["supports_live_api"] = True
+        provider["notes"] = rules["notes"]["configured"]
+        return provider, merged_settings
+
+    provider["configured_execution_mode"] = "local_simulation"
+    provider["effective_execution_mode"] = "local_simulation"
+    return provider, merged_settings
+
+
+def get_provider_status(provider_id, connection=None, project_id=None):
+    provider = get_provider(provider_id)
     provider_config = _project_provider_config(connection, project_id)
-    for provider in providers:
-        config = provider_config.get(provider["id"]) or {}
-        configured_mode = config.get("mode")
-        if configured_mode:
-            if configured_mode in ("simulated", "local_simulation"):
-                provider["configured_execution_mode"] = "local_simulation"
-            else:
-                provider["configured_execution_mode"] = configured_mode
-            if provider["id"] == "claude_code" and configured_mode == "claude_cli":
-                provider["execution_mode"] = "claude_cli"
-                provider["status"] = "configured"
-                provider["supports_live_api"] = True
-                provider["notes"] = "Local Claude Code CLI integration enabled by project config."
-            if provider["id"] == "openai_codex" and configured_mode == "codex_cli":
-                provider["execution_mode"] = "codex_cli"
-                provider["status"] = "configured"
-                provider["supports_live_api"] = True
-                provider["notes"] = "Local Codex CLI integration enabled by project config."
-        else:
-            provider["configured_execution_mode"] = provider["execution_mode"]
+    resolved_provider, _ = _resolve_provider_status(provider, provider_config.get(provider_id) or {})
+    return resolved_provider
+
+
+def get_provider_runtime_settings(provider_id, connection=None, project_id=None):
+    provider = get_provider(provider_id)
+    provider_config = _project_provider_config(connection, project_id)
+    resolved_provider, resolved_settings = _resolve_provider_status(provider, provider_config.get(provider_id) or {})
+    return resolved_provider, resolved_settings
+
+
+def list_provider_status(connection=None, project_id=None):
+    provider_config = _project_provider_config(connection, project_id)
+    providers = []
+    for provider in list_providers():
+        resolved_provider, _ = _resolve_provider_status(provider, provider_config.get(provider["id"]) or {})
+        providers.append(resolved_provider)
     return providers

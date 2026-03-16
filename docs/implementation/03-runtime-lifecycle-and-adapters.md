@@ -13,12 +13,12 @@
 - [x] Provider execution routed through concrete local adapters for `python_script`, `claude_code`, and `openai_codex`
 - [x] Provider runs create provider-specific activity entries and artifacts while still using the shared lifecycle contract
 - [x] Lifecycle starts validate `provider_type` against the provider registry
+- [x] `claude_code` can run through a real local Claude CLI path when explicitly enabled in project config
 - [x] `openai_codex` can run through a real local Codex CLI path when explicitly enabled in project config
 
 ## Still To Do On `main`
 
-- [ ] Real external Claude Code integration
-- [ ] Broader external provider coverage beyond the first Codex CLI path
+- [ ] Broader external provider coverage beyond the current local Claude and Codex CLI paths
 
 ## Non-Goals
 

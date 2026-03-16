@@ -9,6 +9,7 @@ import type {
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  ProvidersResponse,
   QuarantineQueueResponse,
   RestoreFailureArtifactsResponse,
   RestoreQuarantineEntryResponse,
@@ -123,8 +124,8 @@ const ALERTS_FALLBACK: AlertsResponse = {
     {
       alert_id: "alert_provider_pending",
       severity: "warning",
-      title: "Live provider integrations pending",
-      description: "Simulated provider adapters are available locally, but live external provider integrations are still pending.",
+      title: "Broader provider integrations pending",
+      description: "Simulated adapters and explicit local CLI modes are available, but broader provider coverage is still pending.",
       status: "open",
       created_at: new Date().toISOString()
     }
@@ -180,6 +181,86 @@ const LIVE_FALLBACK: LiveSnapshot = {
     repeated_failure_tasks: 0
   },
   revision: {}
+};
+
+const PROVIDERS_FALLBACK: ProvidersResponse = {
+  providers: [
+    {
+      id: "python_script",
+      name: "Python Script",
+      kind: "local_worker",
+      status: "available",
+      execution_mode: "local_simulation",
+      configured_execution_mode: "local_simulation",
+      effective_execution_mode: "local_simulation",
+      supports_worker_execution: true,
+      supports_live_api: false,
+      default_artifact_type: "provider_report",
+      lifecycle_version: "provider_runtime_v1",
+      lifecycle_phases: [
+        "session_started",
+        "workspace_prepared",
+        "execution_running",
+        "artifact_recorded",
+        "session_completed"
+      ],
+      available_execution_modes: ["local_simulation"],
+      runtime_controls: {},
+      config_warnings: [],
+      is_runnable: true,
+      notes: "Reference local runtime with normalized runtime phase reporting."
+    },
+    {
+      id: "claude_code",
+      name: "Claude Code",
+      kind: "interactive_cli",
+      status: "simulated",
+      execution_mode: "local_simulation",
+      configured_execution_mode: "local_simulation",
+      effective_execution_mode: "local_simulation",
+      supports_worker_execution: true,
+      supports_live_api: false,
+      default_artifact_type: "provider_report",
+      lifecycle_version: "provider_runtime_v1",
+      lifecycle_phases: [
+        "session_started",
+        "workspace_prepared",
+        "execution_running",
+        "artifact_recorded",
+        "session_completed"
+      ],
+      available_execution_modes: ["local_simulation", "claude_cli"],
+      runtime_controls: {},
+      config_warnings: [],
+      is_runnable: true,
+      notes: "Simulated local adapter with normalized runtime phase reporting."
+    },
+    {
+      id: "openai_codex",
+      name: "OpenAI Codex",
+      kind: "api_runtime",
+      status: "simulated",
+      execution_mode: "local_simulation",
+      configured_execution_mode: "local_simulation",
+      effective_execution_mode: "local_simulation",
+      supports_worker_execution: true,
+      supports_live_api: false,
+      default_artifact_type: "provider_report",
+      lifecycle_version: "provider_runtime_v1",
+      lifecycle_phases: [
+        "session_started",
+        "workspace_prepared",
+        "execution_running",
+        "artifact_recorded",
+        "session_completed"
+      ],
+      available_execution_modes: ["local_simulation", "codex_cli"],
+      runtime_controls: {},
+      config_warnings: [],
+      is_runnable: true,
+      notes: "Simulated API-style adapter with normalized runtime phase reporting."
+    }
+  ]
 };
 
 async function fetchJson<T>(path: string, fallback: T): Promise<T> {
@@ -254,6 +335,10 @@ export async function dismissQuarantineEntry(queueId: string) {
 
 export function fetchLiveSnapshot() {
   return fetchJson<LiveSnapshot>("/api/live", LIVE_FALLBACK);
+}
+
+export function fetchProviders() {
+  return fetchJson<ProvidersResponse>("/api/providers", PROVIDERS_FALLBACK);
 }
 
 async function postJson<T>(path: string, body: Record<string, string | number | null | undefined>): Promise<T | null> {

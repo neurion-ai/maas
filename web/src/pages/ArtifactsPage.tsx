@@ -52,11 +52,17 @@ export function ArtifactsPage() {
 
   async function loadArtifacts(signal?: AbortSignal) {
     setIsRefreshing(true);
+    let usedFallback = false;
     try {
-      const payload = await fetchArtifacts(signal);
+      const payload = await fetchArtifacts(signal, () => {
+        usedFallback = true;
+      });
       startTransition(() => {
         setArtifacts(payload);
       });
+      setNotice(
+        usedFallback ? "Artifact refresh failed; showing the most recent available snapshot." : null
+      );
     } catch (error) {
       if (!(error instanceof Error && error.name === "AbortError")) {
         setNotice("Artifact refresh failed; showing the most recent available snapshot.");

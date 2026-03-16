@@ -236,6 +236,20 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertFalse(payload["items"][0]["exists"])
             self.assertEqual(payload["provider_types"][0]["provider_type"], "python_script")
 
+    def test_artifacts_api_rejects_invalid_limit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Artifacts Limit Test",
+                description="Artifacts limit test",
+                project_type="custom",
+            )
+
+            response = TestClient(create_app(tmpdir)).get("/api/artifacts?limit=abc")
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "limit must be an integer")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -146,6 +146,18 @@ class ProviderSettingsRequest(BaseModel):
     settings: dict = {}
 
 
+def _parse_limit(value, default):
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="limit must be an integer")
+    if parsed <= 0:
+        raise HTTPException(status_code=400, detail="limit must be greater than zero")
+    return parsed
+
+
 def create_app(project_root="."):
     app = FastAPI(title="MAAS", version="0.1.0")
     paths = ProjectPaths(project_root)
@@ -301,9 +313,10 @@ def create_app(project_root="."):
 
     @app.get("/api/artifacts")
     def artifacts(limit=100):
+        parsed_limit = _parse_limit(limit, 100)
         connection = connect(paths)
         try:
-            return fetch_artifacts(connection, paths, limit=int(limit))
+            return fetch_artifacts(connection, paths, limit=parsed_limit)
         finally:
             connection.close()
 

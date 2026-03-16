@@ -325,7 +325,12 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
   run_targets: []
 };
 
-async function fetchJson<T>(path: string, fallback: T, signal?: AbortSignal): Promise<T> {
+async function fetchJson<T>(
+  path: string,
+  fallback: T,
+  signal?: AbortSignal,
+  onFallback?: () => void
+): Promise<T> {
   try {
     const response = await fetch(path, { signal });
     if (!response.ok) {
@@ -334,7 +339,11 @@ async function fetchJson<T>(path: string, fallback: T, signal?: AbortSignal): Pr
     const payload = (await response.json()) as T;
     lastSuccessfulResponses.set(path, payload);
     return payload;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    onFallback?.();
     if (lastSuccessfulResponses.has(path)) {
       return lastSuccessfulResponses.get(path) as T;
     }
@@ -358,8 +367,8 @@ export function fetchActivity() {
   return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
 }
 
-export function fetchArtifacts(signal?: AbortSignal) {
-  return fetchJson<ArtifactsResponse>("/api/artifacts", ARTIFACTS_FALLBACK, signal);
+export function fetchArtifacts(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<ArtifactsResponse>("/api/artifacts", ARTIFACTS_FALLBACK, signal, onFallback);
 }
 
 export function fetchAlerts() {

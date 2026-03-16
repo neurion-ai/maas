@@ -160,6 +160,52 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(backoff_items[backoff_task_id]["review_state"], "retry_backoff")
             self.assertEqual(backoff_items[backoff_task_id]["next_retry_reason"], "session_timed_out")
 
+    def test_recovery_policy_endpoint_excludes_terminal_tasks_from_override_and_backoff_lists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                done_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Bootstrap migration runner'"
+                ).fetchone()["task_id"]
+                cancelled_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Integrate provider adapters'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'done',
+                        auto_retry_limit = 4
+                    WHERE task_id = ?
+                    """,
+                    (done_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'cancelled',
+                        auto_retry_limit = 2,
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (cancelled_task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["tasks_with_retry_overrides"], 0)
+            override_task_ids = {item["task_id"] for item in payload["task_retry_overrides"]}
+            backoff_task_ids = {item["task_id"] for item in payload["active_retry_backoff"]}
+            self.assertNotIn(done_task_id, override_task_ids)
+            self.assertNotIn(cancelled_task_id, override_task_ids)
+            self.assertNotIn(done_task_id, backoff_task_ids)
+            self.assertNotIn(cancelled_task_id, backoff_task_ids)
+
     def test_recovery_policy_update_rejects_invalid_values(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")

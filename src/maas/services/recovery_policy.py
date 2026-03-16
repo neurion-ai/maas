@@ -164,6 +164,7 @@ def _recovery_summary(connection, project_id):
         FROM tasks
         WHERE project_id = ?
           AND auto_retry_limit IS NOT NULL
+          AND status NOT IN ('done', 'cancelled')
         """,
         (project_id,),
     ).fetchone()[0]
@@ -245,13 +246,16 @@ def fetch_project_recovery_overview(connection, project_id=None):
         "task_retry_overrides": _recovery_task_items(
             connection,
             project_id,
-            "tasks.auto_retry_limit IS NOT NULL",
+            "tasks.auto_retry_limit IS NOT NULL AND tasks.status NOT IN ('done', 'cancelled')",
             [],
         ),
         "active_retry_backoff": _recovery_task_items(
             connection,
             project_id,
-            "(tasks.review_state = 'retry_backoff' OR tasks.next_retry_at IS NOT NULL)",
+            (
+                "tasks.status IN ('planned', 'ready', 'assigned', 'blocked') "
+                "AND (tasks.review_state = 'retry_backoff' OR tasks.next_retry_at IS NOT NULL)"
+            ),
             [],
         ),
     }

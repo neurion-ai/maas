@@ -794,6 +794,26 @@ def _infer_failure_operator_action(failure):
     return None
 
 
+def _infer_failure_secondary_operator_action(failure):
+    queue_id = failure.get("quarantine_queue_id")
+    queue_status = failure.get("quarantine_queue_status")
+
+    if (
+        queue_id
+        and queue_status == "open"
+        and failure.get("quarantined_artifact_count", 0) > 0
+    ):
+        return {
+            "action": "dismiss_quarantine_entry",
+            "label": "Dismiss",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": failure.get("task_id"),
+        }
+
+    return None
+
+
 def enrich_failures_with_quarantine(connection, failures):
     session_ids = [failure["session_id"] for failure in failures if failure.get("session_id")]
     artifacts_by_session = _quarantined_artifacts_by_session(connection, session_ids)
@@ -811,6 +831,9 @@ def enrich_failures_with_quarantine(connection, failures):
         operator_action = _infer_failure_operator_action(enriched_failure)
         if operator_action is not None:
             enriched_failure["operator_action"] = operator_action
+        secondary_operator_action = _infer_failure_secondary_operator_action(enriched_failure)
+        if secondary_operator_action is not None:
+            enriched_failure["secondary_operator_action"] = secondary_operator_action
         enriched.append(enriched_failure)
     return enriched
 

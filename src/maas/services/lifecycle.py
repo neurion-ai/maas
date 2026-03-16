@@ -12,6 +12,7 @@ from maas.services.recovery_policy import (
     task_failed_session_retry_limit,
 )
 from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
+from maas.services.scheduler import refresh_ready_tasks
 from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
 
 
@@ -110,11 +111,23 @@ def _maybe_auto_retry_failed_task(connection, project_id, task_id, actor_id):
         "Task returned to the planning queue for automatic retry after a failed session.",
         detail,
     )
+    refresh_ready_tasks(connection, commit=False)
+    refreshed_task = connection.execute(
+        """
+        SELECT status, review_state, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
     return {
         "task_id": task_id,
         "retry_count": next_retry_count,
         "retry_limit": retry_limit,
-        "next_retry_at": next_retry_at,
+        "status": refreshed_task["status"],
+        "review_state": refreshed_task["review_state"],
+        "next_retry_at": refreshed_task["next_retry_at"],
+        "next_retry_reason": refreshed_task["next_retry_reason"],
     }
 
 

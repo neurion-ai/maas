@@ -13,6 +13,43 @@ from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_
 
 
 class SchedulerApiTest(unittest.TestCase):
+    def test_refresh_ready_tasks_can_skip_commit_for_atomic_callers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Scheduler Atomicity Test", description="Scheduler atomicity test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                blocker_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Bootstrap migration runner'"
+                ).fetchone()["task_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE task_id = ?", (blocker_task_id,))
+                connection.commit()
+
+                changed = refresh_ready_tasks(connection, commit=False)
+                in_transaction_status = connection.execute(
+                    "SELECT status FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()["status"]
+                connection.rollback()
+            finally:
+                connection.close()
+
+            self.assertTrue(any(item["task_id"] == task_id for item in changed))
+            self.assertEqual(in_transaction_status, "ready")
+
+            connection = connect(result["paths"])
+            try:
+                persisted_status = connection.execute(
+                    "SELECT status FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()["status"]
+            finally:
+                connection.close()
+
+            self.assertEqual(persisted_status, "planned")
+
     def test_evaluate_task_supports_artifact_db_query_and_test_command(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Scheduler Test", description="Scheduler test", project_type="custom")

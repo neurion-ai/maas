@@ -1113,7 +1113,7 @@ class ProviderRuntimeTest(unittest.TestCase):
                 connection.close()
 
             self.assertEqual(task["status"], "planned")
-            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["review_state"], "retry_backoff")
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "session_failed")
             self.assertEqual(task["next_retry_reason"], "session_failed")
@@ -1190,7 +1190,7 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(session["status"], "failed")
             self.assertIn("artifact store unavailable", session["status_message"])
             self.assertEqual(task["status"], "planned")
-            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["review_state"], "retry_backoff")
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "session_failed")
             self.assertIsNotNone(task["next_retry_at"])

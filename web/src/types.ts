@@ -519,6 +519,25 @@ export interface RecoveryPolicySettings {
   retry_backoff_max_seconds: number;
 }
 
+export interface RecoveryTaskItem {
+  task_id: string;
+  title: string;
+  status: string;
+  review_state?: string | null;
+  priority: number;
+  retry_count?: number | null;
+  auto_retry_limit?: number | null;
+  last_retry_at?: string | null;
+  last_retry_reason?: string | null;
+  next_retry_at?: string | null;
+  next_retry_reason?: string | null;
+  updated_at?: string | null;
+  goal_title?: string | null;
+  agent_name?: string | null;
+  failure_count?: number | null;
+  latest_failure_at?: string | null;
+}
+
 export interface RecoveryPolicyResponse {
   project_id: string;
   policy: RecoveryPolicySettings;
@@ -527,6 +546,7 @@ export interface RecoveryPolicyResponse {
     retry_backoff_tasks: number;
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
+    tasks_with_retry_overrides: number;
     open_quarantine_entries: number;
     open_failure_alerts: number;
     open_repeated_failure_alerts: number;
@@ -536,6 +556,8 @@ export interface RecoveryPolicyResponse {
     failed_session_retry_delays: RecoveryDelayPreviewItem[];
     recover_and_requeue_delays: RecoveryDelayPreviewItem[];
   };
+  task_retry_overrides: RecoveryTaskItem[];
+  active_retry_backoff: RecoveryTaskItem[];
 }
 
 export interface LiveSnapshot {

@@ -134,6 +134,17 @@ const ARTIFACTS_FALLBACK: ArtifactsResponse = {
   },
   artifact_types: [],
   provider_types: [],
+  filtered_count: 0,
+  offset: 0,
+  limit: 100,
+  selected_filters: {
+    search: "",
+    state: "all",
+    provider_type: "all",
+    artifact_type: "all",
+    task_id: "",
+    missing_only: false
+  },
   items: []
 };
 
@@ -367,8 +378,31 @@ export function fetchActivity() {
   return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
 }
 
-export function fetchArtifacts(signal?: AbortSignal, onFallback?: () => void) {
-  return fetchJson<ArtifactsResponse>("/api/artifacts", ARTIFACTS_FALLBACK, signal, onFallback);
+export function fetchArtifacts(
+  params?: {
+    search?: string;
+    state?: string;
+    providerType?: string;
+    artifactType?: string;
+    taskId?: string;
+    missingOnly?: boolean;
+    limit?: number;
+    offset?: number;
+  },
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const query = new URLSearchParams();
+  if (params?.search) query.set("search", params.search);
+  if (params?.state) query.set("state", params.state);
+  if (params?.providerType) query.set("provider_type", params.providerType);
+  if (params?.artifactType) query.set("artifact_type", params.artifactType);
+  if (params?.taskId) query.set("task_id", params.taskId);
+  if (params?.missingOnly) query.set("missing_only", "true");
+  if (params?.limit != null) query.set("limit", String(params.limit));
+  if (params?.offset != null) query.set("offset", String(params.offset));
+  const path = query.size > 0 ? `/api/artifacts?${query.toString()}` : "/api/artifacts";
+  return fetchJson<ArtifactsResponse>(path, ARTIFACTS_FALLBACK, signal, onFallback);
 }
 
 export function fetchAlerts() {

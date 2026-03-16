@@ -106,7 +106,79 @@ def _provider_counts(connection):
     return [{"provider_type": row["provider_type"], "count": row["count"]} for row in rows]
 
 
-def fetch_artifacts(connection, project_paths, limit=100):
+def _enrich_artifact_row(project_paths, row):
+    metadata = _load_metadata(row["metadata_json"])
+    absolute_path = _absolute_path(project_paths, row["path"])
+    artifact_state = _artifact_state(project_paths, absolute_path, metadata)
+    return {
+        "artifact_id": row["artifact_id"],
+        "project_id": row["project_id"],
+        "task_id": row["task_id"],
+        "task_title": row["task_title"],
+        "task_status": row["task_status"],
+        "task_review_state": row["task_review_state"],
+        "session_id": row["session_id"],
+        "session_status": row["session_status"],
+        "provider_type": row["provider_type"],
+        "agent_id": row["agent_id"],
+        "agent_name": row["agent_name"],
+        "artifact_type": row["artifact_type"],
+        "path": row["path"],
+        "display_path": _display_path(project_paths, absolute_path, row["path"]),
+        "file_name": os.path.basename(absolute_path or row["path"]),
+        "artifact_state": artifact_state,
+        "exists": bool(absolute_path and os.path.exists(absolute_path)),
+        "size_bytes": _size_bytes(absolute_path),
+        "quarantine_reason": metadata.get("quarantine_reason"),
+        "quarantined_from_path": metadata.get("quarantined_from_path"),
+        "restored_from_quarantine": bool(metadata.get("restored_from_quarantine")),
+        "created_at": row["created_at"],
+    }
+
+
+def _matches_search(item, query):
+    if not query:
+        return True
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return True
+    haystack = " ".join(
+        str(value)
+        for value in (
+            item["artifact_id"],
+            item["task_id"],
+            item["task_title"],
+            item["agent_name"],
+            item["provider_type"],
+            item["artifact_type"],
+            item["file_name"],
+            item["display_path"],
+            item["quarantined_from_path"],
+            item["quarantine_reason"],
+        )
+        if value
+    ).lower()
+    return normalized_query in haystack
+
+
+def _matches_filters(item, filters):
+    filters = filters or {}
+    if filters.get("state") and filters["state"] != "all" and item["artifact_state"] != filters["state"]:
+        return False
+    if filters.get("provider_type") and filters["provider_type"] != "all":
+        if (item.get("provider_type") or "unknown") != filters["provider_type"]:
+            return False
+    if filters.get("artifact_type") and filters["artifact_type"] != "all":
+        if item["artifact_type"] != filters["artifact_type"]:
+            return False
+    if filters.get("task_id") and item.get("task_id") != filters["task_id"]:
+        return False
+    if filters.get("missing_only") and item["exists"]:
+        return False
+    return _matches_search(item, filters.get("search"))
+
+
+def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
     rows = connection.execute(
         """
         SELECT
@@ -130,46 +202,27 @@ def fetch_artifacts(connection, project_paths, limit=100):
         LEFT JOIN sessions ON sessions.session_id = artifacts.session_id
         LEFT JOIN agents ON agents.agent_id = sessions.agent_id
         ORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC
-        LIMIT ?
-        """,
-        (limit,),
+        """
     ).fetchall()
 
-    items = []
-    for row in rows:
-        metadata = _load_metadata(row["metadata_json"])
-        absolute_path = _absolute_path(project_paths, row["path"])
-        artifact_state = _artifact_state(project_paths, absolute_path, metadata)
-        items.append(
-            {
-                "artifact_id": row["artifact_id"],
-                "project_id": row["project_id"],
-                "task_id": row["task_id"],
-                "task_title": row["task_title"],
-                "task_status": row["task_status"],
-                "task_review_state": row["task_review_state"],
-                "session_id": row["session_id"],
-                "session_status": row["session_status"],
-                "provider_type": row["provider_type"],
-                "agent_id": row["agent_id"],
-                "agent_name": row["agent_name"],
-                "artifact_type": row["artifact_type"],
-                "path": row["path"],
-                "display_path": _display_path(project_paths, absolute_path, row["path"]),
-                "file_name": os.path.basename(absolute_path or row["path"]),
-                "artifact_state": artifact_state,
-                "exists": bool(absolute_path and os.path.exists(absolute_path)),
-                "size_bytes": _size_bytes(absolute_path),
-                "quarantine_reason": metadata.get("quarantine_reason"),
-                "quarantined_from_path": metadata.get("quarantined_from_path"),
-                "restored_from_quarantine": bool(metadata.get("restored_from_quarantine")),
-                "created_at": row["created_at"],
-            }
-        )
+    enriched_items = [_enrich_artifact_row(project_paths, row) for row in rows]
+    filtered_items = [item for item in enriched_items if _matches_filters(item, filters)]
+    paged_items = filtered_items[offset : offset + limit]
 
     return {
         "summary": _state_summary(connection, project_paths),
         "artifact_types": _type_counts(connection),
         "provider_types": _provider_counts(connection),
-        "items": items,
+        "items": paged_items,
+        "filtered_count": len(filtered_items),
+        "offset": offset,
+        "limit": limit,
+        "selected_filters": {
+            "search": (filters or {}).get("search") or "",
+            "state": (filters or {}).get("state") or "all",
+            "provider_type": (filters or {}).get("provider_type") or "all",
+            "artifact_type": (filters or {}).get("artifact_type") or "all",
+            "task_id": (filters or {}).get("task_id") or "",
+            "missing_only": bool((filters or {}).get("missing_only")),
+        },
     }

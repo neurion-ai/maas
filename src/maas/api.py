@@ -158,6 +158,18 @@ def _parse_limit(value, default):
     return parsed
 
 
+def _parse_offset(value, default=0):
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="offset must be an integer")
+    if parsed < 0:
+        raise HTTPException(status_code=400, detail="offset must be zero or greater")
+    return parsed
+
+
 def create_app(project_root="."):
     app = FastAPI(title="MAAS", version="0.1.0")
     paths = ProjectPaths(project_root)
@@ -325,11 +337,34 @@ def create_app(project_root="."):
             connection.close()
 
     @app.get("/api/artifacts")
-    def artifacts(limit=100):
+    def artifacts(
+        limit=100,
+        offset=0,
+        search: str = "",
+        state: str = "all",
+        provider_type: str = "all",
+        artifact_type: str = "all",
+        task_id: str = "",
+        missing_only: bool = False,
+    ):
         parsed_limit = _parse_limit(limit, 100)
+        parsed_offset = _parse_offset(offset, 0)
         connection = connect(paths)
         try:
-            return fetch_artifacts(connection, paths, limit=parsed_limit)
+            return fetch_artifacts(
+                connection,
+                paths,
+                limit=parsed_limit,
+                offset=parsed_offset,
+                filters={
+                    "search": search,
+                    "state": state,
+                    "provider_type": provider_type,
+                    "artifact_type": artifact_type,
+                    "task_id": task_id,
+                    "missing_only": missing_only,
+                },
+            )
         finally:
             connection.close()
 

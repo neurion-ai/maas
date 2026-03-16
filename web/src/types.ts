@@ -176,6 +176,17 @@ export interface ArtifactsResponse {
   };
   artifact_types: ArtifactFacetCount[];
   provider_types: ArtifactFacetCount[];
+  filtered_count: number;
+  offset: number;
+  limit: number;
+  selected_filters: {
+    search: string;
+    state: string;
+    provider_type: string;
+    artifact_type: string;
+    task_id: string;
+    missing_only: boolean;
+  };
   items: ArtifactItem[];
 }
 

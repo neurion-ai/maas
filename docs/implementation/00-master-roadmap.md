@@ -19,7 +19,7 @@ Legend for the checklist column:
 | 2. Goal/task engine | `[ ]` | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
 | 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus local Claude and Codex CLI paths, provider runtime status/history reads, manual provider runs, provider mode switching, and editable provider settings |
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
-| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, board/overview/goal tree/failure/provider reads, and overview/failure failure-action controls |
+| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, board/overview/goal tree/failure/provider/artifact reads, artifact browser, live websocket transport, and overview/failure failure-action controls |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
 | 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out and failed-session auto-retry, quarantine queue restore/dismiss/reopen workflows, repeated-failure alerts, failure-action read-model visibility, and task plus agent recovery exist; broader recovery is still pending |
 | 8. Brownfield and multi-project | `[ ]` | Still roadmap only |
@@ -49,7 +49,7 @@ This repository now includes:
 
 - [x] SQLite migrations and a migration runner
 - [x] Greenfield bootstrap with seeded goals, agents, tasks, alerts, and sessions
-- [x] FastAPI read models for board, overview, goal tree, agents, activity, alerts, failures, live, and providers
+- [x] FastAPI read models for board, overview, goal tree, agents, activity, alerts, failures, live, artifacts, and providers
 - [x] Task actions for ready queue refresh, allocator assignment, acceptance evaluation, failure-blocked task recovery, repeated-failure triage, and recover-and-requeue
 - [x] Supervisor run endpoint and CLI orchestration pass
 - [x] Control-room actions for manual supervisor runs, idle-agent assignment, and error-agent recovery
@@ -63,7 +63,7 @@ This repository now includes:
 - [x] Local OpenAI Codex CLI integration behind explicit provider config
 - [x] Provider runtime status/read-model visibility including config warnings, recent run history, manual run targets, provider mode state, and editable settings
 - [x] Lifecycle API/CLI surface
-- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations views plus provider run, mode, and settings controls
+- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Artifacts, Providers, Failures, Alerts, and Escalations views plus provider run, mode, and settings controls
 
 ## Recommended Reading Order
 

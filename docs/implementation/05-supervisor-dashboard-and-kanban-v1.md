@@ -10,20 +10,20 @@
 - [x] Alert creation for stale sessions
 - [x] Task-first `/api/board` response
 - [x] React board shell as the primary operator view
-- [x] Supporting reads for overview, goals, agents, activity, alerts, failures, escalations, and providers
-- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations
+- [x] Supporting reads for overview, goals, agents, activity, alerts, failures, escalations, artifacts, and providers
+- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Artifacts, Providers, Failures, Alerts, and Escalations
 - [x] Operator controls for manual supervisor runs and assign-next actions
 - [x] Providers view can trigger safe manual provider runs for assigned tasks
 - [x] Providers view can switch provider execution mode between simulation and available local live modes
 - [x] Providers view can edit provider runtime settings
 - [x] Overview and Failures views expose direct failure operator actions instead of remaining read-only summaries
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
+- [x] Live transport now prefers websocket, falls back to SSE, and only then uses polling
+- [x] Artifact browser includes artifact-state visibility, quarantine context, and server-side filtering
 
 ## Still To Do On `main`
 
-- [ ] Production websocket transport
 - [ ] Multi-project board routing
-- [ ] Artifact browser polish
 
 ## Board Contract Checklist
 

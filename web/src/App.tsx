@@ -10,6 +10,7 @@ import { GoalTreePage } from "./pages/GoalTreePage";
 import { LivePulseProvider, useLiveStatus } from "./lib/useLivePulse";
 import { OverviewPage } from "./pages/OverviewPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
+import { RecoveryPage } from "./pages/RecoveryPage";
 
 type View =
   | "overview"
@@ -19,6 +20,7 @@ type View =
   | "activity"
   | "artifacts"
   | "providers"
+  | "recovery"
   | "failures"
   | "alerts"
   | "escalations";
@@ -31,6 +33,7 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "activity", label: "Activity" },
   { id: "artifacts", label: "Artifacts" },
   { id: "providers", label: "Providers" },
+  { id: "recovery", label: "Recovery" },
   { id: "failures", label: "Failures" },
   { id: "alerts", label: "Alerts" },
   { id: "escalations", label: "Escalations" }
@@ -107,6 +110,7 @@ function AppShell() {
         {activeView === "activity" ? <ActivityPage /> : null}
         {activeView === "artifacts" ? <ArtifactsPage /> : null}
         {activeView === "providers" ? <ProvidersPage /> : null}
+        {activeView === "recovery" ? <RecoveryPage /> : null}
         {activeView === "failures" ? <FailuresPage /> : null}
         {activeView === "alerts" ? <AlertsPage /> : null}
         {activeView === "escalations" ? <EscalationsPage /> : null}

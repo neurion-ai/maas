@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchProviders, runProviderTask, setProviderMode } from "../lib/controlRoomApi";
+import { fetchProviders, runProviderTask, setProviderMode, setProviderSettings } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { ProviderRunTarget, ProviderStatusItem, ProvidersResponse } from "../types";
 
@@ -31,6 +31,8 @@ export function ProvidersPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingRun, setPendingRun] = useState<string | null>(null);
   const [pendingMode, setPendingMode] = useState<string | null>(null);
+  const [pendingSettings, setPendingSettings] = useState<string | null>(null);
+  const [settingsDrafts, setSettingsDrafts] = useState<Record<string, Record<string, string>>>({});
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -40,6 +42,19 @@ export function ProvidersPage() {
       const payload = await fetchProviders();
       if (mounted) {
         setProviders(payload);
+        setSettingsDrafts(
+          Object.fromEntries(
+            payload.providers.map((provider) => [
+              provider.id,
+              Object.fromEntries(
+                Object.entries(provider.configurable_runtime_controls ?? {}).map(([key, value]) => [
+                  key,
+                  value == null ? "" : String(value),
+                ])
+              ),
+            ])
+          )
+        );
       }
     }
 
@@ -57,7 +72,21 @@ export function ProvidersPage() {
   const runTargets = providers?.run_targets ?? [];
 
   async function reloadProviders() {
-    setProviders(await fetchProviders());
+    const payload = await fetchProviders();
+    setProviders(payload);
+    setSettingsDrafts(
+      Object.fromEntries(
+        payload.providers.map((provider) => [
+          provider.id,
+          Object.fromEntries(
+            Object.entries(provider.configurable_runtime_controls ?? {}).map(([key, value]) => [
+              key,
+              value == null ? "" : String(value),
+            ])
+          ),
+        ])
+      )
+    );
   }
 
   async function handleRunTask(providerId: string, target: ProviderRunTarget) {
@@ -87,6 +116,36 @@ export function ProvidersPage() {
       setNotice(`Provider mode update failed for ${providerId}; keeping the previous configuration.`);
     } finally {
       setPendingMode(null);
+    }
+  }
+
+  function updateDraft(providerId: string, field: string, value: string) {
+    setSettingsDrafts((current) => ({
+      ...current,
+      [providerId]: {
+        ...(current[providerId] ?? {}),
+        [field]: value,
+      },
+    }));
+  }
+
+  async function handleSaveSettings(provider: ProviderStatusItem) {
+    const actionKey = provider.id;
+    setPendingSettings(actionKey);
+    setNotice(null);
+    try {
+      const draft = settingsDrafts[provider.id] ?? {};
+      const payload: Record<string, string | number> = {};
+      Object.entries(draft).forEach(([key, value]) => {
+        payload[key] = key === "timeout_seconds" ? Number(value) : value;
+      });
+      await setProviderSettings(provider.id, payload);
+      await reloadProviders();
+      setNotice(`Updated runtime settings for ${provider.name}.`);
+    } catch {
+      setNotice(`Provider settings update failed for ${provider.name}; keeping the previous values.`);
+    } finally {
+      setPendingSettings(null);
     }
   }
 
@@ -182,6 +241,20 @@ export function ProvidersPage() {
                     {provider.config_warnings?.map((warning) => (
                       <p key={warning}>{warning}</p>
                     ))}
+                    {Object.keys(provider.configurable_runtime_controls ?? {}).length > 0 ? (
+                      <div>
+                        {Object.entries(provider.configurable_runtime_controls ?? {}).map(([key]) => (
+                          <label key={key}>
+                            {key}
+                            <input
+                              type={key === "timeout_seconds" ? "number" : "text"}
+                              value={settingsDrafts[provider.id]?.[key] ?? ""}
+                              onChange={(event) => updateDraft(provider.id, key, event.target.value)}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
                     {(provider.recent_runs ?? []).map((run) => (
                       <p key={run.session_id}>
                         Recent run: {run.task_title ?? run.task_id ?? run.session_id} | {run.status}
@@ -204,13 +277,25 @@ export function ProvidersPage() {
                           key={mode}
                           type="button"
                           className="task-action task-action--secondary"
-                          disabled={provider.configured_execution_mode === mode || pendingMode === actionKey}
+                          disabled={
+                            provider.configured_execution_mode === mode || pendingMode === actionKey || pendingSettings !== null
+                          }
                           onClick={() => void handleSetMode(provider.id, mode)}
                         >
                           {pendingMode === actionKey ? "Updating..." : label}
                         </button>
                       );
                     })}
+                    {Object.keys(provider.configurable_runtime_controls ?? {}).length > 0 ? (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        disabled={pendingSettings === provider.id || pendingMode !== null}
+                        onClick={() => void handleSaveSettings(provider)}
+                      >
+                        {pendingSettings === provider.id ? "Saving..." : "Save settings"}
+                      </button>
+                    ) : null}
                     <span>{provider.kind}</span>
                     <span>{provider.status}</span>
                     <span>{provider.lifecycle_version}</span>

@@ -206,6 +206,7 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
       ],
       available_execution_modes: ["local_simulation"],
       runtime_controls: {},
+      configurable_runtime_controls: {},
       config_warnings: [],
       is_runnable: true,
       run_summary: {
@@ -241,6 +242,12 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
       ],
       available_execution_modes: ["local_simulation", "claude_cli"],
       runtime_controls: {},
+      configurable_runtime_controls: {
+        cli_command: "claude",
+        timeout_seconds: 300,
+        permission_mode: "acceptEdits",
+        model: ""
+      },
       config_warnings: [],
       is_runnable: true,
       run_summary: {
@@ -276,6 +283,12 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
       ],
       available_execution_modes: ["local_simulation", "codex_cli"],
       runtime_controls: {},
+      configurable_runtime_controls: {
+        cli_command: "codex",
+        timeout_seconds: 300,
+        sandbox: "workspace-write",
+        model: ""
+      },
       config_warnings: [],
       is_runnable: true,
       run_summary: {
@@ -397,7 +410,18 @@ export async function setProviderMode(providerId: string, mode: string) {
   return payload;
 }
 
-async function postJson<T>(path: string, body: Record<string, string | number | null | undefined>): Promise<T | null> {
+export async function setProviderSettings(providerId: string, settings: Record<string, string | number>) {
+  const payload = await postJson(`/api/providers/${providerId}/actions/set-settings`, {
+    actor_id: "agent_allocator",
+    settings
+  });
+  return payload;
+}
+
+type JsonPrimitive = string | number | boolean | null;
+type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+async function postJson<T>(path: string, body: Record<string, JsonValue | undefined>): Promise<T | null> {
   const response = await fetch(path, {
     method: "POST",
     headers: {

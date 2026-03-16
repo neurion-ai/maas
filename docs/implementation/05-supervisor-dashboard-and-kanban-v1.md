@@ -14,6 +14,7 @@
 - [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations
 - [x] Operator controls for manual supervisor runs and assign-next actions
 - [x] Providers view can trigger safe manual provider runs for assigned tasks
+- [x] Providers view can switch provider execution mode between simulation and available local live modes
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 
 ## Still To Do On `main`

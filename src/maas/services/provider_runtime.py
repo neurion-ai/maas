@@ -4,7 +4,13 @@ import os
 import subprocess
 import tempfile
 
-from maas.providers import fetch_provider_runtime_overview, get_provider_runtime_settings, list_provider_status, update_provider_mode
+from maas.providers import (
+    fetch_provider_runtime_overview,
+    get_provider_runtime_settings,
+    list_provider_status,
+    update_provider_mode,
+    update_provider_settings,
+)
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 
 
@@ -478,3 +484,7 @@ def provider_runtime_overview(connection=None, project_id=None):
 
 def set_provider_mode(connection, provider_id, actor_id, mode, project_id=None):
     return update_provider_mode(connection, provider_id, actor_id, mode, project_id=project_id)
+
+
+def set_provider_settings(connection, provider_id, actor_id, settings, project_id=None):
+    return update_provider_settings(connection, provider_id, actor_id, settings, project_id=project_id)

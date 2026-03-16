@@ -315,6 +315,62 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             self.assertIn("board actions", response.json()["detail"].lower())
 
+    def test_provider_settings_endpoint_updates_runtime_controls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-settings",
+                json={
+                    "actor_id": "agent_allocator",
+                    "settings": {
+                        "cli_command": "codex-beta",
+                        "timeout_seconds": 45,
+                        "sandbox": "workspace-write",
+                        "model": "gpt-5-mini",
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["configurable_runtime_controls"]["cli_command"], "codex-beta")
+            self.assertEqual(payload["configurable_runtime_controls"]["timeout_seconds"], 45)
+            self.assertEqual(payload["configurable_runtime_controls"]["model"], "gpt-5-mini")
+
+    def test_provider_settings_endpoint_rejects_invalid_values(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-settings",
+                json={
+                    "actor_id": "agent_allocator",
+                    "settings": {
+                        "timeout_seconds": 0,
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("timeout_seconds", response.json()["detail"])
+
+    def test_provider_settings_endpoint_requires_board_action_permission(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-settings",
+                json={
+                    "actor_id": "agent_researcher",
+                    "settings": {
+                        "model": "gpt-5-mini",
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 403)
+
     def test_provider_run_task_executes_each_adapter_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")

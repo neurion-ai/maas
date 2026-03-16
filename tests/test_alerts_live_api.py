@@ -200,6 +200,16 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     "related_task_id": task_id,
                 },
             )
+            self.assertEqual(
+                recent_failure["secondary_operator_action"],
+                {
+                    "action": "dismiss_quarantine_entry",
+                    "label": "Dismiss",
+                    "resource_type": "quarantine",
+                    "resource_id": queue_id,
+                    "related_task_id": task_id,
+                },
+            )
 
     def test_failures_api_uses_recover_and_requeue_for_recoverable_nonquarantined_failures(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -309,6 +319,16 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     "related_task_id": task_id,
                 },
             )
+            self.assertEqual(
+                recent_failure["secondary_operator_action"],
+                {
+                    "action": "dismiss_quarantine_entry",
+                    "label": "Dismiss",
+                    "resource_type": "quarantine",
+                    "resource_id": recent_failure["quarantine_queue_id"],
+                    "related_task_id": task_id,
+                },
+            )
 
     def test_failures_api_uses_reopen_for_dismissed_quarantine_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -379,6 +399,7 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                     "related_task_id": task_id,
                 },
             )
+            self.assertNotIn("secondary_operator_action", recent_failure)
 
     def test_failures_api_exposes_repeated_failure_operator_action_when_alert_is_open(self):
         with tempfile.TemporaryDirectory() as tmpdir:

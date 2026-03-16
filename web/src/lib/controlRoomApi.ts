@@ -491,6 +491,10 @@ export async function runFailureOperatorAction(operatorAction: FailureOperatorAc
     await restoreAndRequeueQuarantineEntry(operatorAction.resource_id);
     return;
   }
+  if (operatorAction.action === "dismiss_quarantine_entry") {
+    await dismissQuarantineEntry(operatorAction.resource_id);
+    return;
+  }
   if (operatorAction.action === "reopen_quarantine_entry") {
     await reopenQuarantineEntry(operatorAction.resource_id);
     return;

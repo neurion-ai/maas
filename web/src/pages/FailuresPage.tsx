@@ -103,25 +103,29 @@ export function FailuresPage() {
     }
   }
 
-  async function handleRecentFailureAction(failureId: string) {
+  async function handleRecentFailureAction(failureId: string, actionKind: "primary" | "secondary" = "primary") {
     const failure = failures?.recent.find((item) => item.failure_id === failureId);
-    if (!failure?.operator_action) {
+    const operatorAction =
+      actionKind === "secondary" ? failure?.secondary_operator_action : failure?.operator_action;
+    if (!operatorAction) {
       return;
     }
 
-    setPendingFailureAction(`${failureId}:${failure.operator_action.action}`);
+    setPendingFailureAction(`${failureId}:${operatorAction.action}`);
     setNotice(null);
     try {
-      await runFailureOperatorAction(failure.operator_action);
+      await runFailureOperatorAction(operatorAction);
       await reload();
-      if (failure.operator_action.action === "restore_and_requeue_quarantine_entry") {
-        setNotice(`Restored quarantined artifacts and returned task ${failure.operator_action.related_task_id} to the queue.`);
-      } else if (failure.operator_action.action === "reopen_quarantine_entry") {
+      if (operatorAction.action === "restore_and_requeue_quarantine_entry") {
+        setNotice(`Restored quarantined artifacts and returned task ${operatorAction.related_task_id} to the queue.`);
+      } else if (operatorAction.action === "dismiss_quarantine_entry") {
+        setNotice(`Dismissed quarantine incident for failure ${failureId}; artifacts remain isolated.`);
+      } else if (operatorAction.action === "reopen_quarantine_entry") {
         setNotice(`Reopened dismissed quarantine entry for failure ${failureId}.`);
-      } else if (failure.operator_action.action === "restore_failure_artifacts") {
+      } else if (operatorAction.action === "restore_failure_artifacts") {
         setNotice(`Restored quarantined artifacts for failure ${failureId}.`);
       } else {
-        setNotice(`Recovered and requeued task ${failure.operator_action.resource_id}.`);
+        setNotice(`Recovered and requeued task ${operatorAction.resource_id}.`);
       }
     } catch {
       setNotice("Failure action failed; keep the incident under operator review.");
@@ -211,18 +215,34 @@ export function FailuresPage() {
                     <button
                       type="button"
                       className="task-action task-action--approve"
-                      disabled={pendingFailureAction === `${item.failure_id}:${item.operator_action.action}`}
-                      onClick={() => item.failure_id && void handleRecentFailureAction(item.failure_id)}
+                      disabled={pendingFailureAction?.startsWith(`${item.failure_id}:`) ?? false}
+                      onClick={() => item.failure_id && void handleRecentFailureAction(item.failure_id, "primary")}
                     >
                       {pendingFailureAction === `${item.failure_id}:${item.operator_action.action}`
                         ? item.operator_action.action === "restore_and_requeue_quarantine_entry"
                           ? "Restoring..."
+                          : item.operator_action.action === "dismiss_quarantine_entry"
+                            ? "Dismissing..."
                           : item.operator_action.action === "reopen_quarantine_entry"
                             ? "Reopening..."
                           : item.operator_action.action === "restore_failure_artifacts"
                             ? "Restoring..."
                             : "Recovering..."
                         : item.operator_action.label}
+                    </button>
+                  ) : null}
+                  {item.secondary_operator_action ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingFailureAction?.startsWith(`${item.failure_id}:`) ?? false}
+                      onClick={() => item.failure_id && void handleRecentFailureAction(item.failure_id, "secondary")}
+                    >
+                      {pendingFailureAction === `${item.failure_id}:${item.secondary_operator_action.action}`
+                        ? item.secondary_operator_action.action === "dismiss_quarantine_entry"
+                          ? "Dismissing..."
+                          : item.secondary_operator_action.label
+                        : item.secondary_operator_action.label}
                     </button>
                   ) : null}
                 </div>

@@ -161,6 +161,7 @@ export interface FailureItem {
   quarantined_artifact_count?: number;
   quarantined_artifacts?: QuarantinedArtifactItem[];
   operator_action?: FailureOperatorAction;
+  secondary_operator_action?: FailureOperatorAction;
   created_at: string;
 }
 
@@ -169,6 +170,7 @@ export interface FailureOperatorAction {
     | "recover_and_requeue_task"
     | "restore_failure_artifacts"
     | "restore_and_requeue_quarantine_entry"
+    | "dismiss_quarantine_entry"
     | "reopen_quarantine_entry";
   label: string;
   resource_type: "task" | "failure" | "quarantine";

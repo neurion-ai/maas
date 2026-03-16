@@ -17,13 +17,9 @@ export function ActivityPage() {
     }
 
     void loadActivity();
-    const timer = window.setInterval(() => {
-      void loadActivity();
-    }, 15000);
 
     return () => {
       mounted = false;
-      window.clearInterval(timer);
     };
   }, [livePulse]);
 

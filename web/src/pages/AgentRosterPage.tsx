@@ -29,13 +29,9 @@ export function AgentRosterPage() {
     }
 
     void loadRoster();
-    const timer = window.setInterval(() => {
-      void loadRoster();
-    }, 15000);
 
     return () => {
       mounted = false;
-      window.clearInterval(timer);
     };
   }, [livePulse]);
 

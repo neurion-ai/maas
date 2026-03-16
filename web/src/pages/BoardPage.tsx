@@ -66,13 +66,9 @@ export function BoardPage() {
   useEffect(() => {
     const controller = new AbortController();
     void loadBoard(controller.signal);
-    const intervalId = window.setInterval(() => {
-      void loadBoard(controller.signal);
-    }, 15000);
 
     return () => {
       controller.abort();
-      window.clearInterval(intervalId);
     };
   }, [boardFilters]);
 

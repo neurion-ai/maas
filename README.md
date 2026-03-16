@@ -27,6 +27,11 @@ Legend:
 - `[x]` shipped on `main`
 - `[ ]` not fully shipped on `main`
 
+### Current Checkout
+
+- [x] This branch includes editable provider runtime settings from the Providers view.
+- [ ] This branch still does not add broader external providers, brownfield onboarding, or multi-project support.
+
 ### Shipped on `main`
 
 - [x] Greenfield bootstrap with seeded goals, tasks, agents, alerts, and sessions

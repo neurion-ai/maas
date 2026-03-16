@@ -4,6 +4,10 @@
 
 - [ ] Batch 5 is only partially shipped on `main`.
 
+## Current Checkout
+
+- [x] This branch adds editable provider runtime settings from the Providers view.
+
 ## Shipped On `main`
 
 - [x] Supervisor one-shot loop for stale heartbeats, ready refresh, and idle-agent allocation

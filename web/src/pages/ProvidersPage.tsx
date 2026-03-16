@@ -4,6 +4,33 @@ import { fetchProviders, runProviderTask, setProviderMode, setProviderSettings }
 import { useLivePulse } from "../lib/useLivePulse";
 import type { ProviderRunTarget, ProviderStatusItem, ProvidersResponse } from "../types";
 
+function buildSettingsDrafts(
+  providerItems: ProviderStatusItem[],
+  existingDrafts: Record<string, Record<string, string>>,
+  resetProviderId?: string
+) {
+  return Object.fromEntries(
+    providerItems.map((provider) => {
+      const serverDraft = Object.fromEntries(
+        Object.entries(provider.configurable_runtime_controls ?? {}).map(([key, value]) => [
+          key,
+          value == null ? "" : String(value),
+        ])
+      );
+      const currentDraft = existingDrafts[provider.id] ?? {};
+
+      return [
+        provider.id,
+        provider.id === resetProviderId
+          ? serverDraft
+          : Object.fromEntries(
+              Object.keys(serverDraft).map((key) => [key, currentDraft[key] ?? serverDraft[key]])
+            ),
+      ];
+    })
+  );
+}
+
 function formatRuntimeControls(provider: ProviderStatusItem) {
   const controls = provider.runtime_controls ?? {};
   const rows = [];
@@ -42,19 +69,7 @@ export function ProvidersPage() {
       const payload = await fetchProviders();
       if (mounted) {
         setProviders(payload);
-        setSettingsDrafts(
-          Object.fromEntries(
-            payload.providers.map((provider) => [
-              provider.id,
-              Object.fromEntries(
-                Object.entries(provider.configurable_runtime_controls ?? {}).map(([key, value]) => [
-                  key,
-                  value == null ? "" : String(value),
-                ])
-              ),
-            ])
-          )
-        );
+        setSettingsDrafts((current) => buildSettingsDrafts(payload.providers, current));
       }
     }
 
@@ -71,22 +86,10 @@ export function ProvidersPage() {
   const totalRuns = items.reduce((sum, provider) => sum + (provider.run_summary?.total_runs ?? 0), 0);
   const runTargets = providers?.run_targets ?? [];
 
-  async function reloadProviders() {
+  async function reloadProviders(resetProviderId?: string) {
     const payload = await fetchProviders();
     setProviders(payload);
-    setSettingsDrafts(
-      Object.fromEntries(
-        payload.providers.map((provider) => [
-          provider.id,
-          Object.fromEntries(
-            Object.entries(provider.configurable_runtime_controls ?? {}).map(([key, value]) => [
-              key,
-              value == null ? "" : String(value),
-            ])
-          ),
-        ])
-      )
-    );
+    setSettingsDrafts((current) => buildSettingsDrafts(payload.providers, current, resetProviderId));
   }
 
   async function handleRunTask(providerId: string, target: ProviderRunTarget) {
@@ -140,7 +143,7 @@ export function ProvidersPage() {
         payload[key] = key === "timeout_seconds" ? Number(value) : value;
       });
       await setProviderSettings(provider.id, payload);
-      await reloadProviders();
+      await reloadProviders(provider.id);
       setNotice(`Updated runtime settings for ${provider.name}.`);
     } catch {
       setNotice(`Provider settings update failed for ${provider.name}; keeping the previous values.`);

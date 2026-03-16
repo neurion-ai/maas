@@ -4,6 +4,11 @@
 
 - [ ] Batch 3 is only partially shipped on `main`.
 
+## Current Checkout
+
+- [x] This branch adds editable provider runtime settings from the Providers view.
+- [ ] This branch still does not add broader external provider coverage beyond the local Claude and Codex CLI paths.
+
 ## Shipped On `main`
 
 - [x] Lifecycle operations: `start_session`, `heartbeat`, `log_activity`, `produce_artifact`, `end_session`

@@ -8,6 +8,11 @@ MAAS is being implemented as a single-project, greenfield-first, board-first age
 
 This roadmap now needs to be read alongside the actual implementation status in `docs/implementation/STATUS.md`.
 
+## Current Checkout
+
+- [x] The current branch extends `main` with editable provider runtime settings from the Providers view.
+- [ ] The current branch still does not change the larger missing areas like broader providers, brownfield, or multi-project support.
+
 Legend for the checklist column:
 
 - `[x]` shipped on `main`

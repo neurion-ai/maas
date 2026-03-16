@@ -38,6 +38,7 @@
 - [x] Simulated local worker/runtime execution path
 - [x] Provider-dispatched runtime path for `python_script`, `claude_code`, and `openai_codex`
 - [x] Shared lifecycle contract for provider activity and artifact output
+- [x] Real local Claude Code CLI execution path behind explicit provider config
 - [x] Real local OpenAI Codex CLI execution path behind explicit provider config
 
 ### Control room and steering
@@ -82,7 +83,7 @@
 
 ### Providers
 
-- [ ] Real external Claude Code integration
+- [ ] Broader external provider coverage beyond the current local CLI paths
 - [ ] More complete provider runtime lifecycle coverage
 
 ### Resilience and recovery

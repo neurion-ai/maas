@@ -1,11 +1,10 @@
 """Provider adapter execution helpers."""
 
-import json
 import os
 import subprocess
 import tempfile
 
-from maas.providers import get_provider, list_provider_status
+from maas.providers import get_provider_runtime_settings, list_provider_status
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 
 
@@ -107,21 +106,6 @@ def _rollback_untracked_artifact(artifact_full_path, artifact_existed_before_run
             os.remove(artifact_full_path)
     except OSError:
         return
-
-
-def _project_provider_settings(connection, project_id, provider_type):
-    row = connection.execute(
-        "SELECT config_json FROM projects WHERE project_id = ?",
-        (project_id,),
-    ).fetchone()
-    if row is None:
-        return {}
-    try:
-        config = json.loads(row["config_json"] or "{}")
-    except json.JSONDecodeError:
-        return {}
-    providers = config.get("providers") or {}
-    return providers.get(provider_type) or {}
 
 
 def _task_prompt(connection, task_id):
@@ -288,19 +272,21 @@ def _codex_cli_artifact_payload(provider, task_id, external_result):
 
 
 def run_provider_task(connection, project_paths, project_id, agent_id, task_id, provider_type, artifact_path=None):
-    provider = get_provider(provider_type)
+    provider, provider_settings = get_provider_runtime_settings(
+        provider_type,
+        connection=connection,
+        project_id=project_id,
+    )
+    if not provider["is_runnable"]:
+        raise ValueError("; ".join(provider["config_warnings"]) or "Provider configuration is invalid.")
     task_title = _task_title(connection, task_id)
-    provider_settings = _project_provider_settings(connection, project_id, provider_type)
-    claude_cli_enabled = provider_type == "claude_code" and provider_settings.get("mode") == "claude_cli"
-    codex_cli_enabled = provider_type == "openai_codex" and provider_settings.get("mode") == "codex_cli"
+    effective_mode = provider.get("effective_execution_mode") or provider["execution_mode"]
+    claude_cli_enabled = effective_mode == "claude_cli"
+    codex_cli_enabled = effective_mode == "codex_cli"
     if claude_cli_enabled:
-        provider["execution_mode"] = "claude_cli"
-        provider["status"] = "configured"
         task_prompt = _task_prompt(connection, task_id)
         extra_activity_details = _claude_cli_activity_details(project_paths, provider_settings, task_prompt)
     elif codex_cli_enabled:
-        provider["execution_mode"] = "codex_cli"
-        provider["status"] = "configured"
         task_prompt = _task_prompt(connection, task_id)
         extra_activity_details = _codex_cli_activity_details(project_paths, provider_settings, task_prompt)
     else:
@@ -396,7 +382,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
                 "execution_mode": provider["execution_mode"],
                 "lifecycle_version": provider["lifecycle_version"],
                 "lifecycle_phases": provider["lifecycle_phases"],
-                "configured_execution_mode": provider["execution_mode"],
+                "configured_execution_mode": provider["configured_execution_mode"],
             },
         )
         heartbeat(connection, session_id, 90, "{0} adapter recorded the runtime artifact".format(provider["name"]))

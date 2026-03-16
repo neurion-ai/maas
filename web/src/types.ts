@@ -327,6 +327,38 @@ export interface EscalationsResponse {
   };
 }
 
+export interface ProviderRuntimeControls {
+  cli_command?: string;
+  timeout_seconds?: number;
+  permission_mode?: string;
+  sandbox?: string;
+  model?: string;
+}
+
+export interface ProviderStatusItem {
+  id: string;
+  name: string;
+  kind: string;
+  status: string;
+  execution_mode: string;
+  configured_execution_mode: string;
+  effective_execution_mode?: string | null;
+  supports_worker_execution: boolean;
+  supports_live_api: boolean;
+  default_artifact_type: string;
+  lifecycle_version: string;
+  lifecycle_phases: string[];
+  available_execution_modes?: string[];
+  runtime_controls?: ProviderRuntimeControls;
+  config_warnings?: string[];
+  is_runnable?: boolean;
+  notes: string;
+}
+
+export interface ProvidersResponse {
+  providers: ProviderStatusItem[];
+}
+
 export interface LiveSnapshot {
   generated_at: string;
   counts: {

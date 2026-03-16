@@ -930,7 +930,7 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             alerts_payload = client.get("/api/alerts").json()
             alerts_by_id = {alert["alert_id"]: alert for alert in alerts_payload["alerts"]}
             provider_pending = [
-                alert for alert in alerts_payload["alerts"] if alert["title"] == "Live provider integrations pending"
+                alert for alert in alerts_payload["alerts"] if alert["title"] == "Broader provider integrations pending"
             ][0]
 
             self.assertNotIn("operator_action", provider_pending)

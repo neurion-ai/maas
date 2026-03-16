@@ -229,6 +229,9 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                 repeated_failure_task_id = connection.execute(
                     "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
                 ).fetchone()["task_id"]
+                stale_agent_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
                 connection.execute(
                     """
                     UPDATE tasks
@@ -236,6 +239,13 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     WHERE task_id = ?
                     """,
                     (task_failure_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'error', current_task_id = NULL
+                    WHERE agent_id = 'agent_reviewer'
+                    """
                 )
                 connection.execute(
                     """
@@ -261,7 +271,8 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                         alert_id, project_id, severity, title, description, status
                     ) VALUES
                         ('alert_recovery_task_failure', ?, 'warning', 'Task session failed', ?, 'open'),
-                        ('alert_recovery_repeated_failure', ?, 'critical', 'Repeated task failures', ?, 'open')
+                        ('alert_recovery_repeated_failure', ?, 'critical', 'Repeated task failures', ?, 'open'),
+                        ('alert_recovery_stale_agent', ?, 'warning', 'Stale agent heartbeat', ?, 'open')
                     """,
                     (
                         project_id,
@@ -270,6 +281,8 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                         "Task {0} (Define project workspace contracts) has failed 3 times. Latest failure: Repeated failure 3".format(
                             repeated_failure_task_id
                         ),
+                        project_id,
+                        "Agent agent_reviewer stopped heartbeating for task {0}.".format(stale_agent_task_id),
                     ),
                 )
                 connection.commit()
@@ -281,6 +294,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
 
             self.assertEqual(payload["summary"]["open_failure_alerts"], 1)
             self.assertEqual(payload["summary"]["open_repeated_failure_alerts"], 1)
+            self.assertEqual(payload["summary"]["open_stale_agent_alerts"], 1)
             self.assertEqual(
                 payload["open_failure_alerts"][0]["operator_action"],
                 {
@@ -297,6 +311,16 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     "label": "Resolve repeated failures",
                     "resource_type": "task",
                     "resource_id": repeated_failure_task_id,
+                },
+            )
+            self.assertEqual(
+                payload["open_stale_agent_alerts"][0]["operator_action"],
+                {
+                    "action": "recover_agent",
+                    "label": "Recover agent",
+                    "resource_type": "agent",
+                    "resource_id": "agent_reviewer",
+                    "related_task_id": stale_agent_task_id,
                 },
             )
 

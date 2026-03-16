@@ -165,6 +165,16 @@ def _recovery_summary(connection, project_id):
         """,
         (project_id,),
     ).fetchone()[0]
+    open_stale_agent_alerts = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM alerts
+        WHERE project_id = ?
+          AND status = 'open'
+          AND title = 'Stale agent heartbeat'
+        """,
+        (project_id,),
+    ).fetchone()[0]
     tasks_with_retry_overrides = connection.execute(
         """
         SELECT COUNT(*)
@@ -183,6 +193,7 @@ def _recovery_summary(connection, project_id):
         "open_quarantine_entries": open_quarantine_entries or 0,
         "open_failure_alerts": open_failure_alerts or 0,
         "open_repeated_failure_alerts": open_repeated_failure_alerts or 0,
+        "open_stale_agent_alerts": open_stale_agent_alerts or 0,
     }
 
 
@@ -284,6 +295,29 @@ def _recovery_open_failure_alerts(connection, project_id, limit=8):
     return alerts
 
 
+def _recovery_stale_agent_alerts(connection, project_id, limit=8):
+    rows = connection.execute(
+        """
+        SELECT alert_id, project_id, severity, title, description, status, created_at
+        FROM alerts
+        WHERE project_id = ?
+          AND status = 'open'
+          AND title = 'Stale agent heartbeat'
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    alerts = []
+    for row in rows:
+        alert = dict(row)
+        operator_action = infer_operator_action(connection, alert["title"], alert["description"])
+        if operator_action is not None:
+            alert["operator_action"] = operator_action
+        alerts.append(alert)
+    return alerts
+
+
 def _recovery_repeated_failure_incidents(connection, project_id, limit=8):
     return fetch_repeated_failure_tasks(connection, limit=limit, project_id=project_id, actionable_only=True)
 
@@ -342,6 +376,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
         ),
         "open_quarantine_entries": _recovery_quarantine_entries(connection, project_id),
         "open_failure_alerts": _recovery_open_failure_alerts(connection, project_id),
+        "open_stale_agent_alerts": _recovery_stale_agent_alerts(connection, project_id),
         "repeated_failure_incidents": _recovery_repeated_failure_incidents(connection, project_id),
     }
 

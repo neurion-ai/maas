@@ -368,7 +368,8 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     tasks_with_retry_overrides: 0,
     open_quarantine_entries: 0,
     open_failure_alerts: 0,
-    open_repeated_failure_alerts: 0
+    open_repeated_failure_alerts: 0,
+    open_stale_agent_alerts: 0
   },
   backoff_preview: {
     timed_out_retry_delays: [{ attempt: 1, delay_seconds: 60 }],
@@ -385,6 +386,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   active_retry_backoff: [],
   open_quarantine_entries: [],
   open_failure_alerts: [],
+  open_stale_agent_alerts: [],
   repeated_failure_incidents: []
 };
 

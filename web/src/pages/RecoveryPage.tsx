@@ -582,6 +582,7 @@ export function RecoveryPage() {
         <StatCard label="Recoverable blocked" value={recovery?.summary.recoverable_blocked_tasks ?? 0} tone="warn" />
         <StatCard label="Open failure alerts" value={recovery?.summary.open_failure_alerts ?? 0} tone="warn" />
         <StatCard label="Repeated incidents" value={recovery?.summary.open_repeated_failure_alerts ?? 0} tone="warn" />
+        <StatCard label="Agent incidents" value={recovery?.summary.open_stale_agent_alerts ?? 0} tone="warn" />
         <StatCard label="Quarantine open" value={recovery?.summary.open_quarantine_entries ?? 0} />
       </section>
 
@@ -856,6 +857,31 @@ export function RecoveryPage() {
                 <div>
                   <strong>No open failure alerts</strong>
                   <p>No task-failure alerts are currently waiting for operator action.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Stale agent incidents</h2>
+              <p>Agent recovery incidents that are still open and can be resolved directly from the recovery workbench.</p>
+            </div>
+          </header>
+          {(recovery?.open_stale_agent_alerts ?? []).length ? (
+            <RecoveryAlertList
+              alerts={recovery?.open_stale_agent_alerts ?? []}
+              pendingAlertActionId={pendingAlertActionId}
+              onRunAction={(alertId) => void handleOpenFailureAlertAction(alertId)}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No stale agent incidents</strong>
+                  <p>No open stale-agent heartbeat alerts are currently waiting for operator action.</p>
                 </div>
               </div>
             </div>

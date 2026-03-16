@@ -284,9 +284,8 @@ def _recovery_open_failure_alerts(connection, project_id, limit=8):
     return alerts
 
 
-def _recovery_repeated_failure_incidents(connection, limit=8):
-    incidents = fetch_repeated_failure_tasks(connection, limit=limit)
-    return [incident for incident in incidents if incident.get("operator_action")]
+def _recovery_repeated_failure_incidents(connection, project_id, limit=8):
+    return fetch_repeated_failure_tasks(connection, limit=limit, project_id=project_id, actionable_only=True)
 
 
 def fetch_project_recovery_overview(connection, project_id=None):
@@ -343,7 +342,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
         ),
         "open_quarantine_entries": _recovery_quarantine_entries(connection, project_id),
         "open_failure_alerts": _recovery_open_failure_alerts(connection, project_id),
-        "repeated_failure_incidents": _recovery_repeated_failure_incidents(connection),
+        "repeated_failure_incidents": _recovery_repeated_failure_incidents(connection, project_id),
     }
 
 

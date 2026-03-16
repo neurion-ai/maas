@@ -493,15 +493,18 @@ def failure_attempt_count(connection, task_id):
     return _failure_count_for_task(connection, task_id)
 
 
-def _open_repeated_failure_alert_task_ids(connection):
-    rows = connection.execute(
-        """
+def _open_repeated_failure_alert_task_ids(connection, project_id=None):
+    query = """
         SELECT description
         FROM alerts
         WHERE status IN ('open', 'acknowledged')
           AND title = 'Repeated task failures'
-        """
-    ).fetchall()
+    """
+    params = []
+    if project_id is not None:
+        query += "\n  AND project_id = ?"
+        params.append(project_id)
+    rows = connection.execute(query, tuple(params)).fetchall()
 
     task_ids = set()
     for row in rows:
@@ -511,8 +514,16 @@ def _open_repeated_failure_alert_task_ids(connection):
     return task_ids
 
 
-def fetch_repeated_failure_tasks(connection, limit=None):
+def fetch_repeated_failure_tasks(connection, limit=None, project_id=None, actionable_only=False):
     clause, params = _repeated_failure_clause()
+    where_parts = [
+        "failure_log.task_id IS NOT NULL",
+        clause,
+    ]
+    query_params = list(params)
+    if project_id is not None:
+        where_parts.insert(1, "failure_log.project_id = ?")
+        query_params.insert(0, project_id)
     query = """
         SELECT
             failure_log.task_id,
@@ -521,19 +532,15 @@ def fetch_repeated_failure_tasks(connection, limit=None):
             MAX(failure_log.created_at) AS latest_failure_at
         FROM failure_log
         LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
-        WHERE failure_log.task_id IS NOT NULL
-          AND {0}
+        WHERE {0}
         GROUP BY failure_log.task_id, tasks.title
         HAVING COUNT(*) >= ?
         ORDER BY failure_count DESC, latest_failure_at DESC
-    """.format(clause)
-    query_params = params + (REPEATED_FAILURE_THRESHOLD,)
-    if limit is not None:
-        query += "\nLIMIT ?"
-        query_params += (limit,)
+    """.format(" AND ".join(where_parts))
+    query_params.append(REPEATED_FAILURE_THRESHOLD)
 
-    tasks = [dict(row) for row in connection.execute(query, query_params).fetchall()]
-    open_alert_task_ids = _open_repeated_failure_alert_task_ids(connection)
+    tasks = [dict(row) for row in connection.execute(query, tuple(query_params)).fetchall()]
+    open_alert_task_ids = _open_repeated_failure_alert_task_ids(connection, project_id=project_id)
     for task in tasks:
         if task["task_id"] in open_alert_task_ids:
             task["operator_action"] = {
@@ -542,6 +549,10 @@ def fetch_repeated_failure_tasks(connection, limit=None):
                 "resource_type": "task",
                 "resource_id": task["task_id"],
             }
+    if actionable_only:
+        tasks = [task for task in tasks if task.get("operator_action")]
+    if limit is not None:
+        return tasks[:limit]
     return tasks
 
 

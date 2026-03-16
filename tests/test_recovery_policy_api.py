@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
+from maas.services.failure_memory import fetch_repeated_failure_tasks
 from maas.services.lifecycle import end_session, produce_artifact, start_session
 
 
@@ -296,6 +297,85 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     "label": "Resolve repeated failures",
                     "resource_type": "task",
                     "resource_id": repeated_failure_task_id,
+                },
+            )
+
+    def test_fetch_repeated_failure_tasks_actionable_only_applies_limit_after_action_filter(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                high_count_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                actionable_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES
+                        ('fail_high_1', ?, ?, NULL, 'agent_allocator', 'session_failed', 'High count 1', '{}'),
+                        ('fail_high_2', ?, ?, NULL, 'agent_allocator', 'session_failed', 'High count 2', '{}'),
+                        ('fail_high_3', ?, ?, NULL, 'agent_allocator', 'session_failed', 'High count 3', '{}'),
+                        ('fail_high_4', ?, ?, NULL, 'agent_allocator', 'session_failed', 'High count 4', '{}'),
+                        ('fail_action_1', ?, ?, NULL, 'agent_allocator', 'session_failed', 'Actionable 1', '{}'),
+                        ('fail_action_2', ?, ?, NULL, 'agent_allocator', 'session_failed', 'Actionable 2', '{}'),
+                        ('fail_action_3', ?, ?, NULL, 'agent_allocator', 'session_failed', 'Actionable 3', '{}')
+                    """,
+                    (
+                        project_id,
+                        high_count_task_id,
+                        project_id,
+                        high_count_task_id,
+                        project_id,
+                        high_count_task_id,
+                        project_id,
+                        high_count_task_id,
+                        project_id,
+                        actionable_task_id,
+                        project_id,
+                        actionable_task_id,
+                        project_id,
+                        actionable_task_id,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES
+                        ('alert_actionable_repeat', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task {0} (Define project workspace contracts) has failed 3 times. Latest failure: Actionable 3".format(
+                            actionable_task_id
+                        ),
+                    ),
+                )
+                connection.commit()
+
+                tasks = fetch_repeated_failure_tasks(
+                    connection,
+                    limit=1,
+                    project_id=project_id,
+                    actionable_only=True,
+                )
+            finally:
+                connection.close()
+
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["task_id"], actionable_task_id)
+            self.assertEqual(
+                tasks[0]["operator_action"],
+                {
+                    "action": "resolve_repeated_failures",
+                    "label": "Resolve repeated failures",
+                    "resource_type": "task",
+                    "resource_id": actionable_task_id,
                 },
             )
 

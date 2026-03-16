@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 
-from maas.providers import get_provider_runtime_settings, list_provider_status
+from maas.providers import fetch_provider_runtime_overview, get_provider_runtime_settings, list_provider_status
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 
 
@@ -470,3 +470,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
 
 def list_provider_runtime_status(connection=None, project_id=None):
     return list_provider_status(connection=connection, project_id=project_id)
+
+
+def provider_runtime_overview(connection=None, project_id=None):
+    return fetch_provider_runtime_overview(connection=connection, project_id=project_id)

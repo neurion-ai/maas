@@ -346,6 +346,62 @@ def _provider_run_history(connection, project_id):
     return {"summaries": summaries, "recent_runs": recent_runs}
 
 
+def _provider_run_targets(connection, project_id, limit=5):
+    if connection is None:
+        return []
+
+    if project_id is None:
+        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+        project_id = project["project_id"] if project else None
+    if project_id is None:
+        return []
+
+    rows = connection.execute(
+        """
+        SELECT
+            tasks.project_id,
+            tasks.task_id,
+            tasks.title,
+            tasks.status,
+            tasks.priority,
+            tasks.review_state,
+            tasks.assigned_agent_id AS agent_id,
+            agents.display_name AS agent_name,
+            goals.title AS goal_title
+        FROM tasks
+        JOIN agents ON agents.agent_id = tasks.assigned_agent_id
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        WHERE tasks.project_id = ?
+          AND tasks.assigned_agent_id IS NOT NULL
+          AND tasks.status IN ('planned', 'ready', 'assigned')
+          AND (
+              tasks.next_retry_at IS NULL
+              OR datetime(tasks.next_retry_at) <= CURRENT_TIMESTAMP
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM task_capability_grants grants
+              WHERE grants.project_id = tasks.project_id
+                AND grants.task_id = tasks.task_id
+                AND grants.agent_id = tasks.assigned_agent_id
+                AND grants.capability = 'execute'
+                AND grants.revoked_at IS NULL
+          )
+        ORDER BY tasks.priority DESC, tasks.created_at ASC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def fetch_provider_runtime_overview(connection=None, project_id=None):
+    return {
+        "providers": list_provider_status(connection=connection, project_id=project_id),
+        "run_targets": _provider_run_targets(connection, project_id),
+    }
+
+
 def get_provider_status(provider_id, connection=None, project_id=None):
     provider = get_provider(provider_id)
     provider_config = _project_provider_config(connection, project_id)

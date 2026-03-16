@@ -358,6 +358,18 @@ export interface ProviderRunItem {
   ended_at?: string | null;
 }
 
+export interface ProviderRunTarget {
+  project_id: string;
+  task_id: string;
+  title: string;
+  status: "planned" | "ready" | "assigned";
+  priority: number;
+  review_state?: string | null;
+  agent_id: string;
+  agent_name?: string | null;
+  goal_title?: string | null;
+}
+
 export interface ProviderStatusItem {
   id: string;
   name: string;
@@ -382,6 +394,7 @@ export interface ProviderStatusItem {
 
 export interface ProvidersResponse {
   providers: ProviderStatusItem[];
+  run_targets: ProviderRunTarget[];
 }
 
 export interface LiveSnapshot {

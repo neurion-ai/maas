@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchProviders } from "../lib/controlRoomApi";
+import { fetchProviders, runProviderTask } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { ProviderStatusItem, ProvidersResponse } from "../types";
+import type { ProviderRunTarget, ProviderStatusItem, ProvidersResponse } from "../types";
 
 function formatRuntimeControls(provider: ProviderStatusItem) {
   const controls = provider.runtime_controls ?? {};
@@ -28,6 +28,8 @@ function formatRuntimeControls(provider: ProviderStatusItem) {
 
 export function ProvidersPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pendingRun, setPendingRun] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -51,6 +53,26 @@ export function ProvidersPage() {
   const simulatedCount = items.filter((provider) => provider.configured_execution_mode === "local_simulation").length;
   const misconfiguredCount = items.filter((provider) => provider.status === "misconfigured").length;
   const totalRuns = items.reduce((sum, provider) => sum + (provider.run_summary?.total_runs ?? 0), 0);
+  const runTargets = providers?.run_targets ?? [];
+
+  async function reloadProviders() {
+    setProviders(await fetchProviders());
+  }
+
+  async function handleRunTask(providerId: string, target: ProviderRunTarget) {
+    const actionKey = `${providerId}:${target.task_id}`;
+    setPendingRun(actionKey);
+    setNotice(null);
+    try {
+      const payload = await runProviderTask(providerId, target.project_id, target.agent_id, target.task_id);
+      await reloadProviders();
+      setNotice(`Started ${providerId} run for ${target.title}. Session ${payload.session_id} completed and recorded a provider artifact.`);
+    } catch {
+      setNotice(`Provider run failed for ${target.title}; the task remains under operator review.`);
+    } finally {
+      setPendingRun(null);
+    }
+  }
 
   return (
     <section className="control-page">
@@ -60,6 +82,7 @@ export function ProvidersPage() {
           <h1>Runtime providers and execution modes</h1>
           <p>See which adapters are simulated, which local CLI paths are enabled, and whether any provider config is blocking execution.</p>
         </div>
+        {notice ? <p className="filters-panel__notice">{notice}</p> : null}
       </header>
 
       <section className="stats-grid">
@@ -71,6 +94,47 @@ export function ProvidersPage() {
       </section>
 
       <section className="overview-grid">
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Manual provider runs</h2>
+              <p>Only tasks with an assigned agent, active execute grant, and no retry cooldown are shown here.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {runTargets.map((target) => (
+              <div key={target.task_id} className="data-list__item">
+                <div>
+                  <strong>{target.title}</strong>
+                  <p>
+                    {target.goal_title ?? "Unlinked goal"} | {target.agent_name ?? target.agent_id}
+                  </p>
+                  <p>
+                    Status: {target.status} | Priority: {target.priority}
+                    {target.review_state ? ` | ${target.review_state}` : ""}
+                  </p>
+                </div>
+                <div className="data-list__meta">
+                  {items.map((provider) => {
+                    const actionKey = `${provider.id}:${target.task_id}`;
+                    return (
+                      <button
+                        key={provider.id}
+                        type="button"
+                        className="task-action task-action--secondary"
+                        disabled={!provider.is_runnable || pendingRun === actionKey}
+                        onClick={() => void handleRunTask(provider.id, target)}
+                      >
+                        {pendingRun === actionKey ? "Running..." : `Run ${provider.name}`}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
         <article className="data-panel">
           <header className="data-panel__header">
             <div>

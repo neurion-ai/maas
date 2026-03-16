@@ -111,7 +111,7 @@ def _maybe_auto_retry_failed_task(connection, project_id, task_id, actor_id):
         "Task returned to the planning queue for automatic retry after a failed session.",
         detail,
     )
-    refresh_ready_tasks(connection)
+    refresh_ready_tasks(connection, commit=False)
     refreshed_task = connection.execute(
         """
         SELECT status, review_state, next_retry_at, next_retry_reason

@@ -108,7 +108,7 @@ def resolve_ready_tasks(connection):
     return ready
 
 
-def refresh_ready_tasks(connection):
+def refresh_ready_tasks(connection, commit=True):
     task_rows = connection.execute(
         """
         SELECT task_id, status, assigned_agent_id, review_state, next_retry_at, next_retry_reason
@@ -179,7 +179,8 @@ def refresh_ready_tasks(connection):
                     "next_retry_reason": next_retry_reason,
                 }
             )
-    connection.commit()
+    if commit:
+        connection.commit()
     return changed
 
 

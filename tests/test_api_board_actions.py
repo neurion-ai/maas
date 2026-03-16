@@ -269,6 +269,76 @@ class BoardApiActionsTest(unittest.TestCase):
             )
             self.assertEqual(forbidden_response.status_code, 403)
 
+    def test_release_retry_backoff_returns_task_to_ready_when_unblocked(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Release Backoff Test", description="Release retry backoff", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'planned',
+                        review_state = 'retry_backoff',
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/tasks/{0}/actions/release-retry-backoff".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ready")
+            self.assertIsNone(payload["review_state"])
+            self.assertIsNone(payload["next_retry_at"])
+            self.assertIsNone(payload["next_retry_reason"])
+
+    def test_release_retry_backoff_respects_dependency_blockers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Release Backoff Blocked Test", description="Release retry backoff blocked", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'planned',
+                        review_state = 'retry_backoff',
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/tasks/{0}/actions/release-retry-backoff".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "blocked")
+            self.assertEqual(payload["review_state"], "blocked_by_dependency")
+            self.assertIsNone(payload["next_retry_at"])
+            self.assertIsNone(payload["next_retry_reason"])
+
     def test_recover_failed_task_returns_it_to_planned_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Recover Task Test", description="Recover failure-blocked task", project_type="custom")

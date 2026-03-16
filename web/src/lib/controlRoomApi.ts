@@ -576,6 +576,13 @@ export async function setTaskRetryLimit(taskId: string, autoRetryLimit: number |
   return payload;
 }
 
+export async function releaseTaskRetryBackoff(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/release-retry-backoff`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 

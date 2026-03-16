@@ -22,6 +22,7 @@ from maas.services.steering import (
     recover_agent,
     recover_and_requeue_task,
     recover_task,
+    release_task_retry_backoff,
     resolve_task_repeated_failures,
     set_task_retry_limit,
     restore_and_requeue_quarantine_entry,
@@ -100,6 +101,11 @@ def build_parser():
     task_retry_limit_group = task_retry_limit_parser.add_mutually_exclusive_group(required=True)
     task_retry_limit_group.add_argument("--limit", type=int)
     task_retry_limit_group.add_argument("--clear", action="store_true")
+
+    task_release_retry_backoff_parser = task_subparsers.add_parser("release-retry-backoff")
+    task_release_retry_backoff_parser.add_argument("--project-root", default=".")
+    task_release_retry_backoff_parser.add_argument("--task-id", required=True)
+    task_release_retry_backoff_parser.add_argument("--actor-id", required=True)
 
     task_allocate_parser = task_subparsers.add_parser("allocate")
     task_allocate_parser.add_argument("--project-root", default=".")
@@ -318,6 +324,8 @@ def command_task(args):
                     indent=2,
                 )
             )
+        elif args.task_command == "release-retry-backoff":
+            print(json.dumps(release_task_retry_backoff(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "allocate":
             if args.agent_id:
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))

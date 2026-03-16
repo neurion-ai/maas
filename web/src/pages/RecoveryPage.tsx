@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchRecoveryPolicy, setRecoveryPolicy, setTaskRetryLimit } from "../lib/controlRoomApi";
+import { fetchRecoveryPolicy, releaseTaskRetryBackoff, setRecoveryPolicy, setTaskRetryLimit } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { RecoveryPolicyResponse, RecoveryPolicySettings, RecoveryTaskItem } from "../types";
 
@@ -77,11 +77,13 @@ function formatRetryLimit(autoRetryLimit?: number | null) {
 function RecoveryTaskList({
   items,
   pendingTaskId,
-  onRetryLimitChange
+  onRetryLimitChange,
+  onPrimaryAction
 }: {
   items: RecoveryTaskItem[];
   pendingTaskId: string | null;
   onRetryLimitChange: (taskId: string, autoRetryLimit: number | null) => void;
+  onPrimaryAction?: (taskId: string) => void;
 }) {
   return (
     <div className="data-list">
@@ -113,6 +115,16 @@ function RecoveryTaskList({
           <div className="data-list__meta">
             <span>P{item.priority}</span>
             {item.latest_failure_at ? <span>{new Date(item.latest_failure_at).toLocaleString()}</span> : null}
+            {onPrimaryAction ? (
+              <button
+                type="button"
+                className="task-action task-action--approve"
+                disabled={pendingTaskId === item.task_id}
+                onClick={() => onPrimaryAction(item.task_id)}
+              >
+                {pendingTaskId === item.task_id ? "Releasing..." : "Release backoff"}
+              </button>
+            ) : null}
             <label className="task-inline-control">
               <span>Retry limit</span>
               <select
@@ -219,6 +231,20 @@ export function RecoveryPage() {
       );
     } catch {
       setNotice("Task retry limit update failed; keeping the current recovery snapshot under review.");
+    } finally {
+      setPendingTaskRetryLimit(null);
+    }
+  }
+
+  async function handleReleaseRetryBackoff(taskId: string) {
+    setPendingTaskRetryLimit(taskId);
+    setNotice(null);
+    try {
+      const payload = await releaseTaskRetryBackoff(taskId);
+      await reload();
+      setNotice(`Released retry backoff for ${taskId}; task is now ${payload.status}.`);
+    } catch {
+      setNotice("Retry backoff release failed; keep the current recovery snapshot under review.");
     } finally {
       setPendingTaskRetryLimit(null);
     }
@@ -425,6 +451,7 @@ export function RecoveryPage() {
               items={recovery?.active_retry_backoff ?? []}
               pendingTaskId={pendingTaskRetryLimit}
               onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleReleaseRetryBackoff(taskId)}
             />
           ) : (
             <div className="data-list">

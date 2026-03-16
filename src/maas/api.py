@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from maas.db import connect, project_paths
 from maas.paths import ProjectPaths
 from maas.services.alerts import fetch_alerts, update_alert_status
+from maas.services.artifacts import fetch_artifacts
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
@@ -295,6 +296,14 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_failure_log(connection, limit=int(limit))
+        finally:
+            connection.close()
+
+    @app.get("/api/artifacts")
+    def artifacts(limit=100):
+        connection = connect(paths)
+        try:
+            return fetch_artifacts(connection, paths, limit=int(limit))
         finally:
             connection.close()
 

@@ -106,6 +106,78 @@ def _provider_counts(connection):
     return [{"provider_type": row["provider_type"], "count": row["count"]} for row in rows]
 
 
+def _relative_workspace_path(project_paths, absolute_path):
+    return os.path.relpath(absolute_path, project_paths.root).replace("\\", "/")
+
+
+def _artifact_state_sql(project_paths):
+    artifacts_prefix = os.path.abspath(project_paths.artifacts_dir).replace("\\", "/") + "/%"
+    quarantine_prefix = os.path.abspath(project_paths.quarantine_dir).replace("\\", "/") + "/%"
+    relative_artifacts_prefix = _relative_workspace_path(project_paths, project_paths.artifacts_dir) + "/%"
+    relative_quarantine_prefix = _relative_workspace_path(project_paths, project_paths.quarantine_dir) + "/%"
+    return (
+        """
+        CASE
+            WHEN json_extract(artifacts.metadata_json, '$.quarantined') = 1 THEN 'quarantined'
+            WHEN json_extract(artifacts.metadata_json, '$.restored_from_quarantine') = 1 THEN 'restored'
+            WHEN REPLACE(artifacts.path, '\\', '/') LIKE :quarantine_prefix THEN 'quarantined'
+            WHEN REPLACE(artifacts.path, '\\', '/') LIKE :relative_quarantine_prefix THEN 'quarantined'
+            WHEN REPLACE(artifacts.path, '\\', '/') LIKE :artifacts_prefix THEN 'active'
+            WHEN REPLACE(artifacts.path, '\\', '/') LIKE :relative_artifacts_prefix THEN 'active'
+            ELSE 'external'
+        END
+        """,
+        {
+            "artifacts_prefix": artifacts_prefix,
+            "quarantine_prefix": quarantine_prefix,
+            "relative_artifacts_prefix": relative_artifacts_prefix,
+            "relative_quarantine_prefix": relative_quarantine_prefix,
+        },
+    )
+
+
+def _artifact_where_clause(project_paths, filters):
+    filters = filters or {}
+    state_sql, params = _artifact_state_sql(project_paths)
+    where = []
+
+    if filters.get("provider_type") and filters["provider_type"] != "all":
+        where.append("COALESCE(sessions.provider_type, 'unknown') = :provider_type")
+        params["provider_type"] = filters["provider_type"]
+
+    if filters.get("artifact_type") and filters["artifact_type"] != "all":
+        where.append("artifacts.artifact_type = :artifact_type")
+        params["artifact_type"] = filters["artifact_type"]
+
+    if filters.get("task_id"):
+        where.append("artifacts.task_id = :task_id")
+        params["task_id"] = filters["task_id"]
+
+    if filters.get("state") and filters["state"] != "all":
+        where.append("{0} = :state".format(state_sql))
+        params["state"] = filters["state"]
+
+    if filters.get("search"):
+        params["search"] = "%{0}%".format(filters["search"].strip().lower())
+        where.append(
+            """
+            (
+                LOWER(artifacts.artifact_id) LIKE :search
+                OR LOWER(COALESCE(artifacts.task_id, '')) LIKE :search
+                OR LOWER(COALESCE(tasks.title, '')) LIKE :search
+                OR LOWER(COALESCE(agents.display_name, '')) LIKE :search
+                OR LOWER(COALESCE(sessions.provider_type, '')) LIKE :search
+                OR LOWER(artifacts.artifact_type) LIKE :search
+                OR LOWER(REPLACE(artifacts.path, '\\', '/')) LIKE :search
+                OR LOWER(COALESCE(json_extract(artifacts.metadata_json, '$.quarantined_from_path'), '')) LIKE :search
+                OR LOWER(COALESCE(json_extract(artifacts.metadata_json, '$.quarantine_reason'), '')) LIKE :search
+            )
+            """
+        )
+
+    return where, params
+
+
 def _enrich_artifact_row(project_paths, row):
     metadata = _load_metadata(row["metadata_json"])
     absolute_path = _absolute_path(project_paths, row["path"])
@@ -179,8 +251,18 @@ def _matches_filters(item, filters):
 
 
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
-    rows = connection.execute(
-        """
+    where, params = _artifact_where_clause(project_paths, filters)
+    base_from = """
+        FROM artifacts
+        LEFT JOIN tasks ON tasks.task_id = artifacts.task_id
+        LEFT JOIN sessions ON sessions.session_id = artifacts.session_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+    """
+    where_sql = ""
+    if where:
+        where_sql = "WHERE " + " AND ".join(where)
+
+    row_query = """
         SELECT
             artifacts.artifact_id,
             artifacts.project_id,
@@ -197,24 +279,36 @@ def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None
             sessions.status AS session_status,
             sessions.agent_id,
             agents.display_name AS agent_name
-        FROM artifacts
-        LEFT JOIN tasks ON tasks.task_id = artifacts.task_id
-        LEFT JOIN sessions ON sessions.session_id = artifacts.session_id
-        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+        {base_from}
+        {where_sql}
         ORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC
-        """
-    ).fetchall()
+    """.format(base_from=base_from, where_sql=where_sql)
 
-    enriched_items = [_enrich_artifact_row(project_paths, row) for row in rows]
-    filtered_items = [item for item in enriched_items if _matches_filters(item, filters)]
-    paged_items = filtered_items[offset : offset + limit]
+    missing_only = bool((filters or {}).get("missing_only"))
+    if missing_only:
+        rows = connection.execute(row_query, params).fetchall()
+        enriched_items = [_enrich_artifact_row(project_paths, row) for row in rows]
+        filtered_items = [item for item in enriched_items if _matches_filters(item, {"missing_only": True})]
+        paged_items = filtered_items[offset : offset + limit]
+        filtered_count = len(filtered_items)
+    else:
+        count_query = "SELECT COUNT(*) AS count {0} {1}".format(base_from, where_sql)
+        filtered_count = connection.execute(count_query, params).fetchone()["count"]
+        paged_params = dict(params)
+        paged_params["limit"] = limit
+        paged_params["offset"] = offset
+        rows = connection.execute(
+            row_query + "\nLIMIT :limit OFFSET :offset",
+            paged_params,
+        ).fetchall()
+        paged_items = [_enrich_artifact_row(project_paths, row) for row in rows]
 
     return {
         "summary": _state_summary(connection, project_paths),
         "artifact_types": _type_counts(connection),
         "provider_types": _provider_counts(connection),
         "items": paged_items,
-        "filtered_count": len(filtered_items),
+        "filtered_count": filtered_count,
         "offset": offset,
         "limit": limit,
         "selected_filters": {

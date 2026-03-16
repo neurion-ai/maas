@@ -17,7 +17,7 @@ Legend for the checklist column:
 |---|---|---|
 | 1. Core kernel and scaffold | `[x]` | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
 | 2. Goal/task engine | `[ ]` | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
-| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, and concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex |
+| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus a local Codex CLI path |
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
@@ -59,6 +59,7 @@ This repository now includes:
 - [x] Escalation queue storage plus operator approve/reject flows for risky steering actions
 - [x] Failure-log storage plus read models for recent failures and repeated-failure tasks
 - [x] Concrete simulated provider adapters for Python Script, Claude Code, and OpenAI Codex
+- [x] Local OpenAI Codex CLI integration behind explicit provider config
 - [x] Lifecycle API/CLI surface
 - [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Alerts, and Escalations views
 

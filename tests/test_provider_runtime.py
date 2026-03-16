@@ -36,6 +36,23 @@ def _insert_assigned_task(connection, project_id, goal_id, agent_id, title):
 
 
 class ProviderRuntimeTest(unittest.TestCase):
+    def _enable_claude_code_cli(self, connection):
+        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        config = json.loads(project["config_json"] or "{}")
+        providers = config.setdefault("providers", {})
+        providers["claude_code"] = {
+            "mode": "claude_cli",
+            "cli_command": "claude",
+            "timeout_seconds": 120,
+            "permission_mode": "acceptEdits",
+            "model": "sonnet",
+        }
+        connection.execute(
+            "UPDATE projects SET config_json = ? WHERE project_id = ?",
+            (json.dumps(config), project["project_id"]),
+        )
+        return project["project_id"]
+
     def _enable_openai_codex_cli(self, connection):
         project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
         config = json.loads(project["config_json"] or "{}")
@@ -100,6 +117,25 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(providers["openai_codex"]["configured_execution_mode"], "codex_cli")
             self.assertEqual(providers["openai_codex"]["status"], "configured")
             self.assertTrue(providers["openai_codex"]["supports_live_api"])
+
+    def test_providers_endpoint_reflects_configured_claude_code_cli_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Claude Provider Config Test", description="Claude provider config test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._enable_claude_code_cli(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in payload["providers"]}
+
+            self.assertEqual(providers["claude_code"]["execution_mode"], "claude_cli")
+            self.assertEqual(providers["claude_code"]["configured_execution_mode"], "claude_cli")
+            self.assertEqual(providers["claude_code"]["status"], "configured")
+            self.assertTrue(providers["claude_code"]["supports_live_api"])
 
     def test_provider_run_task_executes_each_adapter_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -358,6 +394,87 @@ class ProviderRuntimeTest(unittest.TestCase):
                 all(json.loads(row["details_json"]).get("external_runtime") == "codex_cli" for row in activity_rows)
             )
 
+    def test_claude_code_cli_mode_executes_real_command_path_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Claude CLI Test", description="Claude CLI test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_claude_code_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_researcher", "Run Claude CLI adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            def write_claude_output(command, cwd, capture_output, text, timeout, check):
+                self.assertEqual(command[0:2], ["claude", "-p"])
+                self.assertIn("--permission-mode", command)
+                self.assertIn("--add-dir", command)
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = "Claude completed the task.\n"
+                completed.stderr = ""
+                return completed
+
+            with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_claude_output) as run_mock:
+                response = client.post(
+                    "/api/providers/claude_code/actions/run-task",
+                    json={
+                        "project_id": project_id,
+                        "agent_id": "agent_researcher",
+                        "task_id": task_id,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["execution"]["execution_mode"], "claude_cli")
+            self.assertEqual(payload["provider"]["status"], "configured")
+            self.assertEqual(run_mock.call_count, 1)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                artifact = connection.execute(
+                    """
+                    SELECT artifact_type, metadata_json, path
+                    FROM artifacts
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                with open(artifact["path"], "r", encoding="utf-8") as handle:
+                    artifact_content = handle.read()
+                activity_rows = connection.execute(
+                    """
+                    SELECT action, details_json
+                    FROM activity_log
+                    WHERE task_id = ? AND action IN (
+                        'provider_adapter_started',
+                        'provider_workspace_prepared',
+                        'provider_execution_progress',
+                        'provider_artifact_recorded',
+                        'provider_adapter_completed'
+                    )
+                    ORDER BY rowid ASC
+                    """,
+                    (task_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(artifact["artifact_type"], "provider_report")
+            self.assertIn("Claude completed the task.", artifact_content)
+            artifact_metadata = json.loads(artifact["metadata_json"])
+            self.assertEqual(artifact_metadata["execution_mode"], "claude_cli")
+            self.assertEqual(len(activity_rows), 5)
+            self.assertTrue(
+                all(json.loads(row["details_json"]).get("external_runtime") == "claude_cli" for row in activity_rows)
+            )
+
     def test_provider_run_task_rejects_paths_outside_workspace(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Path Test", description="Provider path test", project_type="custom")
@@ -604,6 +721,46 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertTrue(os.path.exists(artifact_full_path))
             with open(artifact_full_path, "r", encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "preexisting codex artifact")
+
+    def test_claude_code_cli_failure_preserves_preexisting_artifact(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Claude CLI Failure Test", description="Claude CLI failure test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_claude_code_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_researcher", "Run failing Claude CLI adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            artifact_name = "existing-claude-artifact.txt"
+            artifact_full_path = os.path.join(tmpdir, ".maas", "artifacts", artifact_name)
+            with open(artifact_full_path, "w", encoding="utf-8") as handle:
+                handle.write("preexisting claude artifact")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(RuntimeError):
+                    with mock.patch(
+                        "maas.services.provider_runtime.subprocess.run",
+                        return_value=mock.Mock(returncode=1, stdout="", stderr="claude exploded"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_researcher",
+                            task_id=task_id,
+                            provider_type="claude_code",
+                            artifact_path=artifact_name,
+                        )
+            finally:
+                connection.close()
+
+            self.assertTrue(os.path.exists(artifact_full_path))
+            with open(artifact_full_path, "r", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "preexisting claude artifact")
 
 if __name__ == "__main__":
     unittest.main()

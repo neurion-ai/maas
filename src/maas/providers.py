@@ -99,6 +99,11 @@ def list_provider_status(connection=None, project_id=None):
                 provider["configured_execution_mode"] = "local_simulation"
             else:
                 provider["configured_execution_mode"] = configured_mode
+            if provider["id"] == "claude_code" and configured_mode == "claude_cli":
+                provider["execution_mode"] = "claude_cli"
+                provider["status"] = "configured"
+                provider["supports_live_api"] = True
+                provider["notes"] = "Local Claude Code CLI integration enabled by project config."
             if provider["id"] == "openai_codex" and configured_mode == "codex_cli":
                 provider["execution_mode"] = "codex_cli"
                 provider["status"] = "configured"

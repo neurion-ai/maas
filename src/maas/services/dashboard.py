@@ -111,7 +111,9 @@ def fetch_overview(connection):
                 failure_log.failure_type,
                 failure_log.summary,
                 failure_log.created_at,
-                tasks.title AS task_title
+                tasks.title AS task_title,
+                tasks.status AS task_status,
+                tasks.review_state AS task_review_state
             FROM failure_log
             LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
             ORDER BY failure_log.created_at DESC

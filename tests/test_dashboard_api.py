@@ -148,6 +148,77 @@ class DashboardApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
             self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
+    def test_overview_recent_failures_include_operator_actions_for_quarantined_work(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Dashboard Failure Actions Test",
+                description="Dashboard failure actions test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting dashboard failure actions test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "dashboard-failure-actions-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("dashboard action\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Dashboard failure with actions",
+                    project_paths=result["paths"],
+                )
+                queue_id = connection.execute(
+                    "SELECT queue_id FROM quarantine_queue WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()["queue_id"]
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recent_failure = client.get("/api/overview").json()["recent_failures"][0]
+
+            self.assertEqual(
+                recent_failure["operator_action"],
+                {
+                    "action": "restore_and_requeue_quarantine_entry",
+                    "label": "Restore + requeue",
+                    "resource_type": "quarantine",
+                    "resource_id": queue_id,
+                    "related_task_id": task_id,
+                },
+            )
+            self.assertEqual(
+                recent_failure["secondary_operator_action"],
+                {
+                    "action": "dismiss_quarantine_entry",
+                    "label": "Dismiss",
+                    "resource_type": "quarantine",
+                    "resource_id": queue_id,
+                    "related_task_id": task_id,
+                },
+            )
+
     def test_agent_roster_is_enriched(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Roster Test", description="Roster test", project_type="custom")

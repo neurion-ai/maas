@@ -140,6 +140,176 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
             self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
 
+    def test_failures_api_prefers_restore_and_requeue_for_recoverable_quarantined_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Failure Operator Action Queue Test",
+                description="Failure operator action queue test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting failure operator action queue test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "failure-operator-action-queue.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("queue action\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with recoverable quarantined artifacts",
+                    project_paths=result["paths"],
+                )
+                queue_id = connection.execute(
+                    "SELECT queue_id FROM quarantine_queue WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()["queue_id"]
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recent_failure = client.get("/api/failures").json()["recent"][0]
+
+            self.assertEqual(
+                recent_failure["operator_action"],
+                {
+                    "action": "restore_and_requeue_quarantine_entry",
+                    "label": "Restore + requeue",
+                    "resource_type": "quarantine",
+                    "resource_id": queue_id,
+                    "related_task_id": task_id,
+                },
+            )
+
+    def test_failures_api_uses_recover_and_requeue_for_recoverable_nonquarantined_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Failure Operator Action Recover Test",
+                description="Failure operator action recover test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting failure operator action recover test",
+                )
+                end_session(connection, session_id, "failed", "Failure without artifacts")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recent_failure = client.get("/api/failures").json()["recent"][0]
+
+            self.assertEqual(
+                recent_failure["operator_action"],
+                {
+                    "action": "recover_and_requeue_task",
+                    "label": "Recover + requeue",
+                    "resource_type": "task",
+                    "resource_id": task_id,
+                },
+            )
+
+    def test_failures_api_uses_restore_for_open_quarantine_when_task_is_not_recoverable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Failure Operator Action Restore Test",
+                description="Failure operator action restore test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting failure operator action restore test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "failure-operator-action-restore.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("restore action\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with open quarantine but nonrecoverable task state",
+                    project_paths=result["paths"],
+                )
+                failure_id = connection.execute(
+                    "SELECT failure_id FROM failure_log WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (session_id,),
+                ).fetchone()["failure_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET review_state = 'blocked_by_dependency'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recent_failure = client.get("/api/failures").json()["recent"][0]
+
+            self.assertEqual(
+                recent_failure["operator_action"],
+                {
+                    "action": "restore_failure_artifacts",
+                    "label": "Restore artifacts",
+                    "resource_type": "failure",
+                    "resource_id": failure_id,
+                    "related_task_id": task_id,
+                },
+            )
+
     def test_failed_session_auto_retry_resolves_task_failure_alert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

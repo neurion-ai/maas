@@ -160,7 +160,16 @@ export interface FailureItem {
   detail_json?: string;
   quarantined_artifact_count?: number;
   quarantined_artifacts?: QuarantinedArtifactItem[];
+  operator_action?: FailureOperatorAction;
   created_at: string;
+}
+
+export interface FailureOperatorAction {
+  action: "recover_and_requeue_task" | "restore_failure_artifacts" | "restore_and_requeue_quarantine_entry";
+  label: string;
+  resource_type: "task" | "failure" | "quarantine";
+  resource_id: string;
+  related_task_id?: string | null;
 }
 
 export interface QuarantinedArtifactItem {

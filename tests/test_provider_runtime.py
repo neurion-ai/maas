@@ -408,6 +408,45 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertEqual(providers[provider_id]["recent_runs"][0]["task_id"], task_id)
                 self.assertEqual(providers[provider_id]["recent_runs"][0]["status"], "completed")
 
+    def test_providers_endpoint_limits_recent_runs_per_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_ids = []
+                for index in range(4):
+                    task_ids.append(
+                        _insert_assigned_task(
+                            connection,
+                            project_id,
+                            goal_id,
+                            "agent_allocator",
+                            "Run Python Script adapter {0}".format(index),
+                        )
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            for task_id in task_ids:
+                response = client.post(
+                    "/api/providers/python_script/actions/run-task",
+                    json={
+                        "project_id": project_id,
+                        "agent_id": "agent_allocator",
+                        "task_id": task_id,
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+
+            providers_payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in providers_payload["providers"]}
+            self.assertEqual(providers["python_script"]["run_summary"]["completed_runs"], 4)
+            self.assertEqual(len(providers["python_script"]["recent_runs"]), 3)
+
     def test_lifecycle_start_rejects_unknown_provider(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Validation Test", description="Provider validation test", project_type="custom")

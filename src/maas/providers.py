@@ -287,30 +287,48 @@ def _provider_run_history(connection, project_id):
     recent_rows = connection.execute(
         """
         SELECT
-            sessions.provider_type,
-            sessions.session_id,
-            sessions.task_id,
-            tasks.title AS task_title,
-            sessions.agent_id,
-            agents.display_name AS agent_name,
-            sessions.status,
-            sessions.progress_pct,
-            sessions.status_message,
-            sessions.started_at,
-            sessions.ended_at
-        FROM sessions
-        LEFT JOIN tasks ON tasks.task_id = sessions.task_id
-        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
-        WHERE sessions.project_id = ?
-        ORDER BY sessions.started_at DESC, sessions.rowid DESC
+            ranked.provider_type,
+            ranked.session_id,
+            ranked.task_id,
+            ranked.task_title,
+            ranked.agent_id,
+            ranked.agent_name,
+            ranked.status,
+            ranked.progress_pct,
+            ranked.status_message,
+            ranked.started_at,
+            ranked.ended_at
+        FROM (
+            SELECT
+                sessions.provider_type,
+                sessions.session_id,
+                sessions.task_id,
+                tasks.title AS task_title,
+                sessions.agent_id,
+                agents.display_name AS agent_name,
+                sessions.status,
+                sessions.progress_pct,
+                sessions.status_message,
+                sessions.started_at,
+                sessions.ended_at,
+                sessions.rowid AS session_rowid,
+                ROW_NUMBER() OVER (
+                    PARTITION BY sessions.provider_type
+                    ORDER BY sessions.started_at DESC, sessions.rowid DESC
+                ) AS provider_rank
+            FROM sessions
+            LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+            LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+            WHERE sessions.project_id = ?
+        ) AS ranked
+        WHERE ranked.provider_rank <= 3
+        ORDER BY ranked.provider_type ASC, ranked.started_at DESC, ranked.session_rowid DESC
         """,
         (project_id,),
     ).fetchall()
     recent_runs = {}
     for row in recent_rows:
         entries = recent_runs.setdefault(row["provider_type"], [])
-        if len(entries) >= 3:
-            continue
         entries.append(
             {
                 "session_id": row["session_id"],

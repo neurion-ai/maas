@@ -75,13 +75,9 @@ export function ArtifactsPage() {
   useEffect(() => {
     const controller = new AbortController();
     void loadArtifacts(controller.signal);
-    const intervalId = window.setInterval(() => {
-      void loadArtifacts(controller.signal);
-    }, 15000);
 
     return () => {
       controller.abort();
-      window.clearInterval(intervalId);
     };
   }, []);
 

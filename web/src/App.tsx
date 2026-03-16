@@ -7,6 +7,7 @@ import { BoardPage } from "./pages/BoardPage";
 import { EscalationsPage } from "./pages/EscalationsPage";
 import { FailuresPage } from "./pages/FailuresPage";
 import { GoalTreePage } from "./pages/GoalTreePage";
+import { LivePulseProvider, useLiveStatus } from "./lib/useLivePulse";
 import { OverviewPage } from "./pages/OverviewPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 
@@ -40,8 +41,9 @@ function getInitialView(): View {
   return (VIEWS.find((view) => view.id === hash)?.id ?? "overview") as View;
 }
 
-export default function App() {
+function AppShell() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
+  const { connected, transport } = useLiveStatus();
 
   useEffect(() => {
     window.location.hash = activeView;
@@ -59,12 +61,29 @@ export default function App() {
     };
   }, []);
 
+  const liveTransportLabel =
+    transport === "websocket"
+      ? connected
+        ? "Live via WebSocket"
+        : "Connecting WebSocket"
+      : transport === "sse"
+        ? connected
+          ? "Live via SSE"
+          : "Connecting SSE"
+        : "Polling fallback";
+
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div>
-          <span className="eyebrow">MAAS</span>
-          <h1>Multi-agent control room</h1>
+        <div className="app-header__top">
+          <div>
+            <span className="eyebrow">MAAS</span>
+            <h1>Multi-agent control room</h1>
+          </div>
+          <div className="status-chip">
+            <span className={`status-chip__dot ${connected ? "is-live" : transport === "polling" ? "is-warn" : ""}`} />
+            {liveTransportLabel}
+          </div>
         </div>
         <nav className="app-nav" aria-label="MAAS views">
           {VIEWS.map((view) => (
@@ -93,5 +112,13 @@ export default function App() {
         {activeView === "escalations" ? <EscalationsPage /> : null}
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <LivePulseProvider>
+      <AppShell />
+    </LivePulseProvider>
   );
 }

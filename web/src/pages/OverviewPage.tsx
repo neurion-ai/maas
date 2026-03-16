@@ -24,13 +24,9 @@ export function OverviewPage() {
     }
 
     void loadOverview();
-    const timer = window.setInterval(() => {
-      void loadOverview();
-    }, 15000);
 
     return () => {
       mounted = false;
-      window.clearInterval(timer);
     };
   }, [livePulse]);
 

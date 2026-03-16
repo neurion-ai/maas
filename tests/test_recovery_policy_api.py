@@ -133,6 +133,18 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                 json={
                     "actor_id": "agent_allocator",
                     "policy": {
+                        "max_timed_out_retries": 1.9,
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("max_timed_out_retries", response.json()["detail"])
+
+            response = client.post(
+                "/api/recovery-policy/actions/set",
+                json={
+                    "actor_id": "agent_allocator",
+                    "policy": {
                         "auto_retry_timeout_sessions": "sometimes",
                     },
                 },

@@ -73,10 +73,19 @@ def _coerce_bool_setting(field_name, value):
 
 
 def _coerce_int_setting(field_name, value, minimum):
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         raise ValueError("{0} must be an integer.".format(field_name))
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError("{0} must be an integer.".format(field_name))
+        parsed = int(value)
+    else:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("{0} must be an integer.".format(field_name))
     if parsed < minimum:
         raise ValueError("{0} must be greater than or equal to {1}.".format(field_name, minimum))
     return parsed

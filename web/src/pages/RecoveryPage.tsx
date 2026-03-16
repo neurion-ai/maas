@@ -134,7 +134,6 @@ export function RecoveryPage() {
       return;
     }
     const defaultsDraft = buildDefaultsDraft(recovery.defaults);
-    setDraft(defaultsDraft);
     await handleSave(defaultsDraft);
   }
 

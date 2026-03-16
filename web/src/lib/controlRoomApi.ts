@@ -5,6 +5,7 @@ import type {
   AlertsResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
+  FailureOperatorAction,
   FailuresResponse,
   GoalTreeResponse,
   LiveSnapshot,
@@ -388,6 +389,13 @@ export async function dismissQuarantineEntry(queueId: string) {
   return payload as DismissQuarantineEntryResponse;
 }
 
+export async function recoverAndRequeueTask(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/recover-and-requeue`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
 export function fetchLiveSnapshot() {
   return fetchJson<LiveSnapshot>("/api/live", LIVE_FALLBACK);
 }
@@ -468,6 +476,18 @@ export async function runAlertOperatorAction(operatorAction: AlertOperatorAction
     return;
   }
   await postJson(`/api/agents/${operatorAction.resource_id}/actions/recover`, { actor_id: "agent_allocator" });
+}
+
+export async function runFailureOperatorAction(operatorAction: FailureOperatorAction) {
+  if (operatorAction.action === "restore_and_requeue_quarantine_entry") {
+    await restoreAndRequeueQuarantineEntry(operatorAction.resource_id);
+    return;
+  }
+  if (operatorAction.action === "restore_failure_artifacts") {
+    await restoreFailureArtifacts(operatorAction.resource_id);
+    return;
+  }
+  await recoverAndRequeueTask(operatorAction.resource_id);
 }
 
 export async function updateEscalationStatus(escalationId: string, action: "approve" | "reject", resolutionNote = "") {

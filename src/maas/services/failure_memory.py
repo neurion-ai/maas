@@ -10,6 +10,7 @@ from maas.ids import generate_id
 
 REPEATED_FAILURE_THRESHOLD = 2
 REPEATED_FAILURE_TYPES = ("session_failed", "session_timed_out", "capability_denied")
+RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
 
 
 def record_failure(connection, project_id, failure_type, summary, task_id=None, session_id=None, agent_id=None, details=None):
@@ -649,15 +650,91 @@ def _quarantined_artifacts_by_session(connection, session_ids):
     return artifacts_by_session
 
 
+def _quarantine_queue_entries_by_session(connection, session_ids):
+    if not session_ids:
+        return {}
+
+    placeholders = ", ".join(["?"] * len(session_ids))
+    rows = connection.execute(
+        """
+        SELECT session_id, queue_id, status
+        FROM quarantine_queue
+        WHERE session_id IN ({0})
+        ORDER BY
+            CASE status
+                WHEN 'open' THEN 0
+                WHEN 'dismissed' THEN 1
+                ELSE 2
+            END,
+            created_at DESC
+        """.format(placeholders),
+        tuple(session_ids),
+    ).fetchall()
+
+    queue_entries = {}
+    for row in rows:
+        queue_entries.setdefault(row["session_id"], dict(row))
+    return queue_entries
+
+
+def _failure_has_recoverable_task(failure):
+    return failure.get("task_status") == "blocked" and failure.get("task_review_state") in RECOVERABLE_FAILURE_REVIEW_STATES
+
+
+def _infer_failure_operator_action(failure):
+    queue_id = failure.get("quarantine_queue_id")
+    queue_status = failure.get("quarantine_queue_status")
+
+    if queue_id and queue_status == "open" and _failure_has_recoverable_task(failure):
+        return {
+            "action": "restore_and_requeue_quarantine_entry",
+            "label": "Restore + requeue",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": failure.get("task_id"),
+        }
+
+    if (
+        failure.get("failure_id")
+        and queue_status == "open"
+        and failure.get("quarantined_artifact_count", 0) > 0
+    ):
+        return {
+            "action": "restore_failure_artifacts",
+            "label": "Restore artifacts",
+            "resource_type": "failure",
+            "resource_id": failure["failure_id"],
+            "related_task_id": failure.get("task_id"),
+        }
+
+    if failure.get("task_id") and _failure_has_recoverable_task(failure):
+        return {
+            "action": "recover_and_requeue_task",
+            "label": "Recover + requeue",
+            "resource_type": "task",
+            "resource_id": failure["task_id"],
+        }
+
+    return None
+
+
 def enrich_failures_with_quarantine(connection, failures):
     session_ids = [failure["session_id"] for failure in failures if failure.get("session_id")]
     artifacts_by_session = _quarantined_artifacts_by_session(connection, session_ids)
+    queue_entries_by_session = _quarantine_queue_entries_by_session(connection, session_ids)
     enriched = []
     for failure in failures:
         quarantined_artifacts = artifacts_by_session.get(failure.get("session_id"), [])
+        queue_entry = queue_entries_by_session.get(failure.get("session_id"))
         enriched_failure = dict(failure)
         enriched_failure["quarantined_artifacts"] = quarantined_artifacts
         enriched_failure["quarantined_artifact_count"] = len(quarantined_artifacts)
+        if queue_entry is not None:
+            enriched_failure["quarantine_queue_id"] = queue_entry["queue_id"]
+            enriched_failure["quarantine_queue_status"] = queue_entry["status"]
+        operator_action = _infer_failure_operator_action(enriched_failure)
+        if operator_action is not None:
+            enriched_failure["operator_action"] = operator_action
         enriched.append(enriched_failure)
     return enriched
 
@@ -741,6 +818,8 @@ def fetch_failure_log(connection, limit=20):
             failure_log.detail_json,
             failure_log.created_at,
             tasks.title AS task_title,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
             tasks.retry_count,
             tasks.last_retry_at,
             tasks.last_retry_reason,

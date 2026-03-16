@@ -3,6 +3,7 @@ import {
   dismissQuarantineEntry,
   fetchFailures,
   fetchQuarantineQueue,
+  runFailureOperatorAction,
   restoreAndRequeueQuarantineEntry,
   restoreQuarantineEntry
 } from "../lib/controlRoomApi";
@@ -13,6 +14,7 @@ import { StatCard } from "../components/StatCard";
 export function FailuresPage() {
   const [failures, setFailures] = useState<FailuresResponse | null>(null);
   const [quarantineQueue, setQuarantineQueue] = useState<QuarantineQueueResponse | null>(null);
+  const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
   const [pendingQueueAction, setPendingQueueAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const livePulse = useLivePulse();
@@ -84,6 +86,31 @@ export function FailuresPage() {
     }
   }
 
+  async function handleRecentFailureAction(failureId: string) {
+    const failure = failures?.recent.find((item) => item.failure_id === failureId);
+    if (!failure?.operator_action) {
+      return;
+    }
+
+    setPendingFailureAction(`${failureId}:${failure.operator_action.action}`);
+    setNotice(null);
+    try {
+      await runFailureOperatorAction(failure.operator_action);
+      await reload();
+      if (failure.operator_action.action === "restore_and_requeue_quarantine_entry") {
+        setNotice(`Restored quarantined artifacts and returned task ${failure.operator_action.related_task_id} to the queue.`);
+      } else if (failure.operator_action.action === "restore_failure_artifacts") {
+        setNotice(`Restored quarantined artifacts for failure ${failureId}.`);
+      } else {
+        setNotice(`Recovered and requeued task ${failure.operator_action.resource_id}.`);
+      }
+    } catch {
+      setNotice("Failure action failed; keep the incident under operator review.");
+    } finally {
+      setPendingFailureAction(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -142,6 +169,22 @@ export function FailuresPage() {
                 <div className="data-list__meta">
                   <span>{item.failure_type}</span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
+                  {item.operator_action ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--approve"
+                      disabled={pendingFailureAction === `${item.failure_id}:${item.operator_action.action}`}
+                      onClick={() => item.failure_id && void handleRecentFailureAction(item.failure_id)}
+                    >
+                      {pendingFailureAction === `${item.failure_id}:${item.operator_action.action}`
+                        ? item.operator_action.action === "restore_and_requeue_quarantine_entry"
+                          ? "Restoring..."
+                          : item.operator_action.action === "restore_failure_artifacts"
+                            ? "Restoring..."
+                            : "Recovering..."
+                        : item.operator_action.label}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}

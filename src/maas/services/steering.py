@@ -329,6 +329,103 @@ def release_task_retry_backoff(connection, task_id, actor_id):
     }
 
 
+def reset_task_retry_state(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT
+            task_id,
+            project_id,
+            assigned_agent_id,
+            status,
+            review_state,
+            retry_count,
+            last_retry_at,
+            last_retry_reason,
+            next_retry_at,
+            next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "reset_task_retry_state", "task", task_id)
+    if task["status"] in ("done", "cancelled"):
+        raise ValueError("Retry state cannot be reset for tasks in status {0}".format(task["status"]))
+    has_retry_state = any(
+        (
+            task["retry_count"],
+            task["last_retry_at"],
+            task["last_retry_reason"],
+            task["next_retry_at"],
+            task["next_retry_reason"],
+            task["review_state"] == "retry_backoff",
+        )
+    )
+    if not has_retry_state:
+        raise ValueError("Task has no retry state to reset")
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET retry_count = 0,
+            last_retry_at = NULL,
+            last_retry_reason = NULL,
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    refreshed = refresh_ready_tasks(connection, commit=False)
+    task_after = connection.execute(
+        """
+        SELECT status, review_state, retry_count, last_retry_at, last_retry_reason, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "reset_task_retry_state",
+        "task",
+        task_id,
+        {
+            "previous_retry_count": task["retry_count"],
+            "previous_last_retry_at": task["last_retry_at"],
+            "previous_last_retry_reason": task["last_retry_reason"],
+            "previous_next_retry_at": task["next_retry_at"],
+            "previous_next_retry_reason": task["next_retry_reason"],
+            "previous_review_state": task["review_state"],
+            "ready_changes": refreshed,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "retry_state_reset",
+        "Task retry history and cooldown metadata reset by operator.",
+    )
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": task_after["status"],
+        "review_state": task_after["review_state"],
+        "retry_count": task_after["retry_count"],
+        "last_retry_at": task_after["last_retry_at"],
+        "last_retry_reason": task_after["last_retry_reason"],
+        "next_retry_at": task_after["next_retry_at"],
+        "next_retry_reason": task_after["next_retry_reason"],
+    }
+
+
 def recover_and_requeue_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
     refreshed_task = _recover_and_requeue_task(connection, task, actor_id)

@@ -557,6 +557,7 @@ export interface RecoveryPolicyResponse {
     recover_and_requeue_delays: RecoveryDelayPreviewItem[];
   };
   task_retry_overrides: RecoveryTaskItem[];
+  task_retry_history: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
 }
 

@@ -111,7 +111,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(config["providers"]["openai_codex"]["model"], "gpt-5-codex")
             self.assertEqual(config["recovery"]["retry_backoff_multiplier"], 3)
 
-    def test_recovery_policy_endpoint_includes_task_overrides_and_active_backoff_tasks(self):
+    def test_recovery_policy_endpoint_includes_task_overrides_retry_history_and_active_backoff_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
             connection = connect(project_paths(tmpdir))
@@ -151,10 +151,15 @@ class RecoveryPolicyApiTest(unittest.TestCase):
 
             self.assertEqual(payload["summary"]["tasks_with_retry_overrides"], 1)
             self.assertEqual(payload["summary"]["retry_backoff_tasks"], 1)
+            self.assertEqual(payload["summary"]["tasks_with_retry_history"], 1)
 
             override_items = {item["task_id"]: item for item in payload["task_retry_overrides"]}
             self.assertEqual(override_items[override_task_id]["auto_retry_limit"], 5)
             self.assertEqual(override_items[override_task_id]["title"], "Wire the scheduler and board read model")
+
+            retry_history_items = {item["task_id"]: item for item in payload["task_retry_history"]}
+            self.assertEqual(retry_history_items[backoff_task_id]["retry_count"], 1)
+            self.assertEqual(retry_history_items[backoff_task_id]["last_retry_reason"], None)
 
             backoff_items = {item["task_id"]: item for item in payload["active_retry_backoff"]}
             self.assertEqual(backoff_items[backoff_task_id]["review_state"], "retry_backoff")
@@ -175,7 +180,8 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     """
                     UPDATE tasks
                     SET status = 'done',
-                        auto_retry_limit = 4
+                        auto_retry_limit = 4,
+                        retry_count = 2
                     WHERE task_id = ?
                     """,
                     (done_task_id,),
@@ -185,6 +191,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     UPDATE tasks
                     SET status = 'cancelled',
                         auto_retry_limit = 2,
+                        retry_count = 1,
                         next_retry_at = '2099-01-01 00:00:00',
                         next_retry_reason = 'session_failed'
                     WHERE task_id = ?
@@ -199,10 +206,14 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             payload = client.get("/api/recovery-policy").json()
 
             self.assertEqual(payload["summary"]["tasks_with_retry_overrides"], 0)
+            self.assertEqual(payload["summary"]["tasks_with_retry_history"], 0)
             override_task_ids = {item["task_id"] for item in payload["task_retry_overrides"]}
+            retry_history_task_ids = {item["task_id"] for item in payload["task_retry_history"]}
             backoff_task_ids = {item["task_id"] for item in payload["active_retry_backoff"]}
             self.assertNotIn(done_task_id, override_task_ids)
             self.assertNotIn(cancelled_task_id, override_task_ids)
+            self.assertNotIn(done_task_id, retry_history_task_ids)
+            self.assertNotIn(cancelled_task_id, retry_history_task_ids)
             self.assertNotIn(done_task_id, backoff_task_ids)
             self.assertNotIn(cancelled_task_id, backoff_task_ids)
 

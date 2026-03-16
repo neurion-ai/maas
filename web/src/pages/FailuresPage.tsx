@@ -116,6 +116,8 @@ export function FailuresPage() {
       await reload();
       if (failure.operator_action.action === "restore_and_requeue_quarantine_entry") {
         setNotice(`Restored quarantined artifacts and returned task ${failure.operator_action.related_task_id} to the queue.`);
+      } else if (failure.operator_action.action === "reopen_quarantine_entry") {
+        setNotice(`Reopened dismissed quarantine entry for failure ${failureId}.`);
       } else if (failure.operator_action.action === "restore_failure_artifacts") {
         setNotice(`Restored quarantined artifacts for failure ${failureId}.`);
       } else {
@@ -215,6 +217,8 @@ export function FailuresPage() {
                       {pendingFailureAction === `${item.failure_id}:${item.operator_action.action}`
                         ? item.operator_action.action === "restore_and_requeue_quarantine_entry"
                           ? "Restoring..."
+                          : item.operator_action.action === "reopen_quarantine_entry"
+                            ? "Reopening..."
                           : item.operator_action.action === "restore_failure_artifacts"
                             ? "Restoring..."
                             : "Recovering..."

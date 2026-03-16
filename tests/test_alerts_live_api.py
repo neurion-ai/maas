@@ -310,6 +310,76 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                 },
             )
 
+    def test_failures_api_uses_reopen_for_dismissed_quarantine_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Failure Operator Action Reopen Test",
+                description="Failure operator action reopen test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting failure operator action reopen test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "failure-operator-action-reopen.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("reopen action\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with dismissed quarantine entry",
+                    project_paths=result["paths"],
+                )
+                queue_id = connection.execute(
+                    "SELECT queue_id FROM quarantine_queue WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()["queue_id"]
+                connection.execute(
+                    """
+                    UPDATE quarantine_queue
+                    SET status = 'dismissed', resolution_note = 'quarantine_dismissed', resolved_at = CURRENT_TIMESTAMP
+                    WHERE queue_id = ?
+                    """,
+                    (queue_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            recent_failure = client.get("/api/failures").json()["recent"][0]
+
+            self.assertEqual(
+                recent_failure["operator_action"],
+                {
+                    "action": "reopen_quarantine_entry",
+                    "label": "Reopen",
+                    "resource_type": "quarantine",
+                    "resource_id": queue_id,
+                    "related_task_id": task_id,
+                },
+            )
+
     def test_failures_api_exposes_repeated_failure_operator_action_when_alert_is_open(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(

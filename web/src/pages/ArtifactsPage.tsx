@@ -1,5 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useState } from "react";
-import { fetchArtifacts } from "../lib/controlRoomApi";
+import { fetchArtifacts, runFailureOperatorAction } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { ArtifactsResponse } from "../types";
 import { StatCard } from "../components/StatCard";
@@ -29,6 +29,7 @@ export function ArtifactsPage() {
   const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [pendingArtifactAction, setPendingArtifactAction] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const livePulse = useLivePulse();
 
@@ -81,6 +82,37 @@ export function ArtifactsPage() {
     }
     void loadArtifacts();
   }, [livePulse]);
+
+  async function handleArtifactAction(artifactId: string, actionKind: "primary" | "secondary" = "primary") {
+    const artifact = artifacts?.items.find((item) => item.artifact_id === artifactId);
+    const operatorAction =
+      actionKind === "secondary" ? artifact?.secondary_operator_action : artifact?.operator_action;
+    if (!operatorAction) {
+      return;
+    }
+
+    setPendingArtifactAction(`${artifactId}:${operatorAction.action}`);
+    setNotice(null);
+    try {
+      await runFailureOperatorAction(operatorAction);
+      await loadArtifacts();
+      if (operatorAction.action === "restore_and_requeue_quarantine_entry") {
+        setNotice(`Restored quarantined artifacts and returned task ${operatorAction.related_task_id} to the queue.`);
+      } else if (operatorAction.action === "restore_quarantine_entry") {
+        setNotice(`Restored quarantined artifacts for ${operatorAction.resource_id}.`);
+      } else if (operatorAction.action === "dismiss_quarantine_entry") {
+        setNotice(`Dismissed quarantine entry ${operatorAction.resource_id}; artifacts remain isolated.`);
+      } else if (operatorAction.action === "reopen_quarantine_entry") {
+        setNotice(`Reopened quarantine entry ${operatorAction.resource_id} for operator review.`);
+      } else {
+        setNotice(`Recovered and requeued task ${operatorAction.resource_id}.`);
+      }
+    } catch {
+      setNotice("Artifact action failed; keep the quarantine incident under operator review.");
+    } finally {
+      setPendingArtifactAction(null);
+    }
+  }
 
   const visibleItems = artifacts?.items ?? [];
   const hasPreviousPage = (artifacts?.offset ?? 0) > 0;
@@ -244,6 +276,38 @@ export function ArtifactsPage() {
                   <span>{item.artifact_type}</span>
                   <span>{item.exists ? formatBytes(item.size_bytes) : "Missing file"}</span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
+                  {item.operator_action ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--approve"
+                      disabled={pendingArtifactAction?.startsWith(`${item.artifact_id}:`) ?? false}
+                      onClick={() => void handleArtifactAction(item.artifact_id, "primary")}
+                    >
+                      {pendingArtifactAction === `${item.artifact_id}:${item.operator_action.action}`
+                        ? item.operator_action.action === "restore_and_requeue_quarantine_entry"
+                          ? "Restoring..."
+                          : item.operator_action.action === "dismiss_quarantine_entry"
+                            ? "Dismissing..."
+                            : item.operator_action.action === "reopen_quarantine_entry"
+                              ? "Reopening..."
+                              : "Restoring..."
+                        : item.operator_action.label}
+                    </button>
+                  ) : null}
+                  {item.secondary_operator_action ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingArtifactAction?.startsWith(`${item.artifact_id}:`) ?? false}
+                      onClick={() => void handleArtifactAction(item.artifact_id, "secondary")}
+                    >
+                      {pendingArtifactAction === `${item.artifact_id}:${item.secondary_operator_action.action}`
+                        ? item.secondary_operator_action.action === "dismiss_quarantine_entry"
+                          ? "Dismissing..."
+                          : item.secondary_operator_action.label
+                        : item.secondary_operator_action.label}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}

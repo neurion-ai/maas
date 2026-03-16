@@ -27,6 +27,13 @@ Legend:
 - `[x]` shipped on `main`
 - `[ ]` not fully shipped on `main`
 
+### Current project state
+
+- [x] MAAS is now a substantial single-project, greenfield, operator-supervised prototype.
+- [x] The core loop exists end to end: bootstrap, board, supervisor, provider execution, failure handling, quarantine, recovery, and artifact inspection.
+- [x] For that current prototype shape, the repo is roughly `85-90%` complete.
+- [ ] For the broader roadmap vision, the repo is still materially incomplete.
+
 ### Shipped on `main`
 
 - [x] Greenfield bootstrap with seeded goals, tasks, agents, alerts, and sessions
@@ -43,13 +50,17 @@ Legend:
 - [x] Real local OpenAI Codex CLI integration behind explicit provider config
 - [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
 - [x] Artifact browser and artifact-state visibility in the control room
+- [x] Artifact browser operator actions for restore, restore-and-requeue, dismiss, and reopen on quarantined artifacts
 - [x] Shared live transport with websocket, SSE, and polling fallback status in the control room shell
 
 ### Still to do on `main`
 
+- [ ] Smarter replanning and scheduling beyond the current ready-refresh plus heuristic allocation path
 - [ ] Broader automated restart, retry, backoff, and DLQ workflows
 - [ ] Broader external provider coverage beyond the current local CLI paths
+- [ ] Richer artifact inspection and drill-down beyond the current browser and row-level actions
 - [ ] Brownfield onboarding and multi-project support
+- [ ] Stronger sandboxing and isolation guarantees
 
 ## Quick Start
 

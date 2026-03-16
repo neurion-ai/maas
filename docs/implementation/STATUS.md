@@ -10,7 +10,11 @@
 
 - [x] MAAS is usable today as a greenfield local prototype with a real operator-facing control room.
 - [x] The board-first workflow, steering controls, escalation queue, and first-pass resilience foundations are in place.
+- [x] Local live-provider operation exists for Claude Code and OpenAI Codex behind explicit project configuration.
+- [x] Operators can now work incidents from multiple surfaces: Alerts, Failures, Recovery, Overview, and the Artifact browser.
+- [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
+- [ ] The broader roadmap still depends on better planning, broader providers, stronger automation, and platform expansion.
 
 ## Shipped On `main`
 
@@ -46,13 +50,14 @@
 
 - [x] Board API with server-side grouping and filters
 - [x] Overview, goal tree, agent roster, activity, alerts, escalations, failures, and live snapshot read models
-- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Artifacts, Providers, Failures, Alerts, and Escalations
+- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Artifacts, Providers, Recovery, Failures, Alerts, and Escalations
 - [x] Operator controls for review approve/reject
 - [x] Operator controls for reprioritize, reassign, pause/resume, and halt
 - [x] Operator controls for manual supervisor runs and assign-next from the roster
 - [x] Operator controls for safe manual provider runs from the Providers view
 - [x] Operator controls for switching provider execution mode from the Providers view
 - [x] Operator controls for editing provider runtime settings from the Providers view
+- [x] Operator controls for policy editing, retry override review, retry-backoff release, retry-state reset, task recovery, alert-backed recovery, quarantine actions, and artifact-level quarantine actions
 - [x] Role-baseline `board_actions` permission enforcement for steering and alert actions
 - [x] Audit logging for steering actions
 - [x] Escalation queue request, approve, and reject flows in API, CLI, and control room
@@ -72,7 +77,7 @@
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
 - [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces
-- [x] Artifact browser visibility includes artifact state, quarantine metadata, and missing-file detection
+- [x] Artifact browser visibility includes artifact state, quarantine metadata, missing-file detection, and direct quarantine actions
 - [x] First-class quarantine queue reads plus restore, dismiss, reopen, and restore+requeue actions
 - [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
 - [x] Overview and Failures surfaces expose direct operator actions for recent failures and repeated-failure tasks
@@ -106,6 +111,12 @@
 - [ ] Multi-project support
 - [ ] Plugin and domain extension architecture
 - [ ] Strong sandbox and isolation layers
+
+## Practical Summary
+
+- [x] If the goal is a single-project local MAAS workspace with a human operator in the loop, the repo now covers most of the required surfaces.
+- [x] The strongest areas today are board operations, recovery handling, failure memory, provider visibility, and control-room tooling.
+- [ ] The biggest remaining gaps are autonomous planning quality, broader provider/runtime coverage, stronger self-healing, and platform expansion beyond one greenfield project.
 
 ## Batch View
 

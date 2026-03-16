@@ -3,6 +3,8 @@
 import json
 import os
 
+RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
+
 
 def _load_metadata(value):
     try:
@@ -250,6 +252,108 @@ def _matches_filters(item, filters):
     return _matches_search(item, filters.get("search"))
 
 
+def _quarantine_queue_entries_by_session(connection, session_ids):
+    if not session_ids:
+        return {}
+
+    placeholders = ", ".join(["?"] * len(session_ids))
+    rows = connection.execute(
+        """
+        SELECT session_id, queue_id, status
+        FROM quarantine_queue
+        WHERE session_id IN ({0})
+        ORDER BY
+            CASE status
+                WHEN 'open' THEN 0
+                WHEN 'dismissed' THEN 1
+                ELSE 2
+            END,
+            created_at DESC
+        """.format(placeholders),
+        tuple(session_ids),
+    ).fetchall()
+
+    queue_entries = {}
+    for row in rows:
+        queue_entries.setdefault(row["session_id"], dict(row))
+    return queue_entries
+
+
+def _artifact_has_recoverable_task(item):
+    return item.get("task_status") == "blocked" and item.get("task_review_state") in RECOVERABLE_FAILURE_REVIEW_STATES
+
+
+def _infer_artifact_operator_action(item):
+    queue_id = item.get("quarantine_queue_id")
+    queue_status = item.get("quarantine_queue_status")
+
+    if queue_id and queue_status == "open" and item.get("artifact_state") == "quarantined" and _artifact_has_recoverable_task(item):
+        return {
+            "action": "restore_and_requeue_quarantine_entry",
+            "label": "Restore + requeue",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": item.get("task_id"),
+        }
+
+    if queue_id and queue_status == "dismissed" and item.get("artifact_state") == "quarantined":
+        return {
+            "action": "reopen_quarantine_entry",
+            "label": "Reopen",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": item.get("task_id"),
+        }
+
+    if queue_id and queue_status == "open" and item.get("artifact_state") == "quarantined":
+        return {
+            "action": "restore_quarantine_entry",
+            "label": "Restore artifacts",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": item.get("task_id"),
+        }
+
+    return None
+
+
+def _infer_artifact_secondary_operator_action(item):
+    queue_id = item.get("quarantine_queue_id")
+    queue_status = item.get("quarantine_queue_status")
+
+    if queue_id and queue_status == "open" and item.get("artifact_state") == "quarantined":
+        return {
+            "action": "dismiss_quarantine_entry",
+            "label": "Dismiss",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": item.get("task_id"),
+        }
+
+    return None
+
+
+def _attach_quarantine_actions(connection, items):
+    session_ids = [item["session_id"] for item in items if item.get("session_id")]
+    queue_entries_by_session = _quarantine_queue_entries_by_session(connection, session_ids)
+
+    enriched_items = []
+    for item in items:
+        enriched_item = dict(item)
+        queue_entry = queue_entries_by_session.get(item.get("session_id"))
+        if queue_entry is not None:
+            enriched_item["quarantine_queue_id"] = queue_entry["queue_id"]
+            enriched_item["quarantine_queue_status"] = queue_entry["status"]
+        operator_action = _infer_artifact_operator_action(enriched_item)
+        if operator_action is not None:
+            enriched_item["operator_action"] = operator_action
+        secondary_operator_action = _infer_artifact_secondary_operator_action(enriched_item)
+        if secondary_operator_action is not None:
+            enriched_item["secondary_operator_action"] = secondary_operator_action
+        enriched_items.append(enriched_item)
+    return enriched_items
+
+
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
     where, params = _artifact_where_clause(project_paths, filters)
     base_from = """
@@ -302,6 +406,8 @@ def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None
             paged_params,
         ).fetchall()
         paged_items = [_enrich_artifact_row(project_paths, row) for row in rows]
+
+    paged_items = _attach_quarantine_actions(connection, paged_items)
 
     return {
         "summary": _state_summary(connection, project_paths),

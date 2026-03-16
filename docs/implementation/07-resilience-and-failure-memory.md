@@ -22,7 +22,7 @@
 - [x] Operators can recover failure-blocked tasks
 - [x] Operators can recover-and-requeue failure-blocked tasks
 - [x] Operators can restore, dismiss, reopen, or restore-and-requeue quarantine-queue incidents
-- [x] Recent failure and overview surfaces expose direct failure operator actions for recover, restore, dismiss, reopen, and repeated-failure resolution
+- [x] Recent failure, overview, recovery, and artifact surfaces expose direct failure/quarantine operator actions for recover, restore, dismiss, reopen, and repeated-failure resolution
 - [x] Operators can recover agents left in `error`
 
 ## Still To Do On `main`
@@ -30,6 +30,7 @@
 - [ ] Broader automated restart and retry policies
 - [ ] Broader DLQ and quarantine workflows
 - [ ] Broader automated recovery orchestration
+- [ ] Broader artifact-specific remediation beyond the current restore, dismiss, reopen, and requeue flows
 
 ## Non-Goals
 

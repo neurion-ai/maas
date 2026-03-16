@@ -472,6 +472,22 @@ def failure_attempt_count(connection, task_id):
     return _failure_count_for_task(connection, task_id)
 
 
+def _repeated_failure_task_has_open_alert(connection, task_id):
+    row = connection.execute(
+        """
+        SELECT alert_id
+        FROM alerts
+        WHERE status IN ('open', 'acknowledged')
+          AND title = 'Repeated task failures'
+          AND description LIKE ?
+          ESCAPE '\\'
+        LIMIT 1
+        """,
+        (_repeated_failure_alert_like_pattern(task_id),),
+    ).fetchone()
+    return row is not None
+
+
 def fetch_repeated_failure_tasks(connection, limit=None):
     clause, params = _repeated_failure_clause()
     query = """
@@ -493,7 +509,16 @@ def fetch_repeated_failure_tasks(connection, limit=None):
         query += "\nLIMIT ?"
         query_params += (limit,)
 
-    return [dict(row) for row in connection.execute(query, query_params).fetchall()]
+    tasks = [dict(row) for row in connection.execute(query, query_params).fetchall()]
+    for task in tasks:
+        if _repeated_failure_task_has_open_alert(connection, task["task_id"]):
+            task["operator_action"] = {
+                "action": "resolve_repeated_failures",
+                "label": "Resolve repeated failures",
+                "resource_type": "task",
+                "resource_id": task["task_id"],
+            }
+    return tasks
 
 
 def repeated_failure_task_count(connection):

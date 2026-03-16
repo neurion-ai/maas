@@ -140,12 +140,36 @@ def _validate_timeout(provider_name, timeout_seconds, warnings):
     return timeout_value
 
 
+def _normalize_string_setting(provider_name, setting_name, value, warnings, required=False):
+    if value in (None, ""):
+        if required:
+            warnings.append("{0} {1} must not be empty.".format(provider_name, setting_name))
+        return ""
+    if not isinstance(value, str):
+        warnings.append("{0} {1} must be a string.".format(provider_name, setting_name))
+        return ""
+    normalized_value = value.strip()
+    if required and not normalized_value:
+        warnings.append("{0} {1} must not be empty.".format(provider_name, setting_name))
+    return normalized_value
+
+
+def _mark_provider_misconfigured(provider, rules):
+    provider["status"] = "misconfigured"
+    provider["execution_mode"] = "unavailable"
+    provider["effective_execution_mode"] = None
+    provider["supports_live_api"] = False
+    provider["notes"] = rules["notes"]["misconfigured"]
+    provider["is_runnable"] = False
+    return provider
+
+
 def _resolve_provider_status(provider, config):
     rules = PROVIDER_RUNTIME_RULES[provider["id"]]
     merged_settings = _merged_provider_settings(provider["id"], config)
-    raw_mode = (merged_settings.get("mode") or "local_simulation").strip() or "local_simulation"
-    configured_mode = "local_simulation" if raw_mode in ("simulated", "local_simulation") else raw_mode
     warnings = []
+    raw_mode = _normalize_string_setting(provider["name"], "mode", merged_settings.get("mode"), warnings) or "local_simulation"
+    configured_mode = "local_simulation" if raw_mode in ("simulated", "local_simulation") else raw_mode
 
     provider["available_execution_modes"] = list(rules["available_execution_modes"])
     provider["configured_execution_mode"] = configured_mode
@@ -153,6 +177,9 @@ def _resolve_provider_status(provider, config):
     provider["runtime_controls"] = {}
     provider["config_warnings"] = warnings
     provider["is_runnable"] = True
+
+    if warnings:
+        return _mark_provider_misconfigured(provider, rules), merged_settings
 
     if configured_mode not in rules["available_execution_modes"]:
         warnings.append(
@@ -162,20 +189,38 @@ def _resolve_provider_status(provider, config):
                 ", ".join(rules["available_execution_modes"]),
             )
         )
-        provider["status"] = "misconfigured"
-        provider["execution_mode"] = "unavailable"
-        provider["effective_execution_mode"] = None
-        provider["supports_live_api"] = False
-        provider["notes"] = rules["notes"]["misconfigured"]
-        provider["is_runnable"] = False
-        return provider, merged_settings
+        return _mark_provider_misconfigured(provider, rules), merged_settings
 
     live_mode = rules["live_mode"]
     if live_mode and configured_mode == live_mode:
         timeout_value = _validate_timeout(provider["name"], merged_settings.get("timeout_seconds"), warnings)
-        cli_command = (merged_settings.get("cli_command") or "").strip()
-        if not cli_command:
-            warnings.append("{0} cli_command must not be empty when {1} mode is enabled.".format(provider["name"], live_mode))
+        cli_command = _normalize_string_setting(
+            provider["name"],
+            "cli_command",
+            merged_settings.get("cli_command"),
+            warnings,
+            required=True,
+        )
+        merged_settings["model"] = _normalize_string_setting(
+            provider["name"],
+            "model",
+            merged_settings.get("model"),
+            warnings,
+        )
+        if "permission_mode" in rules["runtime_controls"]:
+            merged_settings["permission_mode"] = _normalize_string_setting(
+                provider["name"],
+                "permission_mode",
+                merged_settings.get("permission_mode"),
+                warnings,
+            )
+        if "sandbox" in rules["runtime_controls"]:
+            merged_settings["sandbox"] = _normalize_string_setting(
+                provider["name"],
+                "sandbox",
+                merged_settings.get("sandbox"),
+                warnings,
+            )
         merged_settings["cli_command"] = cli_command
         merged_settings["timeout_seconds"] = timeout_value
 
@@ -185,13 +230,7 @@ def _resolve_provider_status(provider, config):
             if merged_settings.get(key) not in (None, "")
         }
         if warnings:
-            provider["status"] = "misconfigured"
-            provider["execution_mode"] = "unavailable"
-            provider["effective_execution_mode"] = None
-            provider["supports_live_api"] = False
-            provider["notes"] = rules["notes"]["misconfigured"]
-            provider["is_runnable"] = False
-            return provider, merged_settings
+            return _mark_provider_misconfigured(provider, rules), merged_settings
 
         provider["execution_mode"] = live_mode
         provider["effective_execution_mode"] = live_mode

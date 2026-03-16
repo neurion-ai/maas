@@ -202,6 +202,36 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertFalse(providers["openai_codex"]["supports_live_api"])
             self.assertGreaterEqual(len(providers["openai_codex"]["config_warnings"]), 1)
 
+    def test_providers_endpoint_reports_non_string_provider_config_as_misconfigured(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._set_provider_config(
+                    connection,
+                    "claude_code",
+                    {
+                        "mode": 1,
+                        "cli_command": 123,
+                        "timeout_seconds": 120,
+                        "permission_mode": "acceptEdits",
+                        "model": "sonnet",
+                    },
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in payload["providers"]}
+
+            self.assertEqual(providers["claude_code"]["status"], "misconfigured")
+            self.assertEqual(providers["claude_code"]["execution_mode"], "unavailable")
+            self.assertIsNone(providers["claude_code"]["effective_execution_mode"])
+            self.assertFalse(providers["claude_code"]["is_runnable"])
+            self.assertIn("Claude Code mode must be a string.", providers["claude_code"]["config_warnings"])
+
     def test_provider_run_task_executes_each_adapter_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
@@ -410,6 +440,41 @@ class ProviderRuntimeTest(unittest.TestCase):
 
             self.assertEqual(response.status_code, 400)
             self.assertIn("timeout_seconds must be greater than zero", response.json()["detail"])
+
+    def test_provider_run_task_rejects_non_string_provider_settings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._set_provider_config(
+                    connection,
+                    "openai_codex",
+                    {
+                        "mode": "codex_cli",
+                        "cli_command": 123,
+                        "timeout_seconds": 120,
+                        "sandbox": "workspace-write",
+                        "model": "gpt-5-codex",
+                    },
+                )
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Run invalid OpenAI Codex adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/openai_codex/actions/run-task",
+                json={
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("cli_command must be a string", response.json()["detail"])
 
     def test_openai_codex_cli_mode_executes_real_command_path_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:

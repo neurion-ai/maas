@@ -1066,6 +1066,162 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertTrue(os.path.exists(artifact["path"]))
             self.assertFalse(os.path.exists(artifact_path))
 
+    def test_quarantine_reopen_action_returns_dismissed_entry_to_open(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Reopen API Test",
+                description="Quarantine reopen api test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine reopen api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-reopen-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("reopen queue entry\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with queue reopen coverage",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queue_entry = client.get("/api/quarantine").json()["entries"][0]
+            dismiss_response = client.post(
+                "/api/quarantine/{0}/actions/dismiss".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(dismiss_response.status_code, 200)
+
+            reopen_response = client.post(
+                "/api/quarantine/{0}/actions/reopen".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(reopen_response.status_code, 200)
+            self.assertEqual(reopen_response.json()["status"], "open")
+
+            queue_payload = client.get("/api/quarantine").json()
+            reopened_entry = [entry for entry in queue_payload["entries"] if entry["queue_id"] == queue_entry["queue_id"]][0]
+            self.assertEqual(reopened_entry["status"], "open")
+            self.assertEqual(queue_payload["summary"]["open"], 1)
+            self.assertEqual(queue_payload["summary"]["dismissed"], 0)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                artifact = connection.execute(
+                    """
+                    SELECT path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id = ?
+                    """,
+                    (artifact_id,),
+                ).fetchone()
+                queue_row = connection.execute(
+                    """
+                    SELECT status, resolution_note, resolved_at
+                    FROM quarantine_queue
+                    WHERE queue_id = ?
+                    """,
+                    (queue_entry["queue_id"],),
+                ).fetchone()
+                reopen_activity = connection.execute(
+                    """
+                    SELECT action
+                    FROM activity_log
+                    WHERE task_id = ? AND action = 'quarantine_reopened'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            metadata = json.loads(artifact["metadata_json"] or "{}")
+            self.assertTrue(metadata["quarantined"])
+            self.assertEqual(queue_row["status"], "open")
+            self.assertEqual(queue_row["resolution_note"], "")
+            self.assertIsNone(queue_row["resolved_at"])
+            self.assertEqual(reopen_activity["action"], "quarantine_reopened")
+            self.assertTrue(os.path.exists(artifact["path"]))
+            self.assertFalse(os.path.exists(artifact_path))
+
+    def test_quarantine_reopen_action_rejects_nondismissed_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Reopen Guard Test",
+                description="Quarantine reopen guard test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine reopen guard test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-reopen-guard-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("open queue entry\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with queue reopen guard coverage",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queue_entry = client.get("/api/quarantine").json()["entries"][0]
+            reopen_response = client.post(
+                "/api/quarantine/{0}/actions/reopen".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(reopen_response.status_code, 400)
+            self.assertIn("dismissed", reopen_response.json()["detail"])
+
     def test_restore_failure_artifacts_action_rejects_existing_destination(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

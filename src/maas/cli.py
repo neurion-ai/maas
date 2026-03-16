@@ -17,6 +17,7 @@ from maas.services.lifecycle import end_session, heartbeat, log_activity, produc
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import (
     dismiss_quarantine_entry,
+    reopen_quarantine_entry,
     recover_agent,
     recover_and_requeue_task,
     recover_task,
@@ -129,6 +130,11 @@ def build_parser():
     quarantine_dismiss_parser.add_argument("--project-root", default=".")
     quarantine_dismiss_parser.add_argument("--queue-id", required=True)
     quarantine_dismiss_parser.add_argument("--actor-id", required=True)
+
+    quarantine_reopen_parser = quarantine_subparsers.add_parser("reopen")
+    quarantine_reopen_parser.add_argument("--project-root", default=".")
+    quarantine_reopen_parser.add_argument("--queue-id", required=True)
+    quarantine_reopen_parser.add_argument("--actor-id", required=True)
 
     escalation_parser = subparsers.add_parser("escalation")
     escalation_subparsers = escalation_parser.add_subparsers(dest="escalation_command", required=True)
@@ -322,6 +328,8 @@ def command_quarantine(args):
             print(json.dumps(restore_and_requeue_quarantine_entry(connection, paths, args.queue_id, args.actor_id), indent=2))
         elif args.quarantine_command == "dismiss":
             print(json.dumps(dismiss_quarantine_entry(connection, args.queue_id, args.actor_id), indent=2))
+        elif args.quarantine_command == "reopen":
+            print(json.dumps(reopen_quarantine_entry(connection, args.queue_id, args.actor_id), indent=2))
     finally:
         connection.close()
 

@@ -27,6 +27,7 @@ from maas.services.steering import (
     reassign_task,
     recover_agent,
     recover_task,
+    reopen_quarantine_entry,
     restore_and_requeue_quarantine_entry,
     restore_quarantine_entry,
     restore_failure_artifacts,
@@ -346,6 +347,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return dismiss_quarantine_entry(connection, queue_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/quarantine/{queue_id}/actions/reopen")
+    def quarantine_reopen_action(queue_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return reopen_quarantine_entry(connection, queue_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

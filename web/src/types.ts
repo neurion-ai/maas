@@ -262,6 +262,13 @@ export interface DismissQuarantineEntryResponse {
   artifact_count: number;
 }
 
+export interface ReopenQuarantineEntryResponse {
+  queue_id: string;
+  session_id: string;
+  status: "open";
+  artifact_count: number;
+}
+
 export interface GoalTreeNode {
   goal_id: string;
   parent_goal_id?: string | null;

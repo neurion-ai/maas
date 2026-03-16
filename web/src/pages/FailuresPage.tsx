@@ -4,6 +4,7 @@ import {
   fetchFailures,
   fetchQuarantineQueue,
   runAlertOperatorAction,
+  reopenQuarantineEntry,
   runFailureOperatorAction,
   restoreAndRequeueQuarantineEntry,
   restoreQuarantineEntry
@@ -67,6 +68,20 @@ export function FailuresPage() {
       setNotice(`Dismissed quarantine entry ${queueId}; artifacts remain isolated.`);
     } catch {
       setNotice("Quarantine dismissal failed; leave the entry open for operator review.");
+    } finally {
+      setPendingQueueAction(null);
+    }
+  }
+
+  async function handleReopen(queueId: string) {
+    setPendingQueueAction(`reopen:${queueId}`);
+    setNotice(null);
+    try {
+      await reopenQuarantineEntry(queueId);
+      await reload();
+      setNotice(`Reopened quarantine entry ${queueId} for operator review.`);
+    } catch {
+      setNotice("Quarantine reopen failed; keep the current entry state under review.");
     } finally {
       setPendingQueueAction(null);
     }
@@ -280,6 +295,16 @@ export function FailuresPage() {
                       onClick={() => void handleDismiss(item.queue_id)}
                     >
                       {pendingQueueAction === `dismiss:${item.queue_id}` ? "Dismissing..." : "Dismiss"}
+                    </button>
+                  ) : null}
+                  {item.status === "dismissed" ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingQueueAction === `reopen:${item.queue_id}`}
+                      onClick={() => void handleReopen(item.queue_id)}
+                    >
+                      {pendingQueueAction === `reopen:${item.queue_id}` ? "Reopening..." : "Reopen"}
                     </button>
                   ) : null}
                   {item.resolved_at ? <span>{new Date(item.resolved_at).toLocaleString()}</span> : null}

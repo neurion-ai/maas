@@ -11,6 +11,7 @@
 - [x] Task-first `/api/board` response
 - [x] React board shell as the primary operator view
 - [x] Supporting reads for overview, goals, agents, activity, alerts, failures, escalations, and providers
+- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations
 - [x] Operator controls for manual supervisor runs and assign-next actions
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 

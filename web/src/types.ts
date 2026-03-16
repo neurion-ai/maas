@@ -335,6 +335,29 @@ export interface ProviderRuntimeControls {
   model?: string;
 }
 
+export interface ProviderRunSummary {
+  total_runs: number;
+  active_runs: number;
+  completed_runs: number;
+  failed_runs: number;
+  timed_out_runs: number;
+  cancelled_runs: number;
+  last_run_at?: string | null;
+}
+
+export interface ProviderRunItem {
+  session_id: string;
+  task_id?: string | null;
+  task_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+}
+
 export interface ProviderStatusItem {
   id: string;
   name: string;
@@ -352,6 +375,8 @@ export interface ProviderStatusItem {
   runtime_controls?: ProviderRuntimeControls;
   config_warnings?: string[];
   is_runnable?: boolean;
+  run_summary?: ProviderRunSummary;
+  recent_runs?: ProviderRunItem[];
   notes: string;
 }
 

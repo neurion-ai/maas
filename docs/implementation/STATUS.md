@@ -40,12 +40,13 @@
 - [x] Shared lifecycle contract for provider activity and artifact output
 - [x] Real local Claude Code CLI execution path behind explicit provider config
 - [x] Real local OpenAI Codex CLI execution path behind explicit provider config
+- [x] Provider status visibility with effective mode, runtime controls, config warnings, and recent run history
 
 ### Control room and steering
 
 - [x] Board API with server-side grouping and filters
 - [x] Overview, goal tree, agent roster, activity, alerts, escalations, failures, and live snapshot read models
-- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Alerts, and Escalations
+- [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations
 - [x] Operator controls for review approve/reject
 - [x] Operator controls for reprioritize, reassign, pause/resume, and halt
 - [x] Operator controls for manual supervisor runs and assign-next from the roster

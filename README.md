@@ -14,7 +14,7 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - operator recovery for failure-blocked tasks
 - operator recovery for error-state agents
 - concrete simulated runtime adapters for Python Script, Claude Code, and OpenAI Codex, plus optional local Claude/Codex CLI modes
-- a React control room with operator actions for supervisor runs and idle-agent assignment
+- a React control room with operator actions for supervisor runs, idle-agent assignment, and provider visibility
 - board-side operator controls for review, reprioritize, reassign, pause/resume, and halt
 - role-baseline permission enforcement for steering and alert actions
 - an escalation queue for risky steering approvals
@@ -41,6 +41,7 @@ Legend:
 - [x] Recovery for agents left in `error`
 - [x] Real local Claude Code CLI integration behind explicit provider config
 - [x] Real local OpenAI Codex CLI integration behind explicit provider config
+- [x] Provider status visibility with effective mode, runtime controls, config warnings, and recent run history
 
 ### Still to do on `main`
 
@@ -144,3 +145,4 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - `python_script` is the reference local worker adapter
 - `claude_code` supports both the simulated adapter and a real local `claude -p` path when enabled in `project.yaml`
 - `openai_codex` supports both the simulated adapter and a real local `codex exec` path when enabled in `project.yaml`
+- `/api/providers` and the Providers view expose configured mode, effective mode, config warnings, and recent provider runs

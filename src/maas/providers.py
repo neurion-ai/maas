@@ -244,6 +244,90 @@ def _resolve_provider_status(provider, config):
     return provider, merged_settings
 
 
+def _provider_run_history(connection, project_id):
+    if connection is None:
+        return {}
+
+    if project_id is None:
+        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+        project_id = project["project_id"] if project else None
+    if project_id is None:
+        return {}
+
+    summary_rows = connection.execute(
+        """
+        SELECT
+            provider_type,
+            COUNT(*) AS total_runs,
+            SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active_runs,
+            SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed_runs,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_runs,
+            SUM(CASE WHEN status = 'timed_out' THEN 1 ELSE 0 END) AS timed_out_runs,
+            SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled_runs,
+            MAX(started_at) AS last_run_at
+        FROM sessions
+        WHERE project_id = ?
+        GROUP BY provider_type
+        """,
+        (project_id,),
+    ).fetchall()
+    summaries = {
+        row["provider_type"]: {
+            "total_runs": row["total_runs"],
+            "active_runs": row["active_runs"],
+            "completed_runs": row["completed_runs"],
+            "failed_runs": row["failed_runs"],
+            "timed_out_runs": row["timed_out_runs"],
+            "cancelled_runs": row["cancelled_runs"],
+            "last_run_at": row["last_run_at"],
+        }
+        for row in summary_rows
+    }
+
+    recent_rows = connection.execute(
+        """
+        SELECT
+            sessions.provider_type,
+            sessions.session_id,
+            sessions.task_id,
+            tasks.title AS task_title,
+            sessions.agent_id,
+            agents.display_name AS agent_name,
+            sessions.status,
+            sessions.progress_pct,
+            sessions.status_message,
+            sessions.started_at,
+            sessions.ended_at
+        FROM sessions
+        LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+        WHERE sessions.project_id = ?
+        ORDER BY sessions.started_at DESC, sessions.rowid DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    recent_runs = {}
+    for row in recent_rows:
+        entries = recent_runs.setdefault(row["provider_type"], [])
+        if len(entries) >= 3:
+            continue
+        entries.append(
+            {
+                "session_id": row["session_id"],
+                "task_id": row["task_id"],
+                "task_title": row["task_title"],
+                "agent_id": row["agent_id"],
+                "agent_name": row["agent_name"],
+                "status": row["status"],
+                "progress_pct": row["progress_pct"],
+                "status_message": row["status_message"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+            }
+        )
+    return {"summaries": summaries, "recent_runs": recent_runs}
+
+
 def get_provider_status(provider_id, connection=None, project_id=None):
     provider = get_provider(provider_id)
     provider_config = _project_provider_config(connection, project_id)
@@ -260,8 +344,22 @@ def get_provider_runtime_settings(provider_id, connection=None, project_id=None)
 
 def list_provider_status(connection=None, project_id=None):
     provider_config = _project_provider_config(connection, project_id)
+    run_history = _provider_run_history(connection, project_id)
     providers = []
     for provider in list_providers():
         resolved_provider, _ = _resolve_provider_status(provider, provider_config.get(provider["id"]) or {})
+        resolved_provider["run_summary"] = run_history.get("summaries", {}).get(
+            provider["id"],
+            {
+                "total_runs": 0,
+                "active_runs": 0,
+                "completed_runs": 0,
+                "failed_runs": 0,
+                "timed_out_runs": 0,
+                "cancelled_runs": 0,
+                "last_run_at": None,
+            },
+        )
+        resolved_provider["recent_runs"] = run_history.get("recent_runs", {}).get(provider["id"], [])
         providers.append(resolved_provider)
     return providers

@@ -50,6 +50,7 @@ export function ProvidersPage() {
   const configuredLiveCount = items.filter((provider) => provider.status === "configured").length;
   const simulatedCount = items.filter((provider) => provider.configured_execution_mode === "local_simulation").length;
   const misconfiguredCount = items.filter((provider) => provider.status === "misconfigured").length;
+  const totalRuns = items.reduce((sum, provider) => sum + (provider.run_summary?.total_runs ?? 0), 0);
 
   return (
     <section className="control-page">
@@ -66,6 +67,7 @@ export function ProvidersPage() {
         <StatCard label="Live configured" value={configuredLiveCount} tone="good" />
         <StatCard label="Simulated" value={simulatedCount} />
         <StatCard label="Misconfigured" value={misconfiguredCount} tone="warn" />
+        <StatCard label="Provider runs" value={totalRuns} />
       </section>
 
       <section className="overview-grid">
@@ -88,10 +90,24 @@ export function ProvidersPage() {
                       Configured mode: {provider.configured_execution_mode} | Effective mode:{" "}
                       {provider.effective_execution_mode ?? "blocked"}
                     </p>
+                    <p>
+                      Runs: {provider.run_summary?.total_runs ?? 0} total | {provider.run_summary?.completed_runs ?? 0} completed |{" "}
+                      {provider.run_summary?.failed_runs ?? 0} failed | {provider.run_summary?.timed_out_runs ?? 0} timed out
+                    </p>
+                    {provider.run_summary?.last_run_at ? (
+                      <p>Last run: {new Date(provider.run_summary.last_run_at).toLocaleString()}</p>
+                    ) : null}
                     <p>Available modes: {(provider.available_execution_modes ?? []).join(", ") || "local_simulation"}</p>
                     {runtimeControls ? <p>{runtimeControls}</p> : null}
                     {provider.config_warnings?.map((warning) => (
                       <p key={warning}>{warning}</p>
+                    ))}
+                    {(provider.recent_runs ?? []).map((run) => (
+                      <p key={run.session_id}>
+                        Recent run: {run.task_title ?? run.task_id ?? run.session_id} | {run.status}
+                        {run.agent_name ? ` | ${run.agent_name}` : ""}
+                        {run.started_at ? ` | ${new Date(run.started_at).toLocaleString()}` : ""}
+                      </p>
                     ))}
                   </div>
                   <div className="data-list__meta">

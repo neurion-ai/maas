@@ -17,9 +17,9 @@ Legend for the checklist column:
 |---|---|---|
 | 1. Core kernel and scaffold | `[x]` | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
 | 2. Goal/task engine | `[ ]` | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
-| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus local Claude and Codex CLI paths |
+| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus local Claude and Codex CLI paths and provider runtime status/history reads |
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
-| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, roster/overview/goal tree reads |
+| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, and board/overview/goal tree/failure/provider reads |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
 | 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out session auto-retry, quarantine queue restore/dismiss workflows, repeated-failure alerts, read-model visibility, and task plus agent recovery exist; broader recovery is still pending |
 | 8. Brownfield and multi-project | `[ ]` | Still roadmap only |
@@ -61,8 +61,9 @@ This repository now includes:
 - [x] Concrete simulated provider adapters for Python Script, Claude Code, and OpenAI Codex
 - [x] Local Claude Code CLI integration behind explicit provider config
 - [x] Local OpenAI Codex CLI integration behind explicit provider config
+- [x] Provider runtime status/read-model visibility including config warnings and recent run history
 - [x] Lifecycle API/CLI surface
-- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Alerts, and Escalations views
+- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations views
 
 ## Recommended Reading Order
 

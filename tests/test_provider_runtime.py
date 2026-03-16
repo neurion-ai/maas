@@ -279,6 +279,30 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(revert_response.status_code, 200)
             self.assertEqual(revert_response.json()["configured_execution_mode"], "local_simulation")
 
+    def test_provider_mode_update_preserves_other_provider_settings(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            claude_response = client.post(
+                "/api/providers/claude_code/actions/set-mode",
+                json={"actor_id": "agent_allocator", "mode": "claude_cli"},
+            )
+            self.assertEqual(claude_response.status_code, 200)
+
+            codex_response = client.post(
+                "/api/providers/openai_codex/actions/set-mode",
+                json={"actor_id": "agent_allocator", "mode": "codex_cli"},
+            )
+            self.assertEqual(codex_response.status_code, 200)
+
+            payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in payload["providers"]}
+            self.assertEqual(providers["claude_code"]["configured_execution_mode"], "claude_cli")
+            self.assertEqual(providers["openai_codex"]["configured_execution_mode"], "codex_cli")
+            self.assertEqual(providers["claude_code"]["runtime_controls"]["cli_command"], "claude")
+            self.assertEqual(providers["openai_codex"]["runtime_controls"]["cli_command"], "codex")
+
     def test_provider_mode_endpoint_requires_board_action_permission(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")

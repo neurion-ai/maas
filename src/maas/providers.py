@@ -418,10 +418,10 @@ def update_provider_mode(connection, provider_id, actor_id, mode, project_id=Non
         )
 
     if project_id is None:
-        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
     else:
         project = connection.execute(
-            "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+            "SELECT project_id FROM projects WHERE project_id = ?",
             (project_id,),
         ).fetchone()
     if project is None:
@@ -429,24 +429,24 @@ def update_provider_mode(connection, provider_id, actor_id, mode, project_id=Non
     project_id = project["project_id"]
 
     ensure_board_action_allowed(connection, actor_id, project_id, "configure_provider", "provider", provider_id)
-
-    try:
-        config = json.loads(project["config_json"] or "{}")
-    except json.JSONDecodeError:
-        config = {}
-    providers = config.setdefault("providers", {})
-    provider_settings = deepcopy(DEFAULT_PROVIDER_SETTINGS.get(provider_id) or {})
-    provider_settings.update(providers.get(provider_id) or {})
-    provider_settings["mode"] = "simulated" if normalized_mode == "local_simulation" else normalized_mode
-    providers[provider_id] = provider_settings
+    persisted_mode = "simulated" if normalized_mode == "local_simulation" else normalized_mode
+    config_path = "$.providers.{0}.mode".format(provider_id)
 
     connection.execute(
         """
         UPDATE projects
-        SET config_json = ?, updated_at = CURRENT_TIMESTAMP
+        SET config_json = json_set(
+                CASE
+                    WHEN json_valid(config_json) THEN config_json
+                    ELSE '{}'
+                END,
+                ?,
+                ?
+            ),
+            updated_at = CURRENT_TIMESTAMP
         WHERE project_id = ?
         """,
-        (json.dumps(config), project_id),
+        (config_path, persisted_mode, project_id),
     )
     connection.execute(
         """
@@ -459,7 +459,7 @@ def update_provider_mode(connection, provider_id, actor_id, mode, project_id=Non
             project_id,
             actor_id,
             provider_id,
-            json.dumps({"mode": provider_settings["mode"]}),
+            json.dumps({"mode": persisted_mode}),
         ),
     )
     connection.commit()

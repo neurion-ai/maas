@@ -285,6 +285,14 @@ select {
   background: var(--panel-strong);
 }
 
+.filter-field input {
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel-strong);
+}
+
 .toggle-row {
   display: flex;
   align-items: end;
@@ -469,6 +477,21 @@ select {
 .goal-status--idle {
   background: rgba(15, 118, 110, 0.08);
   color: var(--accent);
+}
+
+.goal-status--quarantined {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.goal-status--restored {
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--accent);
+}
+
+.goal-status--external {
+  background: rgba(148, 163, 184, 0.16);
+  color: #475569;
 }
 
 .roster-grid {

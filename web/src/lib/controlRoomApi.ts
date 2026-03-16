@@ -3,6 +3,7 @@ import type {
   AgentRosterResponse,
   AlertOperatorAction,
   AlertsResponse,
+  ArtifactsResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
   FailureOperatorAction,
@@ -121,6 +122,20 @@ const ACTIVITY_FALLBACK: ActivityItem[] = [
     created_at: new Date().toISOString()
   }
 ];
+
+const ARTIFACTS_FALLBACK: ArtifactsResponse = {
+  summary: {
+    total_artifacts: 0,
+    active_artifacts: 0,
+    quarantined_artifacts: 0,
+    restored_artifacts: 0,
+    external_artifacts: 0,
+    missing_files: 0
+  },
+  artifact_types: [],
+  provider_types: [],
+  items: []
+};
 
 const ALERTS_FALLBACK: AlertsResponse = {
   alerts: [
@@ -310,16 +325,25 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
   run_targets: []
 };
 
-async function fetchJson<T>(path: string, fallback: T): Promise<T> {
+async function fetchJson<T>(
+  path: string,
+  fallback: T,
+  signal?: AbortSignal,
+  onFallback?: () => void
+): Promise<T> {
   try {
-    const response = await fetch(path);
+    const response = await fetch(path, { signal });
     if (!response.ok) {
       throw new Error(`Unexpected status: ${response.status}`);
     }
     const payload = (await response.json()) as T;
     lastSuccessfulResponses.set(path, payload);
     return payload;
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    onFallback?.();
     if (lastSuccessfulResponses.has(path)) {
       return lastSuccessfulResponses.get(path) as T;
     }
@@ -341,6 +365,10 @@ export function fetchAgentRoster() {
 
 export function fetchActivity() {
   return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
+}
+
+export function fetchArtifacts(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<ArtifactsResponse>("/api/artifacts", ARTIFACTS_FALLBACK, signal, onFallback);
 }
 
 export function fetchAlerts() {

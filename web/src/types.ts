@@ -134,6 +134,51 @@ export interface ActivityItem {
   task_id?: string | null;
 }
 
+export interface ArtifactFacetCount {
+  artifact_type?: string;
+  provider_type?: string;
+  count: number;
+}
+
+export interface ArtifactItem {
+  artifact_id: string;
+  project_id: string;
+  task_id?: string | null;
+  task_title?: string | null;
+  task_status?: string | null;
+  task_review_state?: string | null;
+  session_id?: string | null;
+  session_status?: string | null;
+  provider_type?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  artifact_type: string;
+  path: string;
+  display_path: string;
+  file_name: string;
+  artifact_state: "active" | "quarantined" | "restored" | "external";
+  exists: boolean;
+  size_bytes?: number | null;
+  quarantine_reason?: string | null;
+  quarantined_from_path?: string | null;
+  restored_from_quarantine?: boolean;
+  created_at: string;
+}
+
+export interface ArtifactsResponse {
+  summary: {
+    total_artifacts: number;
+    active_artifacts: number;
+    quarantined_artifacts: number;
+    restored_artifacts: number;
+    external_artifacts: number;
+    missing_files: number;
+  };
+  artifact_types: ArtifactFacetCount[];
+  provider_types: ArtifactFacetCount[];
+  items: ArtifactItem[];
+}
+
 export interface OverviewResponse {
   project: OverviewProject | null;
   summary: OverviewSummary;

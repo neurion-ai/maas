@@ -37,7 +37,7 @@ Legend:
 - [x] Failure-memory logging, quarantine visibility, repeated-failure alerts, incident-specific alert actions, and task recovery for failure-blocked work
 - [x] Manual recover-and-requeue for failure-blocked tasks
 - [x] Timed-out and failed-session auto-retry with tracked retry state
-- [x] Quarantine queue workflow with restore and dismiss actions
+- [x] Quarantine queue workflow with restore, dismiss, reopen, and restore+requeue actions
 - [x] Recovery for agents left in `error`
 - [x] Real local Claude Code CLI integration behind explicit provider config
 - [x] Real local OpenAI Codex CLI integration behind explicit provider config
@@ -136,6 +136,7 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - failed and timed-out sessions are now recorded in failure memory and can raise repeated-failure alerts
 - quarantined failure artifacts are isolated under `.maas/quarantine/` and surfaced through the failure-memory reads
 - first-class quarantine queue reads and actions now track open, restored, and dismissed artifact incidents
+- recent failure and overview surfaces expose direct operator actions for recovery, restore, dismiss, reopen, and repeated-failure resolution
 - operators can return failure-blocked tasks to the planning queue without resuming the old execution context
 - timed-out and failed sessions can auto-retry under project recovery policy with tracked retry state
 - operators can recover timeout-stranded agents from `error` back to `idle` once no active session remains

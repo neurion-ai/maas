@@ -72,8 +72,9 @@
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
 - [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces
-- [x] First-class quarantine queue reads plus restore and dismiss actions
+- [x] First-class quarantine queue reads plus restore, dismiss, reopen, and restore+requeue actions
 - [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
+- [x] Overview and Failures surfaces expose direct operator actions for recent failures and repeated-failure tasks
 - [x] Operator recovery for failure-blocked tasks
 - [x] Operator recover-and-requeue for failure-blocked tasks
 - [x] Operator recovery for agents left in `error`

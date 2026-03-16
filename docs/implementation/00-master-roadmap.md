@@ -19,9 +19,9 @@ Legend for the checklist column:
 | 2. Goal/task engine | `[ ]` | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
 | 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus local Claude and Codex CLI paths, provider runtime status/history reads, manual provider runs, provider mode switching, and editable provider settings |
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
-| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, and board/overview/goal tree/failure/provider reads |
+| 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, board/overview/goal tree/failure/provider reads, and overview/failure failure-action controls |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
-| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out and failed-session auto-retry, quarantine queue restore/dismiss workflows, repeated-failure alerts, read-model visibility, and task plus agent recovery exist; broader recovery is still pending |
+| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out and failed-session auto-retry, quarantine queue restore/dismiss/reopen workflows, repeated-failure alerts, failure-action read-model visibility, and task plus agent recovery exist; broader recovery is still pending |
 | 8. Brownfield and multi-project | `[ ]` | Still roadmap only |
 
 ## Delivery Order

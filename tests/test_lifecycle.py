@@ -307,7 +307,7 @@ class LifecycleStateTransitionTest(unittest.TestCase):
                 connection.close()
 
             self.assertEqual(task["status"], "planned")
-            self.assertEqual(task["review_state"], None)
+            self.assertEqual(task["review_state"], "retry_backoff")
             self.assertIsNone(task["assigned_agent_id"])
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "session_failed")
@@ -318,6 +318,59 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertIsNotNone(auto_retry_audit)
             self.assertEqual(json.loads(auto_retry_audit["detail_json"])["failure_type"], "session_failed")
             self.assertEqual(alert["status"], "resolved")
+
+    def test_failed_session_auto_retry_without_cooldown_returns_ready(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Failed Retry Ready Test",
+                description="Lifecycle failed retry ready test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries=1,
+                    failed_session_retry_cooldown_seconds=0,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                blocker_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Bootstrap migration runner'"
+                ).fetchone()["task_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE task_id = ?", (blocker_task_id,))
+                connection.commit()
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_researcher",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle failed retry ready test",
+                )
+
+                end_session(connection, session_id, "failed", "Retry immediately")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "ready")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
 
     def test_failed_session_stays_blocked_when_failed_retry_budget_is_exhausted(self):
         with tempfile.TemporaryDirectory() as tmpdir:

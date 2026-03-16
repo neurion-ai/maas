@@ -13,6 +13,7 @@ from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_se
 from maas.services.failure_memory import (
     failure_attempt_count,
     dismiss_quarantine_queue_entry,
+    reopen_quarantine_queue_entry,
     resolve_repeated_failure_alerts,
     restore_quarantined_session_artifacts,
 )
@@ -571,6 +572,54 @@ def dismiss_quarantine_entry(connection, queue_id, actor_id):
         "session_id": dismissed_entry["session_id"],
         "status": "dismissed",
         "artifact_count": dismissed_entry["artifact_count"],
+    }
+
+
+def reopen_quarantine_entry(connection, queue_id, actor_id):
+    queue_entry = connection.execute(
+        """
+        SELECT queue_id, project_id, task_id, session_id, status, artifact_count
+        FROM quarantine_queue
+        WHERE queue_id = ?
+        """,
+        (queue_id,),
+    ).fetchone()
+    if queue_entry is None:
+        raise ValueError("Quarantine entry not found")
+    ensure_board_action_allowed(
+        connection,
+        actor_id,
+        queue_entry["project_id"],
+        "reopen_quarantine_entry",
+        "quarantine",
+        queue_id,
+    )
+    reopened_entry = reopen_quarantine_queue_entry(connection, queue_id)
+
+    _audit(
+        connection,
+        queue_entry["project_id"],
+        actor_id,
+        "reopen_quarantine_entry",
+        "quarantine",
+        queue_id,
+        {"session_id": queue_entry["session_id"], "artifact_count": queue_entry["artifact_count"]},
+    )
+    _activity(
+        connection,
+        queue_entry["project_id"],
+        actor_id,
+        queue_entry["task_id"],
+        "quarantine_reopened",
+        "Dismissed quarantined artifacts returned to the open review queue.",
+        severity="warning",
+    )
+    connection.commit()
+    return {
+        "queue_id": queue_id,
+        "session_id": reopened_entry["session_id"],
+        "status": "open",
+        "artifact_count": reopened_entry["artifact_count"],
     }
 
 

@@ -433,6 +433,25 @@ def dismiss_quarantine_queue_entry(connection, queue_id):
     return dict(entry)
 
 
+def reopen_quarantine_queue_entry(connection, queue_id):
+    backfill_quarantine_queue(connection)
+    entry = connection.execute(
+        """
+        SELECT queue_id, project_id, session_id, task_id, failure_id, status, artifact_count
+        FROM quarantine_queue
+        WHERE queue_id = ?
+        """,
+        (queue_id,),
+    ).fetchone()
+    if entry is None:
+        raise ValueError("Quarantine entry not found")
+    if entry["status"] != "dismissed":
+        raise ValueError("Only dismissed quarantine entries can be reopened")
+
+    _set_quarantine_queue_status_for_session(connection, entry["session_id"], "open", "")
+    return dict(entry)
+
+
 def _repeated_failure_clause():
     placeholders = ", ".join(["?"] * len(REPEATED_FAILURE_TYPES))
     return "failure_type IN ({0})".format(placeholders), REPEATED_FAILURE_TYPES

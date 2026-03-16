@@ -437,6 +437,163 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertIsNotNone(queue_row["resolved_at"])
             self.assertTrue(os.path.exists(artifact_path))
 
+    def test_quarantine_restore_and_requeue_action_restores_files_and_requeues_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Restore Requeue API Test",
+                description="Quarantine restore requeue api test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine restore requeue api test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-restore-requeue-note.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("restore and requeue queue entry\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with queue restore and requeue coverage",
+                    project_paths=result["paths"],
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queue_entry = client.get("/api/quarantine").json()["entries"][0]
+            restore_response = client.post(
+                "/api/quarantine/{0}/actions/restore-and-requeue".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(restore_response.status_code, 200)
+            self.assertEqual(restore_response.json()["status"], "restored")
+            self.assertEqual(restore_response.json()["restored_count"], 1)
+            self.assertEqual(restore_response.json()["task_id"], task_id)
+            self.assertEqual(restore_response.json()["task_status"], "planned")
+            self.assertEqual(restore_response.json()["task_review_state"], "retry_backoff")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                artifact = connection.execute(
+                    """
+                    SELECT path, metadata_json
+                    FROM artifacts
+                    WHERE artifact_id = ?
+                    """,
+                    (artifact_id,),
+                ).fetchone()
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                queue_row = connection.execute(
+                    """
+                    SELECT status, resolved_at
+                    FROM quarantine_queue
+                    WHERE queue_id = ?
+                    """,
+                    (queue_entry["queue_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            metadata = json.loads(artifact["metadata_json"] or "{}")
+            self.assertEqual(artifact["path"], artifact_path)
+            self.assertTrue(metadata["restored_from_quarantine"])
+            self.assertEqual(task["status"], "planned")
+            self.assertEqual(task["review_state"], "retry_backoff")
+            self.assertIsNotNone(task["next_retry_at"])
+            self.assertEqual(task["next_retry_reason"], "recover_and_requeue")
+            self.assertEqual(queue_row["status"], "restored")
+            self.assertIsNotNone(queue_row["resolved_at"])
+            self.assertTrue(os.path.exists(artifact_path))
+
+    def test_quarantine_restore_and_requeue_action_rejects_nonrecoverable_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Quarantine Restore Requeue Guard Test",
+                description="Quarantine restore requeue guard test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting quarantine restore requeue guard test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "quarantine-restore-requeue-guard.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("guard queue entry\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Failure with queue restore and requeue guard coverage",
+                    project_paths=result["paths"],
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'ready', review_state = NULL
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queue_entry = client.get("/api/quarantine").json()["entries"][0]
+            restore_response = client.post(
+                "/api/quarantine/{0}/actions/restore-and-requeue".format(queue_entry["queue_id"]),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(restore_response.status_code, 400)
+            self.assertIn("recover", restore_response.json()["detail"])
+
     def test_restore_failure_artifacts_action_restores_quarantined_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

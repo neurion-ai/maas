@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { dismissQuarantineEntry, fetchFailures, fetchQuarantineQueue, restoreQuarantineEntry } from "../lib/controlRoomApi";
+import {
+  dismissQuarantineEntry,
+  fetchFailures,
+  fetchQuarantineQueue,
+  restoreAndRequeueQuarantineEntry,
+  restoreQuarantineEntry
+} from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { FailuresResponse, QuarantineQueueResponse } from "../types";
 import { StatCard } from "../components/StatCard";
@@ -57,6 +63,22 @@ export function FailuresPage() {
       setNotice(`Dismissed quarantine entry ${queueId}; artifacts remain isolated.`);
     } catch {
       setNotice("Quarantine dismissal failed; leave the entry open for operator review.");
+    } finally {
+      setPendingQueueAction(null);
+    }
+  }
+
+  async function handleRestoreAndRequeue(queueId: string) {
+    setPendingQueueAction(`restore-and-requeue:${queueId}`);
+    setNotice(null);
+    try {
+      const payload = await restoreAndRequeueQuarantineEntry(queueId);
+      await reload();
+      setNotice(
+        `Restored ${payload.restored_count} quarantined artifact(s) and returned task ${payload.task_id} to ${payload.task_status}.`
+      );
+    } catch {
+      setNotice("Restore and requeue failed; keep the quarantine entry under operator review.");
     } finally {
       setPendingQueueAction(null);
     }
@@ -143,6 +165,12 @@ export function FailuresPage() {
                     Status: {item.status} | Artifacts: {item.artifact_count}
                     {item.reason ? ` | Reason: ${item.reason}` : ""}
                   </p>
+                  {item.task_status ? (
+                    <p>
+                      Task: {item.task_status}
+                      {item.task_review_state ? ` | ${item.task_review_state}` : ""}
+                    </p>
+                  ) : null}
                   {item.quarantined_artifacts?.[0]?.quarantined_from_path ? (
                     <p>Original path: {item.quarantined_artifacts[0].quarantined_from_path}</p>
                   ) : null}
@@ -150,11 +178,28 @@ export function FailuresPage() {
                 <div className="data-list__meta">
                   <span>{item.failure_type ?? "quarantine"}</span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
+                  {item.status === "open" &&
+                  item.task_status === "blocked" &&
+                  (item.task_review_state === "session_failed" || item.task_review_state === "stale_session") ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingQueueAction === `restore-and-requeue:${item.queue_id}`}
+                      onClick={() => void handleRestoreAndRequeue(item.queue_id)}
+                    >
+                      {pendingQueueAction === `restore-and-requeue:${item.queue_id}`
+                        ? "Restoring..."
+                        : "Restore + requeue"}
+                    </button>
+                  ) : null}
                   {item.status === "open" ? (
                     <button
                       type="button"
                       className="task-action task-action--secondary"
-                      disabled={pendingQueueAction === `restore:${item.queue_id}`}
+                      disabled={
+                        pendingQueueAction === `restore:${item.queue_id}` ||
+                        pendingQueueAction === `restore-and-requeue:${item.queue_id}`
+                      }
                       onClick={() => void handleRestore(item.queue_id)}
                     >
                       {pendingQueueAction === `restore:${item.queue_id}` ? "Restoring..." : "Restore"}
@@ -164,7 +209,10 @@ export function FailuresPage() {
                     <button
                       type="button"
                       className="task-action"
-                      disabled={pendingQueueAction === `dismiss:${item.queue_id}`}
+                      disabled={
+                        pendingQueueAction === `dismiss:${item.queue_id}` ||
+                        pendingQueueAction === `restore-and-requeue:${item.queue_id}`
+                      }
                       onClick={() => void handleDismiss(item.queue_id)}
                     >
                       {pendingQueueAction === `dismiss:${item.queue_id}` ? "Dismissing..." : "Dismiss"}

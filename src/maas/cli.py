@@ -21,6 +21,7 @@ from maas.services.steering import (
     recover_and_requeue_task,
     recover_task,
     resolve_task_repeated_failures,
+    restore_and_requeue_quarantine_entry,
     restore_quarantine_entry,
     restore_failure_artifacts,
 )
@@ -118,6 +119,11 @@ def build_parser():
     quarantine_restore_parser.add_argument("--project-root", default=".")
     quarantine_restore_parser.add_argument("--queue-id", required=True)
     quarantine_restore_parser.add_argument("--actor-id", required=True)
+
+    quarantine_restore_and_requeue_parser = quarantine_subparsers.add_parser("restore-and-requeue")
+    quarantine_restore_and_requeue_parser.add_argument("--project-root", default=".")
+    quarantine_restore_and_requeue_parser.add_argument("--queue-id", required=True)
+    quarantine_restore_and_requeue_parser.add_argument("--actor-id", required=True)
 
     quarantine_dismiss_parser = quarantine_subparsers.add_parser("dismiss")
     quarantine_dismiss_parser.add_argument("--project-root", default=".")
@@ -312,6 +318,8 @@ def command_quarantine(args):
             print(json.dumps(fetch_quarantine_queue(connection, limit=args.limit), indent=2))
         elif args.quarantine_command == "restore":
             print(json.dumps(restore_quarantine_entry(connection, paths, args.queue_id, args.actor_id), indent=2))
+        elif args.quarantine_command == "restore-and-requeue":
+            print(json.dumps(restore_and_requeue_quarantine_entry(connection, paths, args.queue_id, args.actor_id), indent=2))
         elif args.quarantine_command == "dismiss":
             print(json.dumps(dismiss_quarantine_entry(connection, args.queue_id, args.actor_id), indent=2))
     finally:

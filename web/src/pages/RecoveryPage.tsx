@@ -218,19 +218,23 @@ function RecoveryQuarantineList({
             </div>
             <div className="data-list__meta">
               <span>{new Date(entry.created_at).toLocaleString()}</span>
+              {canRestoreAndRequeue ? (
+                <button
+                  type="button"
+                  className="task-action task-action--approve"
+                  disabled={pendingActionKey?.endsWith(`:${entry.queue_id}`) ?? false}
+                  onClick={() => onRestoreAndRequeue(entry.queue_id)}
+                >
+                  {pendingActionKey === `restore-and-requeue:${entry.queue_id}` ? "Restoring..." : "Restore + requeue"}
+                </button>
+              ) : null}
               <button
                 type="button"
-                className="task-action task-action--approve"
+                className={canRestoreAndRequeue ? "task-action task-action--secondary" : "task-action task-action--approve"}
                 disabled={pendingActionKey?.endsWith(`:${entry.queue_id}`) ?? false}
-                onClick={() => (canRestoreAndRequeue ? onRestoreAndRequeue(entry.queue_id) : onRestore(entry.queue_id))}
+                onClick={() => onRestore(entry.queue_id)}
               >
-                {pendingActionKey === `restore-and-requeue:${entry.queue_id}`
-                  ? "Restoring..."
-                  : pendingActionKey === `restore:${entry.queue_id}`
-                    ? "Restoring..."
-                    : canRestoreAndRequeue
-                      ? "Restore + requeue"
-                      : "Restore artifacts"}
+                {pendingActionKey === `restore:${entry.queue_id}` ? "Restoring..." : "Restore artifacts"}
               </button>
               <button
                 type="button"

@@ -339,6 +339,163 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertFalse(missing_payload["items"][0]["exists"])
             self.assertTrue(missing_payload["selected_filters"]["missing_only"])
 
+    def test_artifacts_api_exposes_quarantine_operator_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Action Test",
+                description="Artifacts action test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_actions", project_id, "Artifact Actions Agent"),
+                )
+
+                task_specs = (
+                    ("task_artifact_requeue", "Recoverable quarantined task"),
+                    ("task_artifact_restore", "Restore-only quarantined task"),
+                    ("task_artifact_reopen", "Dismissed quarantined task"),
+                )
+                for task_id, title in task_specs:
+                    connection.execute(
+                        """
+                        INSERT INTO tasks (
+                            task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                        ) VALUES (?, ?, ?, '', 'ready', 60, '[]')
+                        """,
+                        (task_id, project_id, title),
+                    )
+                    grant_task_capabilities(
+                        connection,
+                        project_id,
+                        task_id,
+                        "agent_artifact_actions",
+                        TASK_EXECUTION_CAPABILITIES,
+                        granted_by="test_setup",
+                    )
+
+                requeue_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_actions",
+                    task_id="task_artifact_requeue",
+                    provider_type="python_script",
+                    status_message="Starting recoverable quarantine test",
+                )
+                requeue_artifact_path = os.path.join(result["paths"].artifacts_dir, "artifact-requeue.txt")
+                with open(requeue_artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("recoverable\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=requeue_session_id,
+                    task_id="task_artifact_requeue",
+                    artifact_type="provider_report",
+                    path=requeue_artifact_path,
+                )
+                end_session(
+                    connection,
+                    requeue_session_id,
+                    "failed",
+                    "Recoverable quarantine failure",
+                    project_paths=result["paths"],
+                )
+
+                restore_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_actions",
+                    task_id="task_artifact_restore",
+                    provider_type="python_script",
+                    status_message="Starting nonrecoverable quarantine test",
+                )
+                restore_artifact_path = os.path.join(result["paths"].artifacts_dir, "artifact-restore.txt")
+                with open(restore_artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("restore-only\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=restore_session_id,
+                    task_id="task_artifact_restore",
+                    artifact_type="provider_report",
+                    path=restore_artifact_path,
+                )
+                end_session(
+                    connection,
+                    restore_session_id,
+                    "failed",
+                    "Restore-only quarantine failure",
+                    project_paths=result["paths"],
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = NULL
+                    WHERE task_id = 'task_artifact_restore'
+                    """
+                )
+
+                reopen_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_actions",
+                    task_id="task_artifact_reopen",
+                    provider_type="python_script",
+                    status_message="Starting dismissed quarantine test",
+                )
+                reopen_artifact_path = os.path.join(result["paths"].artifacts_dir, "artifact-reopen.txt")
+                with open(reopen_artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("reopen\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=reopen_session_id,
+                    task_id="task_artifact_reopen",
+                    artifact_type="provider_report",
+                    path=reopen_artifact_path,
+                )
+                end_session(
+                    connection,
+                    reopen_session_id,
+                    "failed",
+                    "Dismissed quarantine failure",
+                    project_paths=result["paths"],
+                )
+                connection.execute(
+                    "UPDATE quarantine_queue SET status = 'dismissed' WHERE session_id = ?",
+                    (reopen_session_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get("/api/artifacts?state=quarantined&limit=10").json()
+
+            artifacts_by_task = {item["task_id"]: item for item in payload["items"]}
+
+            requeue_item = artifacts_by_task["task_artifact_requeue"]
+            self.assertEqual(requeue_item["quarantine_queue_status"], "open")
+            self.assertEqual(requeue_item["operator_action"]["action"], "restore_and_requeue_quarantine_entry")
+            self.assertEqual(requeue_item["secondary_operator_action"]["action"], "dismiss_quarantine_entry")
+
+            restore_item = artifacts_by_task["task_artifact_restore"]
+            self.assertEqual(restore_item["quarantine_queue_status"], "open")
+            self.assertEqual(restore_item["operator_action"]["action"], "restore_quarantine_entry")
+            self.assertEqual(restore_item["secondary_operator_action"]["action"], "dismiss_quarantine_entry")
+
+            reopen_item = artifacts_by_task["task_artifact_reopen"]
+            self.assertEqual(reopen_item["quarantine_queue_status"], "dismissed")
+            self.assertEqual(reopen_item["operator_action"]["action"], "reopen_quarantine_entry")
+            self.assertIsNone(reopen_item.get("secondary_operator_action"))
+
     def test_artifacts_api_rejects_invalid_offset(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(

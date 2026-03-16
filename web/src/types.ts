@@ -163,6 +163,10 @@ export interface ArtifactItem {
   quarantine_reason?: string | null;
   quarantined_from_path?: string | null;
   restored_from_quarantine?: boolean;
+  quarantine_queue_id?: string | null;
+  quarantine_queue_status?: "open" | "restored" | "dismissed" | null;
+  operator_action?: FailureOperatorAction;
+  secondary_operator_action?: FailureOperatorAction;
   created_at: string;
 }
 
@@ -226,6 +230,7 @@ export interface FailureItem {
 export interface FailureOperatorAction {
   action:
     | "recover_and_requeue_task"
+    | "restore_quarantine_entry"
     | "restore_failure_artifacts"
     | "restore_and_requeue_quarantine_entry"
     | "dismiss_quarantine_entry"

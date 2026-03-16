@@ -1,4 +1,4 @@
-"""Lightweight live snapshot and SSE helpers for dashboard refresh."""
+"""Lightweight live snapshot helpers for dashboard refresh."""
 
 import asyncio
 import json
@@ -54,4 +54,15 @@ async def sse_stream(connection_factory, interval_seconds=2):
             connection.close()
         yield "event: dashboard\n"
         yield "data: {0}\n\n".format(json.dumps(snapshot))
+        await asyncio.sleep(interval_seconds)
+
+
+async def websocket_stream(send_snapshot, connection_factory, interval_seconds=2):
+    while True:
+        connection = connection_factory()
+        try:
+            snapshot = build_live_snapshot(connection)
+        finally:
+            connection.close()
+        await send_snapshot(snapshot)
         await asyncio.sleep(interval_seconds)

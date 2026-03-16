@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -16,7 +16,7 @@ from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_o
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
-from maas.services.live import build_live_snapshot, sse_stream
+from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
 from maas.services.provider_runtime import provider_runtime_overview, run_provider_task, set_provider_mode, set_provider_settings
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
@@ -189,6 +189,19 @@ def create_app(project_root="."):
             return connect(project_paths(root))
 
         return StreamingResponse(sse_stream(connection_factory), media_type="text/event-stream")
+
+    @app.websocket("/api/live/ws")
+    async def live_websocket(websocket: WebSocket):
+        root = paths.root
+
+        def connection_factory():
+            return connect(project_paths(root))
+
+        await websocket.accept()
+        try:
+            await websocket_stream(websocket.send_json, connection_factory)
+        except WebSocketDisconnect:
+            return
 
     @app.get("/api/board")
     def board(

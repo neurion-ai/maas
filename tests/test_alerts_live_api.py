@@ -94,6 +94,19 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(failures_payload["summary"]["total_failures"], 1)
             self.assertEqual(failures_payload["recent"][0]["failure_type"], "session_failed")
 
+    def test_live_websocket_stream_returns_dashboard_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Live WebSocket Test", description="Live websocket test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            with client.websocket_connect("/api/live/ws") as websocket:
+                payload = websocket.receive_json()
+
+            self.assertIn("generated_at", payload)
+            self.assertIn("counts", payload)
+            self.assertIn("revision", payload)
+            self.assertIn("tasks_in_progress", payload["counts"])
+
     def test_failures_api_exposes_quarantined_artifacts_for_failed_sessions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Failure Quarantine API Test", description="Failure quarantine api test", project_type="custom")

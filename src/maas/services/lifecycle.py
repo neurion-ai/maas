@@ -4,6 +4,7 @@ import json
 
 from maas.ids import generate_id
 from maas.providers import get_provider
+from maas.services.alerts import resolve_task_session_failed_alerts
 from maas.services.recovery_policy import (
     failed_session_retry_cooldown_seconds,
     fetch_project_recovery_policy,
@@ -409,6 +410,15 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
                 WHERE task_id = ? AND status = 'in_progress'
                 """,
                 (row["task_id"],),
+            )
+        else:
+            resolve_task_session_failed_alerts(
+                connection,
+                row["project_id"],
+                row["task_id"],
+                row["agent_id"],
+                reason="task_auto_retried",
+                activity_description="Task failure alerts resolved after automatic task retry.",
             )
     elif outcome == "cancelled":
         record_failure(

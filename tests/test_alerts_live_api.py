@@ -16,6 +16,24 @@ from maas.services.live import build_live_snapshot
 
 
 class AlertsAndLiveApiTest(unittest.TestCase):
+    def _update_recovery_config(self, project_root, **recovery_updates):
+        connection = connect(project_paths(project_root))
+        try:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects LIMIT 1"
+            ).fetchone()
+            config = json.loads(project["config_json"] or "{}")
+            recovery = dict(config.get("recovery") or {})
+            recovery.update(recovery_updates)
+            config["recovery"] = recovery
+            connection.execute(
+                "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                (json.dumps(config), project["project_id"]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
     def test_alert_actions_and_live_snapshot(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Live Test", description="Live test", project_type="custom")
@@ -121,6 +139,50 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertEqual(recent_failure["failure_type"], "session_failed")
             self.assertEqual(recent_failure["quarantined_artifact_count"], 1)
             self.assertEqual(recent_failure["quarantined_artifacts"][0]["quarantined_from_path"], artifact_path)
+
+    def test_failed_session_auto_retry_resolves_task_failure_alert(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Auto Retry Alert Resolution Test",
+                description="Auto retry alert resolution test",
+                project_type="custom",
+            )
+            self._update_recovery_config(
+                tmpdir,
+                auto_retry_failed_sessions=True,
+                max_failed_session_retries=1,
+                failed_session_retry_cooldown_seconds=45,
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting auto retry alert resolution test",
+                )
+                end_session(connection, session_id, "failed", "Retryable failed session")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            alerts_payload = client.get("/api/alerts").json()
+            matching_alerts = [
+                alert
+                for alert in alerts_payload["alerts"]
+                if alert["title"] == "Task session failed"
+            ]
+
+            self.assertEqual(len(matching_alerts), 1)
+            self.assertEqual(matching_alerts[0]["status"], "resolved")
+            self.assertNotIn("operator_action", matching_alerts[0])
 
     def test_quarantine_api_lists_open_entries_for_failed_sessions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

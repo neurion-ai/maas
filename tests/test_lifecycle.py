@@ -294,6 +294,15 @@ class LifecycleStateTransitionTest(unittest.TestCase):
                     """,
                     (task_id,),
                 ).fetchone()
+                alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
             finally:
                 connection.close()
 
@@ -308,6 +317,7 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertIn("Retryable lifecycle failure", failure["summary"])
             self.assertIsNotNone(auto_retry_audit)
             self.assertEqual(json.loads(auto_retry_audit["detail_json"])["failure_type"], "session_failed")
+            self.assertEqual(alert["status"], "resolved")
 
     def test_failed_session_stays_blocked_when_failed_retry_budget_is_exhausted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -357,6 +367,15 @@ class LifecycleStateTransitionTest(unittest.TestCase):
                     """,
                     (task_id,),
                 ).fetchone()
+                alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
             finally:
                 connection.close()
 
@@ -366,6 +385,7 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertEqual(task["last_retry_reason"], "session_failed")
             self.assertIsNone(task["next_retry_at"])
             self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(alert["status"], "open")
 
     def test_failed_session_quarantines_session_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

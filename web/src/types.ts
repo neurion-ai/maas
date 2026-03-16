@@ -550,6 +550,7 @@ export interface RecoveryPolicyResponse {
     open_quarantine_entries: number;
     open_failure_alerts: number;
     open_repeated_failure_alerts: number;
+    open_stale_agent_alerts: number;
   };
   backoff_preview: {
     timed_out_retry_delays: RecoveryDelayPreviewItem[];
@@ -562,6 +563,7 @@ export interface RecoveryPolicyResponse {
   active_retry_backoff: RecoveryTaskItem[];
   open_quarantine_entries: QuarantineQueueItem[];
   open_failure_alerts: AlertItem[];
+  open_stale_agent_alerts: AlertItem[];
   repeated_failure_incidents: RepeatedFailureItem[];
 }
 

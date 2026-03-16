@@ -3,6 +3,7 @@
 from datetime import datetime
 import json
 import os
+import re
 import shutil
 
 from maas.ids import generate_id
@@ -11,6 +12,7 @@ from maas.ids import generate_id
 REPEATED_FAILURE_THRESHOLD = 2
 REPEATED_FAILURE_TYPES = ("session_failed", "session_timed_out", "capability_denied")
 RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
+REPEATED_FAILURE_ALERT_TASK_PATTERN = re.compile(r"^Task (?P<task_id>\S+) \(")
 
 
 def record_failure(connection, project_id, failure_type, summary, task_id=None, session_id=None, agent_id=None, details=None):
@@ -472,20 +474,22 @@ def failure_attempt_count(connection, task_id):
     return _failure_count_for_task(connection, task_id)
 
 
-def _repeated_failure_task_has_open_alert(connection, task_id):
-    row = connection.execute(
+def _open_repeated_failure_alert_task_ids(connection):
+    rows = connection.execute(
         """
-        SELECT alert_id
+        SELECT description
         FROM alerts
         WHERE status IN ('open', 'acknowledged')
           AND title = 'Repeated task failures'
-          AND description LIKE ?
-          ESCAPE '\\'
-        LIMIT 1
-        """,
-        (_repeated_failure_alert_like_pattern(task_id),),
-    ).fetchone()
-    return row is not None
+        """
+    ).fetchall()
+
+    task_ids = set()
+    for row in rows:
+        match = REPEATED_FAILURE_ALERT_TASK_PATTERN.match(row["description"])
+        if match is not None:
+            task_ids.add(match.group("task_id"))
+    return task_ids
 
 
 def fetch_repeated_failure_tasks(connection, limit=None):
@@ -510,8 +514,9 @@ def fetch_repeated_failure_tasks(connection, limit=None):
         query_params += (limit,)
 
     tasks = [dict(row) for row in connection.execute(query, query_params).fetchall()]
+    open_alert_task_ids = _open_repeated_failure_alert_task_ids(connection)
     for task in tasks:
-        if _repeated_failure_task_has_open_alert(connection, task["task_id"]):
+        if task["task_id"] in open_alert_task_ids:
             task["operator_action"] = {
                 "action": "resolve_repeated_failures",
                 "label": "Resolve repeated failures",
@@ -522,7 +527,21 @@ def fetch_repeated_failure_tasks(connection, limit=None):
 
 
 def repeated_failure_task_count(connection):
-    return len(fetch_repeated_failure_tasks(connection))
+    clause, params = _repeated_failure_clause()
+    return connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM (
+            SELECT failure_log.task_id
+            FROM failure_log
+            WHERE failure_log.task_id IS NOT NULL
+              AND {0}
+            GROUP BY failure_log.task_id
+            HAVING COUNT(*) >= ?
+        ) repeated_failure_tasks
+        """.format(clause),
+        params + (REPEATED_FAILURE_THRESHOLD,),
+    ).fetchone()["count"]
 
 
 def maybe_raise_repeated_failure_alert(connection, project_id, task_id, summary):

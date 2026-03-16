@@ -23,6 +23,7 @@ from maas.services.steering import (
     recover_and_requeue_task,
     recover_task,
     release_task_retry_backoff,
+    reset_task_retry_state,
     resolve_task_repeated_failures,
     set_task_retry_limit,
     restore_and_requeue_quarantine_entry,
@@ -106,6 +107,11 @@ def build_parser():
     task_release_retry_backoff_parser.add_argument("--project-root", default=".")
     task_release_retry_backoff_parser.add_argument("--task-id", required=True)
     task_release_retry_backoff_parser.add_argument("--actor-id", required=True)
+
+    task_reset_retry_state_parser = task_subparsers.add_parser("reset-retry-state")
+    task_reset_retry_state_parser.add_argument("--project-root", default=".")
+    task_reset_retry_state_parser.add_argument("--task-id", required=True)
+    task_reset_retry_state_parser.add_argument("--actor-id", required=True)
 
     task_allocate_parser = task_subparsers.add_parser("allocate")
     task_allocate_parser.add_argument("--project-root", default=".")
@@ -326,6 +332,8 @@ def command_task(args):
             )
         elif args.task_command == "release-retry-backoff":
             print(json.dumps(release_task_retry_backoff(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "reset-retry-state":
+            print(json.dumps(reset_task_retry_state(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "allocate":
             if args.agent_id:
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))

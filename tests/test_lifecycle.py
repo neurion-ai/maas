@@ -503,6 +503,77 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertIsNone(task["next_retry_reason"])
             self.assertEqual(alert["status"], "open")
 
+    def test_reset_retry_state_restores_failed_session_auto_retry_budget(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Reset Retry State Test",
+                description="Lifecycle reset retry state test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    max_failed_session_retries=1,
+                    failed_session_retry_cooldown_seconds=45,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            reset_response = client.post(
+                "/api/tasks/{0}/actions/reset-retry-state".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(reset_response.status_code, 200)
+            self.assertEqual(reset_response.json()["retry_count"], 0)
+
+            connection = connect(result["paths"])
+            try:
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle reset retry state test",
+                )
+
+                end_session(connection, session_id, "failed", "Retry budget restored")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "planned")
+            self.assertEqual(task["review_state"], "retry_backoff")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_failed")
+            self.assertIsNotNone(task["next_retry_at"])
+            self.assertEqual(task["next_retry_reason"], "session_failed")
+
     def test_failed_session_quarantines_session_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

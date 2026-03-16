@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchRecoveryPolicy, releaseTaskRetryBackoff, setRecoveryPolicy, setTaskRetryLimit } from "../lib/controlRoomApi";
+import {
+  fetchRecoveryPolicy,
+  releaseTaskRetryBackoff,
+  resetTaskRetryState,
+  setRecoveryPolicy,
+  setTaskRetryLimit
+} from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { RecoveryPolicyResponse, RecoveryPolicySettings, RecoveryTaskItem } from "../types";
 
@@ -78,12 +84,16 @@ function RecoveryTaskList({
   items,
   pendingTaskId,
   onRetryLimitChange,
-  onPrimaryAction
+  onPrimaryAction,
+  primaryActionLabel,
+  pendingPrimaryActionLabel
 }: {
   items: RecoveryTaskItem[];
   pendingTaskId: string | null;
   onRetryLimitChange: (taskId: string, autoRetryLimit: number | null) => void;
   onPrimaryAction?: (taskId: string) => void;
+  primaryActionLabel?: string;
+  pendingPrimaryActionLabel?: string;
 }) {
   return (
     <div className="data-list">
@@ -122,7 +132,7 @@ function RecoveryTaskList({
                 disabled={pendingTaskId === item.task_id}
                 onClick={() => onPrimaryAction(item.task_id)}
               >
-                {pendingTaskId === item.task_id ? "Releasing..." : "Release backoff"}
+                {pendingTaskId === item.task_id ? (pendingPrimaryActionLabel ?? "Working...") : (primaryActionLabel ?? "Run action")}
               </button>
             ) : null}
             <label className="task-inline-control">
@@ -153,7 +163,7 @@ export function RecoveryPage() {
   const [draft, setDraft] = useState<RecoveryDraft | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
-  const [pendingTaskRetryLimit, setPendingTaskRetryLimit] = useState<string | null>(null);
+  const [pendingTaskActionId, setPendingTaskActionId] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -219,7 +229,7 @@ export function RecoveryPage() {
   }
 
   async function handleTaskRetryLimitChange(taskId: string, autoRetryLimit: number | null) {
-    setPendingTaskRetryLimit(taskId);
+    setPendingTaskActionId(taskId);
     setNotice(null);
     try {
       await setTaskRetryLimit(taskId, autoRetryLimit);
@@ -232,12 +242,12 @@ export function RecoveryPage() {
     } catch {
       setNotice("Task retry limit update failed; keeping the current recovery snapshot under review.");
     } finally {
-      setPendingTaskRetryLimit(null);
+      setPendingTaskActionId(null);
     }
   }
 
   async function handleReleaseRetryBackoff(taskId: string) {
-    setPendingTaskRetryLimit(taskId);
+    setPendingTaskActionId(taskId);
     setNotice(null);
     try {
       const payload = await releaseTaskRetryBackoff(taskId);
@@ -246,7 +256,21 @@ export function RecoveryPage() {
     } catch {
       setNotice("Retry backoff release failed; keep the current recovery snapshot under review.");
     } finally {
-      setPendingTaskRetryLimit(null);
+      setPendingTaskActionId(null);
+    }
+  }
+
+  async function handleResetRetryState(taskId: string) {
+    setPendingTaskActionId(taskId);
+    setNotice(null);
+    try {
+      const payload = await resetTaskRetryState(taskId);
+      await reload();
+      setNotice(`Reset retry state for ${taskId}; task is now ${payload.status}.`);
+    } catch {
+      setNotice("Retry state reset failed; keep the current recovery snapshot under review.");
+    } finally {
+      setPendingTaskActionId(null);
     }
   }
 
@@ -424,7 +448,7 @@ export function RecoveryPage() {
           {(recovery?.task_retry_overrides ?? []).length ? (
             <RecoveryTaskList
               items={recovery?.task_retry_overrides ?? []}
-              pendingTaskId={pendingTaskRetryLimit}
+              pendingTaskId={pendingTaskActionId}
               onRetryLimitChange={handleTaskRetryLimitChange}
             />
           ) : (
@@ -442,6 +466,34 @@ export function RecoveryPage() {
         <article className="data-panel">
           <header className="data-panel__header">
             <div>
+              <h2>Retry history</h2>
+              <p>Tasks that have already consumed automatic retries. Reset the task state here after manual intervention to restore the retry budget.</p>
+            </div>
+          </header>
+          {(recovery?.task_retry_history ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.task_retry_history ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleResetRetryState(taskId)}
+              primaryActionLabel="Reset retry state"
+              pendingPrimaryActionLabel="Resetting..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No retry history</strong>
+                  <p>No active tasks currently carry consumed retry budget.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
               <h2>Active retry backoff</h2>
               <p>Tasks currently cooling down before another automatic or operator-triggered retry window opens.</p>
             </div>
@@ -449,9 +501,11 @@ export function RecoveryPage() {
           {(recovery?.active_retry_backoff ?? []).length ? (
             <RecoveryTaskList
               items={recovery?.active_retry_backoff ?? []}
-              pendingTaskId={pendingTaskRetryLimit}
+              pendingTaskId={pendingTaskActionId}
               onRetryLimitChange={handleTaskRetryLimitChange}
               onPrimaryAction={(taskId) => void handleReleaseRetryBackoff(taskId)}
+              primaryActionLabel="Release backoff"
+              pendingPrimaryActionLabel="Releasing..."
             />
           ) : (
             <div className="data-list">
@@ -464,6 +518,7 @@ export function RecoveryPage() {
             </div>
           )}
         </article>
+
       </section>
     </section>
   );

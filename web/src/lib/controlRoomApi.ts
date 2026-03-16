@@ -380,6 +380,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     ]
   },
   task_retry_overrides: [],
+  task_retry_history: [],
   active_retry_backoff: []
 };
 
@@ -578,6 +579,13 @@ export async function setTaskRetryLimit(taskId: string, autoRetryLimit: number |
 
 export async function releaseTaskRetryBackoff(taskId: string) {
   const payload = await postJson(`/api/tasks/${taskId}/actions/release-retry-backoff`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
+export async function resetTaskRetryState(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/reset-retry-state`, {
     actor_id: "agent_allocator"
   });
   return payload;

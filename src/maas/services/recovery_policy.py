@@ -118,7 +118,12 @@ def _recovery_summary(connection, project_id):
         """
         SELECT
             SUM(CASE WHEN review_state = 'retry_backoff' THEN 1 ELSE 0 END) AS retry_backoff_tasks,
-            SUM(CASE WHEN COALESCE(retry_count, 0) > 0 THEN 1 ELSE 0 END) AS tasks_with_retry_history,
+            SUM(
+                CASE
+                    WHEN status NOT IN ('done', 'cancelled') AND COALESCE(retry_count, 0) > 0 THEN 1
+                    ELSE 0
+                END
+            ) AS tasks_with_retry_history,
             SUM(
                 CASE
                     WHEN status = 'blocked' AND review_state IN ('session_failed', 'stale_session') THEN 1
@@ -247,6 +252,12 @@ def fetch_project_recovery_overview(connection, project_id=None):
             connection,
             project_id,
             "tasks.auto_retry_limit IS NOT NULL AND tasks.status NOT IN ('done', 'cancelled')",
+            [],
+        ),
+        "task_retry_history": _recovery_task_items(
+            connection,
+            project_id,
+            "tasks.status NOT IN ('done', 'cancelled') AND COALESCE(tasks.retry_count, 0) > 0",
             [],
         ),
         "active_retry_backoff": _recovery_task_items(

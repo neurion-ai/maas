@@ -339,6 +339,66 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertIsNone(payload["next_retry_at"])
             self.assertIsNone(payload["next_retry_reason"])
 
+    def test_reset_retry_state_clears_history_and_releases_ready_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Reset Retry State Test", description="Reset retry state", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'planned',
+                        review_state = 'retry_backoff',
+                        retry_count = 2,
+                        last_retry_at = CURRENT_TIMESTAMP,
+                        last_retry_reason = 'session_failed',
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/tasks/{0}/actions/reset-retry-state".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ready")
+            self.assertIsNone(payload["review_state"])
+            self.assertEqual(payload["retry_count"], 0)
+            self.assertIsNone(payload["last_retry_at"])
+            self.assertIsNone(payload["last_retry_reason"])
+            self.assertIsNone(payload["next_retry_at"])
+            self.assertIsNone(payload["next_retry_reason"])
+
+    def test_reset_retry_state_rejects_clean_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Reset Retry State Clean Test", description="Reset retry state clean", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            board_payload = client.get("/api/board", params={"search": "Wire the scheduler and board read model"}).json()
+            task_id = [
+                item
+                for column in board_payload["columns"]
+                for item in column["tasks"]
+                if item["title"] == "Wire the scheduler and board read model"
+            ][0]["task_id"]
+
+            response = client.post(
+                "/api/tasks/{0}/actions/reset-retry-state".format(task_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("no retry state", response.json()["detail"])
+
     def test_recover_failed_task_returns_it_to_planned_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Recover Task Test", description="Recover failure-blocked task", project_type="custom")

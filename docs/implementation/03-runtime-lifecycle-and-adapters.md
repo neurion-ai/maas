@@ -15,7 +15,7 @@
 - [x] Lifecycle starts validate `provider_type` against the provider registry
 - [x] `claude_code` can run through a real local Claude CLI path when explicitly enabled in project config
 - [x] `openai_codex` can run through a real local Codex CLI path when explicitly enabled in project config
-- [x] Provider status reads expose effective mode, runtime controls, config warnings, and recent run history
+- [x] Provider status reads expose effective mode, runtime controls, config warnings, recent run history, and manual run targets
 
 ## Still To Do On `main`
 

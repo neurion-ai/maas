@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchProviders, runProviderTask } from "../lib/controlRoomApi";
+import { fetchProviders, runProviderTask, setProviderMode } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { ProviderRunTarget, ProviderStatusItem, ProvidersResponse } from "../types";
 
@@ -30,6 +30,7 @@ export function ProvidersPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingRun, setPendingRun] = useState<string | null>(null);
+  const [pendingMode, setPendingMode] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -71,6 +72,21 @@ export function ProvidersPage() {
       setNotice(`Provider run failed for ${target.title}; the task remains under operator review.`);
     } finally {
       setPendingRun(null);
+    }
+  }
+
+  async function handleSetMode(providerId: string, mode: string) {
+    const actionKey = `${providerId}:${mode}`;
+    setPendingMode(actionKey);
+    setNotice(null);
+    try {
+      await setProviderMode(providerId, mode);
+      await reloadProviders();
+      setNotice(`Updated ${providerId} to ${mode}.`);
+    } catch {
+      setNotice(`Provider mode update failed for ${providerId}; keeping the previous configuration.`);
+    } finally {
+      setPendingMode(null);
     }
   }
 
@@ -122,7 +138,7 @@ export function ProvidersPage() {
                         key={provider.id}
                         type="button"
                         className="task-action task-action--secondary"
-                        disabled={!provider.is_runnable || pendingRun === actionKey}
+                        disabled={!provider.is_runnable || pendingRun === actionKey || pendingMode !== null}
                         onClick={() => void handleRunTask(provider.id, target)}
                       >
                         {pendingRun === actionKey ? "Running..." : `Run ${provider.name}`}
@@ -175,6 +191,26 @@ export function ProvidersPage() {
                     ))}
                   </div>
                   <div className="data-list__meta">
+                    {(provider.available_execution_modes ?? []).map((mode) => {
+                      const actionKey = `${provider.id}:${mode}`;
+                      const label =
+                        mode === "local_simulation"
+                          ? "Use simulation"
+                          : mode === "claude_cli"
+                            ? "Enable Claude CLI"
+                            : "Enable Codex CLI";
+                      return (
+                        <button
+                          key={mode}
+                          type="button"
+                          className="task-action task-action--secondary"
+                          disabled={provider.configured_execution_mode === mode || pendingMode === actionKey}
+                          onClick={() => void handleSetMode(provider.id, mode)}
+                        >
+                          {pendingMode === actionKey ? "Updating..." : label}
+                        </button>
+                      );
+                    })}
                     <span>{provider.kind}</span>
                     <span>{provider.status}</span>
                     <span>{provider.lifecycle_version}</span>

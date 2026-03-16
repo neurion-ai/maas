@@ -257,6 +257,40 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertFalse(providers["claude_code"]["is_runnable"])
             self.assertIn("Claude Code mode must be a string.", providers["claude_code"]["config_warnings"])
 
+    def test_provider_mode_endpoint_updates_runtime_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-mode",
+                json={"actor_id": "agent_allocator", "mode": "codex_cli"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["configured_execution_mode"], "codex_cli")
+            self.assertEqual(payload["execution_mode"], "codex_cli")
+            self.assertEqual(payload["status"], "configured")
+
+            revert_response = client.post(
+                "/api/providers/openai_codex/actions/set-mode",
+                json={"actor_id": "agent_allocator", "mode": "local_simulation"},
+            )
+            self.assertEqual(revert_response.status_code, 200)
+            self.assertEqual(revert_response.json()["configured_execution_mode"], "local_simulation")
+
+    def test_provider_mode_endpoint_requires_board_action_permission(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-mode",
+                json={"actor_id": "agent_researcher", "mode": "codex_cli"},
+            )
+            self.assertEqual(response.status_code, 403)
+            self.assertIn("board actions", response.json()["detail"].lower())
+
     def test_provider_run_task_executes_each_adapter_end_to_end(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")

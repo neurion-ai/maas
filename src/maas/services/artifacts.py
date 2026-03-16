@@ -1,9 +1,11 @@
 """Artifact browser read model for control-room surfaces."""
 
 import json
+import mimetypes
 import os
 
 RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
+ARTIFACT_PREVIEW_MAX_BYTES = 8192
 
 
 def _load_metadata(value):
@@ -55,6 +57,56 @@ def _size_bytes(absolute_path):
         return os.path.getsize(absolute_path)
     except OSError:
         return None
+
+
+def _download_content_type(absolute_path):
+    content_type, _ = mimetypes.guess_type(absolute_path or "")
+    return content_type or "application/octet-stream"
+
+
+def _can_download_artifact(project_paths, absolute_path):
+    return bool(absolute_path and os.path.isfile(absolute_path) and _path_within(project_paths.root, absolute_path))
+
+
+def _metadata_snapshot(metadata):
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _preview_kind(absolute_path):
+    extension = os.path.splitext(absolute_path or "")[1].lower()
+    if extension == ".json":
+        return "json"
+    return "text"
+
+
+def _artifact_preview(absolute_path):
+    if not absolute_path or not os.path.exists(absolute_path):
+        return {"kind": "unavailable", "reason": "missing_file"}
+    if not os.path.isfile(absolute_path):
+        return {"kind": "unavailable", "reason": "not_a_file"}
+
+    try:
+        with open(absolute_path, "rb") as handle:
+            preview_bytes = handle.read(ARTIFACT_PREVIEW_MAX_BYTES + 1)
+    except OSError:
+        return {"kind": "unavailable", "reason": "read_failed"}
+
+    truncated = len(preview_bytes) > ARTIFACT_PREVIEW_MAX_BYTES
+    payload = preview_bytes[:ARTIFACT_PREVIEW_MAX_BYTES]
+    if b"\x00" in payload:
+        return {"kind": "unavailable", "reason": "binary_file"}
+
+    try:
+        content = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"kind": "unavailable", "reason": "binary_file"}
+
+    return {
+        "kind": _preview_kind(absolute_path),
+        "encoding": "utf-8",
+        "truncated": truncated,
+        "content": content,
+    }
 
 
 def _state_summary(connection, project_paths):
@@ -259,7 +311,7 @@ def _quarantine_queue_entries_by_session(connection, session_ids):
     placeholders = ", ".join(["?"] * len(session_ids))
     rows = connection.execute(
         """
-        SELECT session_id, queue_id, status
+        SELECT session_id, queue_id, status, reason, resolution_note, created_at, updated_at, resolved_at
         FROM quarantine_queue
         WHERE session_id IN ({0})
         ORDER BY
@@ -277,6 +329,38 @@ def _quarantine_queue_entries_by_session(connection, session_ids):
     for row in rows:
         queue_entries.setdefault(row["session_id"], dict(row))
     return queue_entries
+
+
+def _artifact_base_from():
+    return """
+        FROM artifacts
+        LEFT JOIN tasks ON tasks.task_id = artifacts.task_id
+        LEFT JOIN sessions ON sessions.session_id = artifacts.session_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+    """
+
+
+def _artifact_row_query(where_sql=""):
+    return """
+        SELECT
+            artifacts.artifact_id,
+            artifacts.project_id,
+            artifacts.task_id,
+            artifacts.session_id,
+            artifacts.artifact_type,
+            artifacts.path,
+            artifacts.metadata_json,
+            artifacts.created_at,
+            tasks.title AS task_title,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
+            sessions.provider_type,
+            sessions.status AS session_status,
+            sessions.agent_id,
+            agents.display_name AS agent_name
+        {base_from}
+        {where_sql}
+    """.format(base_from=_artifact_base_from(), where_sql=where_sql)
 
 
 def _artifact_has_recoverable_task(item):
@@ -356,37 +440,12 @@ def _attach_quarantine_actions(connection, items):
 
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
     where, params = _artifact_where_clause(project_paths, filters)
-    base_from = """
-        FROM artifacts
-        LEFT JOIN tasks ON tasks.task_id = artifacts.task_id
-        LEFT JOIN sessions ON sessions.session_id = artifacts.session_id
-        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
-    """
+    base_from = _artifact_base_from()
     where_sql = ""
     if where:
         where_sql = "WHERE " + " AND ".join(where)
 
-    row_query = """
-        SELECT
-            artifacts.artifact_id,
-            artifacts.project_id,
-            artifacts.task_id,
-            artifacts.session_id,
-            artifacts.artifact_type,
-            artifacts.path,
-            artifacts.metadata_json,
-            artifacts.created_at,
-            tasks.title AS task_title,
-            tasks.status AS task_status,
-            tasks.review_state AS task_review_state,
-            sessions.provider_type,
-            sessions.status AS session_status,
-            sessions.agent_id,
-            agents.display_name AS agent_name
-        {base_from}
-        {where_sql}
-        ORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC
-    """.format(base_from=base_from, where_sql=where_sql)
+    row_query = _artifact_row_query(where_sql) + "\nORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC"
 
     missing_only = bool((filters or {}).get("missing_only"))
     if missing_only:
@@ -425,4 +484,61 @@ def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None
             "task_id": (filters or {}).get("task_id") or "",
             "missing_only": bool((filters or {}).get("missing_only")),
         },
+    }
+
+
+def fetch_artifact_detail(connection, project_paths, artifact_id):
+    row = connection.execute(
+        _artifact_row_query("WHERE artifacts.artifact_id = ?"),
+        (artifact_id,),
+    ).fetchone()
+    if row is None:
+        return None
+
+    enriched_item = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, row)])[0]
+    metadata = _load_metadata(row["metadata_json"])
+    absolute_path = _absolute_path(project_paths, row["path"])
+    can_download = _can_download_artifact(project_paths, absolute_path)
+
+    quarantine_entry = None
+    if enriched_item.get("session_id"):
+        queue_entry = _quarantine_queue_entries_by_session(connection, [enriched_item["session_id"]]).get(enriched_item["session_id"])
+        if queue_entry is not None:
+            quarantine_entry = {
+                "queue_id": queue_entry["queue_id"],
+                "status": queue_entry["status"],
+                "reason": queue_entry.get("reason") or metadata.get("quarantine_reason"),
+                "resolution_note": queue_entry.get("resolution_note"),
+                "created_at": queue_entry.get("created_at"),
+                "updated_at": queue_entry.get("updated_at"),
+                "resolved_at": queue_entry.get("resolved_at"),
+            }
+
+    return {
+        **enriched_item,
+        "metadata": _metadata_snapshot(metadata),
+        "absolute_path": absolute_path,
+        "download_url": "/api/artifacts/{0}/download".format(artifact_id) if can_download else None,
+        "download_content_type": _download_content_type(absolute_path) if can_download else None,
+        "preview": _artifact_preview(absolute_path),
+        "quarantine_entry": quarantine_entry,
+    }
+
+
+def resolve_artifact_download(connection, project_paths, artifact_id):
+    row = connection.execute(
+        "SELECT path FROM artifacts WHERE artifact_id = ?",
+        (artifact_id,),
+    ).fetchone()
+    if row is None:
+        return None
+
+    absolute_path = _absolute_path(project_paths, row["path"])
+    if not _can_download_artifact(project_paths, absolute_path):
+        return None
+
+    return {
+        "absolute_path": absolute_path,
+        "file_name": os.path.basename(absolute_path),
+        "content_type": _download_content_type(absolute_path),
     }

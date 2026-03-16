@@ -4,13 +4,13 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from maas.db import connect, project_paths
 from maas.paths import ProjectPaths
 from maas.services.alerts import fetch_alerts, update_alert_status
-from maas.services.artifacts import fetch_artifacts
+from maas.services.artifacts import fetch_artifact_detail, fetch_artifacts, resolve_artifact_download
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
@@ -381,6 +381,32 @@ def create_app(project_root="."):
             )
         finally:
             connection.close()
+
+    @app.get("/api/artifacts/{artifact_id}")
+    def artifact_detail(artifact_id: str):
+        connection = connect(paths)
+        try:
+            detail = fetch_artifact_detail(connection, paths, artifact_id)
+        finally:
+            connection.close()
+        if detail is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        return detail
+
+    @app.get("/api/artifacts/{artifact_id}/download")
+    def artifact_download(artifact_id: str):
+        connection = connect(paths)
+        try:
+            resolved = resolve_artifact_download(connection, paths, artifact_id)
+        finally:
+            connection.close()
+        if resolved is None:
+            raise HTTPException(status_code=404, detail="artifact file not found")
+        return FileResponse(
+            resolved["absolute_path"],
+            media_type=resolved["content_type"],
+            filename=resolved["file_name"],
+        )
 
     @app.post("/api/failures/{failure_id}/actions/restore-artifacts")
     def failure_restore_artifacts_action(failure_id: str, payload: AgentActionRequest):

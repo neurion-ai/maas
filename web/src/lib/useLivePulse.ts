@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 type LiveTransport = "websocket" | "sse" | "polling";
 
@@ -140,7 +140,7 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
     [connected, pulse, transport]
   );
 
-  return <LivePulseContext.Provider value={value}>{children}</LivePulseContext.Provider>;
+  return createElement(LivePulseContext.Provider, { value }, children);
 }
 
 export function useLivePulse() {

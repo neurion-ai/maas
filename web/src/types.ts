@@ -195,6 +195,31 @@ export interface ArtifactsResponse {
   items: ArtifactItem[];
 }
 
+export interface ArtifactPreview {
+  kind: "text" | "json" | "unavailable";
+  reason?: string | null;
+  encoding?: string | null;
+  truncated?: boolean;
+  content?: string | null;
+}
+
+export interface ArtifactDetail extends ArtifactItem {
+  absolute_path?: string | null;
+  metadata: Record<string, unknown>;
+  download_url?: string | null;
+  download_content_type?: string | null;
+  preview: ArtifactPreview;
+  quarantine_entry?: {
+    queue_id: string;
+    status: "open" | "restored" | "dismissed";
+    reason?: string | null;
+    resolution_note?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    resolved_at?: string | null;
+  } | null;
+}
+
 export interface OverviewResponse {
   project: OverviewProject | null;
   summary: OverviewSummary;

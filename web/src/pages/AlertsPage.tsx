@@ -62,6 +62,19 @@ export function AlertsPage() {
     }
   }
 
+  function getOperatorActionLabel(alertId: string, action: string, label: string) {
+    if (pendingAction !== `${alertId}:${action}`) {
+      return label;
+    }
+    if (action === "recover_task") {
+      return "Recovering task...";
+    }
+    if (action === "resolve_repeated_failures") {
+      return "Resolving repeated failures...";
+    }
+    return "Recovering agent...";
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -110,13 +123,11 @@ export function AlertsPage() {
                     disabled={pendingAction === `${alert.alert_id}:${alert.operator_action.action}`}
                     onClick={() => void handleOperatorAction(alert.alert_id)}
                   >
-                    {pendingAction === `${alert.alert_id}:${alert.operator_action.action}`}
-                      ? alert.operator_action.action === "recover_task"
-                        ? "Recovering task..."
-                        : alert.operator_action.action === "resolve_repeated_failures"
-                          ? "Resolving repeated failures..."
-                        : "Recovering agent..."
-                      : alert.operator_action.label}
+                    {getOperatorActionLabel(
+                      alert.alert_id,
+                      alert.operator_action.action,
+                      alert.operator_action.label
+                    )}
                   </button>
                 ) : null}
                 {alert.status === "open" ? (

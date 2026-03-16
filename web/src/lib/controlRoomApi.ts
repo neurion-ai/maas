@@ -290,7 +290,8 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
       recent_runs: [],
       notes: "Simulated API-style adapter with normalized runtime phase reporting."
     }
-  ]
+  ],
+  run_targets: []
 };
 
 async function fetchJson<T>(path: string, fallback: T): Promise<T> {
@@ -369,6 +370,23 @@ export function fetchLiveSnapshot() {
 
 export function fetchProviders() {
   return fetchJson<ProvidersResponse>("/api/providers", PROVIDERS_FALLBACK);
+}
+
+export async function runProviderTask(providerId: string, projectId: string, agentId: string, taskId: string) {
+  const payload = await postJson<{
+    session_id: string;
+    artifact_id?: string | null;
+    artifact_path: string;
+  }>(`/api/providers/${providerId}/actions/run-task`, {
+    project_id: projectId,
+    agent_id: agentId,
+    task_id: taskId
+  });
+  return payload as {
+    session_id: string;
+    artifact_id?: string | null;
+    artifact_path: string;
+  };
 }
 
 async function postJson<T>(path: string, body: Record<string, string | number | null | undefined>): Promise<T | null> {

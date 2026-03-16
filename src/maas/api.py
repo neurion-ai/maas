@@ -16,7 +16,7 @@ from maas.services.escalations import approve_escalation, fetch_escalations, rej
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
-from maas.services.provider_runtime import list_provider_runtime_status, run_provider_task
+from maas.services.provider_runtime import provider_runtime_overview, run_provider_task
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
@@ -336,7 +336,7 @@ def create_app(project_root="."):
         try:
             project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
             project_id = project["project_id"] if project else None
-            return {"providers": list_provider_runtime_status(connection=connection, project_id=project_id)}
+            return provider_runtime_overview(connection=connection, project_id=project_id)
         finally:
             connection.close()
 

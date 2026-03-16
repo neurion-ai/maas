@@ -129,6 +129,11 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(providers["claude_code"]["recent_runs"], [])
             self.assertEqual(providers["openai_codex"]["recent_runs"], [])
             self.assertGreaterEqual(len(providers["python_script"]["recent_runs"]), 1)
+            self.assertTrue(all("task_id" in target for target in payload["run_targets"]))
+            self.assertTrue(all("agent_id" in target for target in payload["run_targets"]))
+            self.assertTrue(
+                all(target["status"] in ("planned", "ready", "assigned") for target in payload["run_targets"])
+            )
 
     def test_providers_endpoint_reflects_configured_openai_codex_cli_mode(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -446,6 +451,50 @@ class ProviderRuntimeTest(unittest.TestCase):
             providers = {provider["id"]: provider for provider in providers_payload["providers"]}
             self.assertEqual(providers["python_script"]["run_summary"]["completed_runs"], 4)
             self.assertEqual(len(providers["python_script"]["recent_runs"]), 3)
+
+    def test_providers_endpoint_includes_manual_run_targets_with_execute_grants(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                runnable_task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_allocator",
+                    "Run provider-target task",
+                )
+                blocked_task_id = generate_id("task")
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, goal_id, title, description, status, priority, assigned_agent_id, acceptance_criteria_json, next_retry_at
+                    ) VALUES (?, ?, ?, ?, '', 'assigned', 65, ?, '[]', datetime('now', '+10 minutes'))
+                    """,
+                    (blocked_task_id, project_id, goal_id, "Skip cooldown task", "agent_allocator"),
+                )
+                no_grant_task_id = generate_id("task")
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, goal_id, title, description, status, priority, assigned_agent_id, acceptance_criteria_json
+                    ) VALUES (?, ?, ?, ?, '', 'assigned', 60, ?, '[]')
+                    """,
+                    (no_grant_task_id, project_id, goal_id, "Skip no-grant task", "agent_allocator"),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            run_target_ids = {target["task_id"] for target in payload["run_targets"]}
+
+            self.assertIn(runnable_task_id, run_target_ids)
+            self.assertNotIn(blocked_task_id, run_target_ids)
+            self.assertNotIn(no_grant_task_id, run_target_ids)
 
     def test_lifecycle_start_rejects_unknown_provider(self):
         with tempfile.TemporaryDirectory() as tmpdir:

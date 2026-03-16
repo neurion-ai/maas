@@ -167,6 +167,157 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertTrue(artifacts_by_state["restored"]["restored_from_quarantine"])
             self.assertEqual(artifacts_by_state["restored"]["provider_type"], "python_script")
 
+    def test_artifact_detail_api_exposes_preview_metadata_and_download(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Detail Test",
+                description="Artifacts detail test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_detail", project_id, "Artifact Detail Agent"),
+                )
+                task_id = "task_artifact_detail"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact detail task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_detail",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_detail",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting artifact detail test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "detail-artifact.json")
+                artifact_body = '{\n  "result": "ok",\n  "notes": "artifact detail"\n}\n'
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write(artifact_body)
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="provider_report",
+                    path=artifact_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            detail_response = client.get(f"/api/artifacts/{artifact_id}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertEqual(detail_payload["artifact_id"], artifact_id)
+            self.assertEqual(detail_payload["preview"]["kind"], "json")
+            self.assertIn('"result": "ok"', detail_payload["preview"]["content"])
+            self.assertEqual(detail_payload["metadata"], {})
+            self.assertEqual(detail_payload["download_url"], f"/api/artifacts/{artifact_id}/download")
+
+            download_response = client.get(detail_payload["download_url"])
+            self.assertEqual(download_response.status_code, 200)
+            self.assertEqual(download_response.text, artifact_body)
+
+    def test_artifact_detail_api_marks_missing_preview_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Artifacts Missing Detail Test",
+                description="Artifacts missing detail test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_missing_detail", project_id, "Artifact Missing Detail Agent"),
+                )
+                task_id = "task_artifact_missing_detail"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact missing detail task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_missing_detail",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_missing_detail",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting artifact missing detail test",
+                )
+                artifact_path = os.path.join(tmpdir, "missing-detail-artifact.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("missing soon\n")
+                artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                os.remove(artifact_path)
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            detail_response = client.get(f"/api/artifacts/{artifact_id}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertEqual(detail_payload["preview"]["kind"], "unavailable")
+            self.assertEqual(detail_payload["preview"]["reason"], "missing_file")
+            self.assertIsNone(detail_payload["download_url"])
+
+            download_response = client.get(f"/api/artifacts/{artifact_id}/download")
+            self.assertEqual(download_response.status_code, 404)
+
     def test_artifacts_api_tracks_external_and_missing_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(

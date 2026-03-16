@@ -3,6 +3,7 @@ import type {
   AgentRosterResponse,
   AlertOperatorAction,
   AlertsResponse,
+  ArtifactDetail,
   ArtifactsResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
@@ -457,6 +458,21 @@ export function fetchArtifacts(
   if (params?.offset != null) query.set("offset", String(params.offset));
   const path = query.size > 0 ? `/api/artifacts?${query.toString()}` : "/api/artifacts";
   return fetchJson<ArtifactsResponse>(path, ARTIFACTS_FALLBACK, signal, onFallback);
+}
+
+export async function fetchArtifactDetail(artifactId: string, signal?: AbortSignal) {
+  const response = await fetch(`/api/artifacts/${artifactId}`, { signal });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+  return (await response.json()) as ArtifactDetail;
+}
+
+export function artifactDownloadUrl(artifactId: string) {
+  return `/api/artifacts/${artifactId}/download`;
 }
 
 export function fetchAlerts() {

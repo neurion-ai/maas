@@ -1,7 +1,12 @@
 import { startTransition, useDeferredValue, useEffect, useState } from "react";
-import { fetchArtifacts, runFailureOperatorAction } from "../lib/controlRoomApi";
+import {
+  artifactDownloadUrl,
+  fetchArtifactDetail,
+  fetchArtifacts,
+  runFailureOperatorAction
+} from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { ArtifactsResponse } from "../types";
+import type { ArtifactDetail, ArtifactsResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 const PAGE_SIZE = 25;
@@ -19,8 +24,14 @@ function formatBytes(value?: number | null) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function formatPreviewReason(reason?: string | null) {
+  return (reason ?? "unsupported_file").replaceAll("_", " ");
+}
+
 export function ArtifactsPage() {
   const [artifacts, setArtifacts] = useState<ArtifactsResponse | null>(null);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetail | null>(null);
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
   const [providerFilter, setProviderFilter] = useState("all");
@@ -29,6 +40,7 @@ export function ArtifactsPage() {
   const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDetailRefreshing, setIsDetailRefreshing] = useState(false);
   const [pendingArtifactAction, setPendingArtifactAction] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const livePulse = useLivePulse();
@@ -55,9 +67,7 @@ export function ArtifactsPage() {
       startTransition(() => {
         setArtifacts(payload);
       });
-      setNotice(
-        usedFallback ? "Artifact refresh failed; showing the most recent available snapshot." : null
-      );
+      setNotice(usedFallback ? "Artifact refresh failed; showing the most recent available snapshot." : null);
     } catch (error) {
       if (!(error instanceof Error && error.name === "AbortError")) {
         setNotice("Artifact refresh failed; showing the most recent available snapshot.");
@@ -83,6 +93,45 @@ export function ArtifactsPage() {
     void loadArtifacts();
   }, [livePulse]);
 
+  useEffect(() => {
+    const visibleIds = (artifacts?.items ?? []).map((item) => item.artifact_id);
+    if (visibleIds.length === 0) {
+      setSelectedArtifactId(null);
+      setSelectedArtifact(null);
+      return;
+    }
+    if (!selectedArtifactId || !visibleIds.includes(selectedArtifactId)) {
+      setSelectedArtifactId(visibleIds[0]);
+    }
+  }, [artifacts, selectedArtifactId]);
+
+  useEffect(() => {
+    if (!selectedArtifactId) {
+      setSelectedArtifact(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    async function loadDetail() {
+      setIsDetailRefreshing(true);
+      try {
+        const payload = await fetchArtifactDetail(selectedArtifactId, controller.signal);
+        setSelectedArtifact(payload);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          setNotice("Artifact detail refresh failed; keep using the latest available registry snapshot.");
+        }
+      } finally {
+        setIsDetailRefreshing(false);
+      }
+    }
+
+    void loadDetail();
+    return () => {
+      controller.abort();
+    };
+  }, [selectedArtifactId, livePulse]);
+
   async function handleArtifactAction(artifactId: string, actionKind: "primary" | "secondary" = "primary") {
     const artifact = artifacts?.items.find((item) => item.artifact_id === artifactId);
     const operatorAction =
@@ -96,6 +145,10 @@ export function ArtifactsPage() {
     try {
       await runFailureOperatorAction(operatorAction);
       await loadArtifacts();
+      if (selectedArtifactId === artifactId) {
+        const payload = await fetchArtifactDetail(artifactId);
+        setSelectedArtifact(payload);
+      }
       if (operatorAction.action === "restore_and_requeue_quarantine_entry") {
         setNotice(`Restored quarantined artifacts and returned task ${operatorAction.related_task_id} to the queue.`);
       } else if (operatorAction.action === "restore_quarantine_entry") {
@@ -117,6 +170,8 @@ export function ArtifactsPage() {
   const visibleItems = artifacts?.items ?? [];
   const hasPreviousPage = (artifacts?.offset ?? 0) > 0;
   const hasNextPage = (artifacts?.offset ?? 0) + visibleItems.length < (artifacts?.filtered_count ?? 0);
+  const detailArtifact = selectedArtifact;
+  const downloadHref = detailArtifact ? artifactDownloadUrl(detailArtifact.artifact_id) : null;
 
   return (
     <section className="control-page">
@@ -259,7 +314,10 @@ export function ArtifactsPage() {
           </header>
           <div className="data-list">
             {visibleItems.map((item) => (
-              <div key={item.artifact_id} className="data-list__item">
+              <div
+                key={item.artifact_id}
+                className={`data-list__item ${selectedArtifactId === item.artifact_id ? "is-selected" : ""}`}
+              >
                 <div>
                   <strong>{item.file_name}</strong>
                   <p>{item.display_path}</p>
@@ -276,6 +334,13 @@ export function ArtifactsPage() {
                   <span>{item.artifact_type}</span>
                   <span>{item.exists ? formatBytes(item.size_bytes) : "Missing file"}</span>
                   <span>{new Date(item.created_at).toLocaleString()}</span>
+                  <button
+                    type="button"
+                    className="task-action task-action--secondary"
+                    onClick={() => setSelectedArtifactId(item.artifact_id)}
+                  >
+                    {selectedArtifactId === item.artifact_id ? "Inspecting" : "Inspect"}
+                  </button>
                   {item.operator_action ? (
                     <button
                       type="button"
@@ -322,6 +387,139 @@ export function ArtifactsPage() {
           </div>
         </article>
 
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Artifact detail</h2>
+              <p>Inspect file origin, quarantine history, metadata, and a safe inline preview.</p>
+            </div>
+            <div className="task-card__actions">
+              <div className="status-chip">
+                <span className={`status-chip__dot ${isDetailRefreshing ? "is-live" : ""}`} />
+                {isDetailRefreshing ? "Refreshing detail" : "Artifact detail"}
+              </div>
+            </div>
+          </header>
+          {detailArtifact ? (
+            <div className="artifact-detail">
+              <div className="artifact-detail__header">
+                <div>
+                  <strong>{detailArtifact.file_name}</strong>
+                  <p>{detailArtifact.display_path}</p>
+                </div>
+                <div className="artifact-detail__actions">
+                  <span className={`goal-status goal-status--${detailArtifact.artifact_state}`}>{detailArtifact.artifact_state}</span>
+                  {detailArtifact.download_url ? (
+                    <a
+                      className="task-action task-action--secondary artifact-download-link"
+                      href={downloadHref ?? undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Download
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="artifact-detail__grid">
+                <div>
+                  <span>Task</span>
+                  <strong>{detailArtifact.task_title ?? detailArtifact.task_id ?? "Unlinked task"}</strong>
+                </div>
+                <div>
+                  <span>Provider</span>
+                  <strong>{detailArtifact.provider_type ?? "unknown"}</strong>
+                </div>
+                <div>
+                  <span>Agent</span>
+                  <strong>{detailArtifact.agent_name ?? detailArtifact.agent_id ?? "Unknown agent"}</strong>
+                </div>
+                <div>
+                  <span>Artifact type</span>
+                  <strong>{detailArtifact.artifact_type}</strong>
+                </div>
+              </div>
+
+              <div className="artifact-detail__grid">
+                <div>
+                  <span>Workspace path</span>
+                  <strong>{detailArtifact.display_path}</strong>
+                </div>
+                <div>
+                  <span>Absolute path</span>
+                  <strong>{detailArtifact.absolute_path ?? detailArtifact.path}</strong>
+                </div>
+                <div>
+                  <span>Session</span>
+                  <strong>{detailArtifact.session_id ?? "No session"}</strong>
+                </div>
+                <div>
+                  <span>Created</span>
+                  <strong>{new Date(detailArtifact.created_at).toLocaleString()}</strong>
+                </div>
+              </div>
+
+              {detailArtifact.quarantine_entry ? (
+                <div className="artifact-detail__section">
+                  <h3>Quarantine incident</h3>
+                  <div className="artifact-detail__grid">
+                    <div>
+                      <span>Queue</span>
+                      <strong>{detailArtifact.quarantine_entry.queue_id}</strong>
+                    </div>
+                    <div>
+                      <span>Status</span>
+                      <strong>{detailArtifact.quarantine_entry.status}</strong>
+                    </div>
+                    <div>
+                      <span>Reason</span>
+                      <strong>{detailArtifact.quarantine_entry.reason ?? detailArtifact.quarantine_reason ?? "Not recorded"}</strong>
+                    </div>
+                    <div>
+                      <span>Resolved</span>
+                      <strong>
+                        {detailArtifact.quarantine_entry.resolved_at
+                          ? new Date(detailArtifact.quarantine_entry.resolved_at).toLocaleString()
+                          : "Still open"}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="artifact-detail__section">
+                <h3>Preview</h3>
+                {detailArtifact.preview.kind === "unavailable" ? (
+                  <p>Preview unavailable: {formatPreviewReason(detailArtifact.preview.reason)}.</p>
+                ) : (
+                  <>
+                    <p>
+                      {detailArtifact.preview.kind === "json" ? "JSON preview" : "Text preview"}
+                      {detailArtifact.preview.truncated ? " (truncated)" : ""}
+                    </p>
+                    <pre className="artifact-preview">{detailArtifact.preview.content}</pre>
+                  </>
+                )}
+              </div>
+
+              <div className="artifact-detail__section">
+                <h3>Metadata</h3>
+                <pre className="artifact-preview">{JSON.stringify(detailArtifact.metadata, null, 2)}</pre>
+              </div>
+            </div>
+          ) : (
+            <div className="data-list__item">
+              <div>
+                <strong>No artifact selected.</strong>
+                <p>Select an artifact row to inspect its metadata and safe file preview.</p>
+              </div>
+            </div>
+          )}
+        </article>
+      </section>
+
+      <section className="overview-grid">
         <article className="data-panel">
           <header className="data-panel__header">
             <div>

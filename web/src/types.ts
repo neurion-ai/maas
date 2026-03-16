@@ -205,6 +205,7 @@ export interface RepeatedFailureItem {
   task_title?: string | null;
   failure_count: number;
   latest_failure_at?: string | null;
+  operator_action?: AlertOperatorAction;
 }
 
 export interface FailuresResponse {

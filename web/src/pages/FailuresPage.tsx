@@ -3,6 +3,7 @@ import {
   dismissQuarantineEntry,
   fetchFailures,
   fetchQuarantineQueue,
+  runAlertOperatorAction,
   runFailureOperatorAction,
   restoreAndRequeueQuarantineEntry,
   restoreQuarantineEntry
@@ -15,6 +16,7 @@ export function FailuresPage() {
   const [failures, setFailures] = useState<FailuresResponse | null>(null);
   const [quarantineQueue, setQuarantineQueue] = useState<QuarantineQueueResponse | null>(null);
   const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
+  const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const [pendingQueueAction, setPendingQueueAction] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const livePulse = useLivePulse();
@@ -108,6 +110,25 @@ export function FailuresPage() {
       setNotice("Failure action failed; keep the incident under operator review.");
     } finally {
       setPendingFailureAction(null);
+    }
+  }
+
+  async function handleRepeatedFailureAction(taskId: string) {
+    const repeatedFailure = failures?.repeated_tasks.find((item) => item.task_id === taskId);
+    if (!repeatedFailure?.operator_action) {
+      return;
+    }
+
+    setPendingRepeatedFailureAction(`${taskId}:${repeatedFailure.operator_action.action}`);
+    setNotice(null);
+    try {
+      await runAlertOperatorAction(repeatedFailure.operator_action);
+      await reload();
+      setNotice(`Resolved the repeated-failure incident for ${taskId}.`);
+    } catch {
+      setNotice("Repeated-failure resolution failed; keep the task under operator review.");
+    } finally {
+      setPendingRepeatedFailureAction(null);
     }
   }
 
@@ -287,6 +308,18 @@ export function FailuresPage() {
                   <span>
                     {item.latest_failure_at ? new Date(item.latest_failure_at).toLocaleString() : "No timestamp"}
                   </span>
+                  {item.operator_action ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--approve"
+                      disabled={pendingRepeatedFailureAction === `${item.task_id}:${item.operator_action.action}`}
+                      onClick={() => void handleRepeatedFailureAction(item.task_id)}
+                    >
+                      {pendingRepeatedFailureAction === `${item.task_id}:${item.operator_action.action}`
+                        ? "Resolving..."
+                        : item.operator_action.label}
+                    </button>
+                  ) : null}
                 </div>
               </div>
             ))}

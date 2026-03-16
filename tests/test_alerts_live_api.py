@@ -310,6 +310,100 @@ class AlertsAndLiveApiTest(unittest.TestCase):
                 },
             )
 
+    def test_failures_api_exposes_repeated_failure_operator_action_when_alert_is_open(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Repeated Failure Action Test",
+                description="Repeated failure action test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, failure_type, summary, detail_json
+                    ) VALUES
+                        ('fail_repeat_one', ?, ?, 'session_failed', 'First repeated failure', '{}'),
+                        ('fail_repeat_two', ?, ?, 'session_failed', 'Second repeated failure', '{}')
+                    """,
+                    (project_id, task_id, project_id, task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES (
+                        'alert_repeated_failure_section',
+                        ?,
+                        'critical',
+                        'Repeated task failures',
+                        ?,
+                        'open'
+                    )
+                    """,
+                    (
+                        project_id,
+                        "Task {0} (Define project workspace contracts) has failed 2 times. Latest failure: Second repeated failure".format(
+                            task_id
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            repeated_task = client.get("/api/failures").json()["repeated_tasks"][0]
+
+            self.assertEqual(
+                repeated_task["operator_action"],
+                {
+                    "action": "resolve_repeated_failures",
+                    "label": "Resolve repeated failures",
+                    "resource_type": "task",
+                    "resource_id": task_id,
+                },
+            )
+
+    def test_failures_api_omits_repeated_failure_operator_action_without_open_alert(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Repeated Failure No Action Test",
+                description="Repeated failure no action test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, failure_type, summary, detail_json
+                    ) VALUES
+                        ('fail_repeat_three', ?, ?, 'session_failed', 'First repeated failure', '{}'),
+                        ('fail_repeat_four', ?, ?, 'session_failed', 'Second repeated failure', '{}')
+                    """,
+                    (project_id, task_id, project_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            repeated_task = client.get("/api/failures").json()["repeated_tasks"][0]
+
+            self.assertNotIn("operator_action", repeated_task)
+
     def test_failed_session_auto_retry_resolves_task_failure_alert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

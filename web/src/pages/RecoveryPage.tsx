@@ -527,7 +527,10 @@ export function RecoveryPage() {
   }
 
   async function handleOpenFailureAlertAction(alertId: string) {
-    const alert = recovery?.open_failure_alerts.find((item) => item.alert_id === alertId);
+    const alert = [
+      ...(recovery?.open_failure_alerts ?? []),
+      ...(recovery?.open_stale_agent_alerts ?? [])
+    ].find((item) => item.alert_id === alertId);
     if (!alert?.operator_action) {
       return;
     }

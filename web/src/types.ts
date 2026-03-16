@@ -557,8 +557,10 @@ export interface RecoveryPolicyResponse {
     recover_and_requeue_delays: RecoveryDelayPreviewItem[];
   };
   task_retry_overrides: RecoveryTaskItem[];
+  recoverable_blocked_tasks: RecoveryTaskItem[];
   task_retry_history: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
+  open_quarantine_entries: QuarantineQueueItem[];
 }
 
 export interface LiveSnapshot {

@@ -1,14 +1,19 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
 import {
+  dismissQuarantineEntry,
   fetchRecoveryPolicy,
+  recoverAndRequeueTask,
+  recoverTask,
   releaseTaskRetryBackoff,
   resetTaskRetryState,
+  restoreAndRequeueQuarantineEntry,
+  restoreQuarantineEntry,
   setRecoveryPolicy,
   setTaskRetryLimit
 } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { RecoveryPolicyResponse, RecoveryPolicySettings, RecoveryTaskItem } from "../types";
+import type { QuarantineQueueItem, RecoveryPolicyResponse, RecoveryPolicySettings, RecoveryTaskItem } from "../types";
 
 type RecoveryDraft = Record<keyof RecoveryPolicySettings, string>;
 
@@ -86,7 +91,10 @@ function RecoveryTaskList({
   onRetryLimitChange,
   onPrimaryAction,
   primaryActionLabel,
-  pendingPrimaryActionLabel
+  pendingPrimaryActionLabel,
+  onSecondaryAction,
+  secondaryActionLabel,
+  pendingSecondaryActionLabel
 }: {
   items: RecoveryTaskItem[];
   pendingTaskId: string | null;
@@ -94,6 +102,9 @@ function RecoveryTaskList({
   onPrimaryAction?: (taskId: string) => void;
   primaryActionLabel?: string;
   pendingPrimaryActionLabel?: string;
+  onSecondaryAction?: (taskId: string) => void;
+  secondaryActionLabel?: string;
+  pendingSecondaryActionLabel?: string;
 }) {
   return (
     <div className="data-list">
@@ -135,6 +146,18 @@ function RecoveryTaskList({
                 {pendingTaskId === item.task_id ? (pendingPrimaryActionLabel ?? "Working...") : (primaryActionLabel ?? "Run action")}
               </button>
             ) : null}
+            {onSecondaryAction ? (
+              <button
+                type="button"
+                className="task-action task-action--secondary"
+                disabled={pendingTaskId === item.task_id}
+                onClick={() => onSecondaryAction(item.task_id)}
+              >
+                {pendingTaskId === item.task_id
+                  ? (pendingSecondaryActionLabel ?? "Working...")
+                  : (secondaryActionLabel ?? "Run action")}
+              </button>
+            ) : null}
             <label className="task-inline-control">
               <span>Retry limit</span>
               <select
@@ -158,12 +181,80 @@ function RecoveryTaskList({
   );
 }
 
+function RecoveryQuarantineList({
+  entries,
+  pendingActionKey,
+  onRestore,
+  onRestoreAndRequeue,
+  onDismiss
+}: {
+  entries: QuarantineQueueItem[];
+  pendingActionKey: string | null;
+  onRestore: (queueId: string) => void;
+  onRestoreAndRequeue: (queueId: string) => void;
+  onDismiss: (queueId: string) => void;
+}) {
+  return (
+    <div className="data-list">
+      {entries.map((entry) => {
+        const canRestoreAndRequeue =
+          entry.task_status === "blocked" && ["session_failed", "stale_session"].includes(entry.task_review_state ?? "");
+        return (
+          <div key={entry.queue_id} className="data-list__item">
+            <div>
+              <strong>{entry.task_title ?? entry.task_id ?? entry.queue_id}</strong>
+              <p>
+                {entry.reason || entry.summary || "Quarantined artifacts awaiting operator review."}
+              </p>
+              <p>
+                Artifacts: {entry.artifact_count}
+                {entry.failure_type ? ` | ${entry.failure_type}` : ""}
+              </p>
+              <p>
+                Task state: {entry.task_status ?? "unknown"}
+                {entry.task_review_state ? ` | ${entry.task_review_state}` : ""}
+                {entry.agent_name ? ` | ${entry.agent_name}` : ""}
+              </p>
+            </div>
+            <div className="data-list__meta">
+              <span>{new Date(entry.created_at).toLocaleString()}</span>
+              <button
+                type="button"
+                className="task-action task-action--approve"
+                disabled={pendingActionKey?.endsWith(`:${entry.queue_id}`) ?? false}
+                onClick={() => (canRestoreAndRequeue ? onRestoreAndRequeue(entry.queue_id) : onRestore(entry.queue_id))}
+              >
+                {pendingActionKey === `restore-and-requeue:${entry.queue_id}`
+                  ? "Restoring..."
+                  : pendingActionKey === `restore:${entry.queue_id}`
+                    ? "Restoring..."
+                    : canRestoreAndRequeue
+                      ? "Restore + requeue"
+                      : "Restore artifacts"}
+              </button>
+              <button
+                type="button"
+                className="task-action task-action--secondary"
+                disabled={pendingActionKey?.endsWith(`:${entry.queue_id}`) ?? false}
+                onClick={() => onDismiss(entry.queue_id)}
+              >
+                {pendingActionKey === `dismiss:${entry.queue_id}` ? "Dismissing..." : "Dismiss"}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function RecoveryPage() {
   const [recovery, setRecovery] = useState<RecoveryPolicyResponse | null>(null);
   const [draft, setDraft] = useState<RecoveryDraft | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
   const [pendingTaskActionId, setPendingTaskActionId] = useState<string | null>(null);
+  const [pendingQueueAction, setPendingQueueAction] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -271,6 +362,78 @@ export function RecoveryPage() {
       setNotice("Retry state reset failed; keep the current recovery snapshot under review.");
     } finally {
       setPendingTaskActionId(null);
+    }
+  }
+
+  async function handleRecoverTask(taskId: string) {
+    setPendingTaskActionId(taskId);
+    setNotice(null);
+    try {
+      const payload = await recoverTask(taskId);
+      await reload();
+      setNotice(`Recovered ${taskId}; task is now ${payload.status}.`);
+    } catch {
+      setNotice("Task recovery failed; keep the blocked task under operator review.");
+    } finally {
+      setPendingTaskActionId(null);
+    }
+  }
+
+  async function handleRecoverAndRequeueTask(taskId: string) {
+    setPendingTaskActionId(taskId);
+    setNotice(null);
+    try {
+      const payload = await recoverAndRequeueTask(taskId);
+      await reload();
+      setNotice(`Recovered and requeued ${taskId}; task is now ${payload.status}.`);
+    } catch {
+      setNotice("Recover and requeue failed; keep the blocked task under operator review.");
+    } finally {
+      setPendingTaskActionId(null);
+    }
+  }
+
+  async function handleRestore(queueId: string) {
+    setPendingQueueAction(`restore:${queueId}`);
+    setNotice(null);
+    try {
+      const payload = await restoreQuarantineEntry(queueId);
+      await reload();
+      setNotice(`Restored ${payload.restored_count} quarantined artifact(s) for ${queueId}.`);
+    } catch {
+      setNotice("Artifact restore failed; keep the quarantined files under review.");
+    } finally {
+      setPendingQueueAction(null);
+    }
+  }
+
+  async function handleRestoreAndRequeue(queueId: string) {
+    setPendingQueueAction(`restore-and-requeue:${queueId}`);
+    setNotice(null);
+    try {
+      const payload = await restoreAndRequeueQuarantineEntry(queueId);
+      await reload();
+      setNotice(
+        `Restored ${payload.restored_count} quarantined artifact(s) and returned task ${payload.task_id} to ${payload.task_status}.`
+      );
+    } catch {
+      setNotice("Restore and requeue failed; keep the quarantine entry under operator review.");
+    } finally {
+      setPendingQueueAction(null);
+    }
+  }
+
+  async function handleDismiss(queueId: string) {
+    setPendingQueueAction(`dismiss:${queueId}`);
+    setNotice(null);
+    try {
+      await dismissQuarantineEntry(queueId);
+      await reload();
+      setNotice(`Dismissed quarantine entry ${queueId}; artifacts remain isolated.`);
+    } catch {
+      setNotice("Quarantine dismissal failed; leave the entry open for operator review.");
+    } finally {
+      setPendingQueueAction(null);
     }
   }
 
@@ -466,6 +629,37 @@ export function RecoveryPage() {
         <article className="data-panel">
           <header className="data-panel__header">
             <div>
+              <h2>Recoverable blocked tasks</h2>
+              <p>Failure-blocked work that can be returned to the queue immediately from the recovery workbench.</p>
+            </div>
+          </header>
+          {(recovery?.recoverable_blocked_tasks ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.recoverable_blocked_tasks ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleRecoverAndRequeueTask(taskId)}
+              primaryActionLabel="Recover + requeue"
+              pendingPrimaryActionLabel="Recovering..."
+              onSecondaryAction={(taskId) => void handleRecoverTask(taskId)}
+              secondaryActionLabel="Recover"
+              pendingSecondaryActionLabel="Recovering..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No recoverable blocked tasks</strong>
+                  <p>No blocked task currently needs manual failure recovery.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
               <h2>Retry history</h2>
               <p>Tasks that have already consumed automatic retries. Reset the task state here after manual intervention to restore the retry budget.</p>
             </div>
@@ -485,6 +679,33 @@ export function RecoveryPage() {
                 <div>
                   <strong>No retry history</strong>
                   <p>No active tasks currently carry consumed retry budget.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Open quarantine queue</h2>
+              <p>Artifact incidents that are still open for operator review, with direct restore, requeue, and dismiss controls.</p>
+            </div>
+          </header>
+          {(recovery?.open_quarantine_entries ?? []).length ? (
+            <RecoveryQuarantineList
+              entries={recovery?.open_quarantine_entries ?? []}
+              pendingActionKey={pendingQueueAction}
+              onRestore={(queueId) => void handleRestore(queueId)}
+              onRestoreAndRequeue={(queueId) => void handleRestoreAndRequeue(queueId)}
+              onDismiss={(queueId) => void handleDismiss(queueId)}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No open quarantine incidents</strong>
+                  <p>No quarantined artifacts are currently waiting for operator review.</p>
                 </div>
               </div>
             </div>

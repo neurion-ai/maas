@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
+from maas.services.lifecycle import end_session, produce_artifact, start_session
 
 
 class RecoveryPolicyApiTest(unittest.TestCase):
@@ -164,6 +166,55 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             backoff_items = {item["task_id"]: item for item in payload["active_retry_backoff"]}
             self.assertEqual(backoff_items[backoff_task_id]["review_state"], "retry_backoff")
             self.assertEqual(backoff_items[backoff_task_id]["next_retry_reason"], "session_timed_out")
+
+    def test_recovery_policy_endpoint_includes_recoverable_blocked_tasks_and_open_quarantine_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "recovery-policy-test.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("quarantine me")
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting recovery policy queue test",
+                )
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                end_session(connection, session_id, "failed", "Recovery policy queue test failure", project_paths=result["paths"])
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["recoverable_blocked_tasks"], 1)
+            self.assertEqual(payload["summary"]["open_quarantine_entries"], 1)
+
+            recoverable_items = {item["task_id"]: item for item in payload["recoverable_blocked_tasks"]}
+            self.assertEqual(recoverable_items[task_id]["status"], "blocked")
+            self.assertEqual(recoverable_items[task_id]["review_state"], "session_failed")
+
+            quarantine_entries = payload["open_quarantine_entries"]
+            self.assertEqual(len(quarantine_entries), 1)
+            self.assertEqual(quarantine_entries[0]["task_id"], task_id)
+            self.assertEqual(quarantine_entries[0]["status"], "open")
+            self.assertEqual(quarantine_entries[0]["artifact_count"], 1)
+            self.assertEqual(quarantine_entries[0]["task_review_state"], "session_failed")
 
     def test_recovery_policy_endpoint_excludes_terminal_tasks_from_override_and_backoff_lists(self):
         with tempfile.TemporaryDirectory() as tmpdir:

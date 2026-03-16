@@ -250,6 +250,109 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.json()["detail"], "limit must be an integer")
 
+    def test_artifacts_api_supports_server_side_filters_and_pagination(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Filter Test",
+                description="Artifacts filter test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_filter", project_id, "Artifact Filter Agent"),
+                )
+                for index in range(3):
+                    task_id = f"task_artifact_filter_{index}"
+                    connection.execute(
+                        """
+                        INSERT INTO tasks (
+                            task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                        ) VALUES (?, ?, ?, '', 'ready', 60, '[]')
+                        """,
+                        (task_id, project_id, f"Artifact filter task {index}"),
+                    )
+                    grant_task_capabilities(
+                        connection,
+                        project_id,
+                        task_id,
+                        "agent_artifact_filter",
+                        TASK_EXECUTION_CAPABILITIES,
+                        granted_by="test_setup",
+                    )
+                    session_id = start_session(
+                        connection,
+                        project_id=project_id,
+                        agent_id="agent_artifact_filter",
+                        task_id=task_id,
+                        provider_type="python_script",
+                        status_message=f"Starting artifact filter task {index}",
+                    )
+                    artifact_path = os.path.join(result["paths"].artifacts_dir, f"filter-artifact-{index}.txt")
+                    with open(artifact_path, "w", encoding="utf-8") as handle:
+                        handle.write(f"filter {index}\n")
+                    produce_artifact(
+                        connection,
+                        project_id=project_id,
+                        session_id=session_id,
+                        task_id=task_id,
+                        artifact_type="note" if index < 2 else "provider_report",
+                        path=artifact_path,
+                    )
+                    if index == 0:
+                        end_session(
+                            connection,
+                            session_id,
+                            "failed",
+                            "Filtered quarantined artifact",
+                            project_paths=result["paths"],
+                        )
+                    elif index == 1:
+                        os.remove(artifact_path)
+                        end_session(connection, session_id, "completed", "Completed missing-file artifact")
+                    else:
+                        end_session(connection, session_id, "completed", "Completed artifact")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+
+            filtered_payload = client.get(
+                "/api/artifacts?state=quarantined&artifact_type=note&search=filter-artifact&limit=1"
+            ).json()
+            self.assertEqual(filtered_payload["filtered_count"], 1)
+            self.assertEqual(len(filtered_payload["items"]), 1)
+            self.assertEqual(filtered_payload["items"][0]["artifact_state"], "quarantined")
+            self.assertEqual(filtered_payload["selected_filters"]["state"], "quarantined")
+            self.assertEqual(filtered_payload["selected_filters"]["artifact_type"], "note")
+
+            missing_payload = client.get("/api/artifacts?missing_only=true&limit=1&offset=0").json()
+            self.assertEqual(missing_payload["filtered_count"], 1)
+            self.assertFalse(missing_payload["items"][0]["exists"])
+            self.assertTrue(missing_payload["selected_filters"]["missing_only"])
+
+    def test_artifacts_api_rejects_invalid_offset(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Artifacts Offset Test",
+                description="Artifacts offset test",
+                project_type="custom",
+            )
+
+            response = TestClient(create_app(tmpdir)).get("/api/artifacts?offset=-1")
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "offset must be zero or greater")
+
 
 if __name__ == "__main__":
     unittest.main()

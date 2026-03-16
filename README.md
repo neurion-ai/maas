@@ -42,6 +42,8 @@ Legend:
 - [x] Real local Claude Code CLI integration behind explicit provider config
 - [x] Real local OpenAI Codex CLI integration behind explicit provider config
 - [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
+- [x] Artifact browser and artifact-state visibility in the control room
+- [x] Shared live transport with websocket, SSE, and polling fallback status in the control room shell
 
 ### Still to do on `main`
 
@@ -79,8 +81,10 @@ The project bootstrap creates:
 - `GET /api/alerts`
 - `GET /api/escalations`
 - `GET /api/failures`
+- `GET /api/artifacts`
 - `GET /api/quarantine`
 - `GET /api/live`
+- `WS /api/live/ws`
 - `GET /api/overview`
 - `GET /api/goals/tree`
 - `GET /api/providers`
@@ -147,3 +151,4 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - `claude_code` supports both the simulated adapter and a real local `claude -p` path when enabled in `project.yaml`
 - `openai_codex` supports both the simulated adapter and a real local `codex exec` path when enabled in `project.yaml`
 - `/api/providers` and the Providers view expose configured mode, effective mode, config warnings, recent provider runs, safe manual run targets, mode switching, and editable runtime settings
+- `/api/artifacts` and the Artifacts view expose artifact state, missing-file detection, quarantine metadata, and server-side filtering

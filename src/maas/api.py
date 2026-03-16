@@ -18,6 +18,7 @@ from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_que
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
 from maas.services.provider_runtime import provider_runtime_overview, run_provider_task, set_provider_mode, set_provider_settings
+from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
@@ -144,6 +145,11 @@ class ProviderModeRequest(BaseModel):
 class ProviderSettingsRequest(BaseModel):
     actor_id: str
     settings: dict = {}
+
+
+class RecoveryPolicyRequest(BaseModel):
+    actor_id: str
+    policy: dict = {}
 
 
 def _parse_limit(value, default):
@@ -446,6 +452,18 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/recovery-policy")
+    def recovery_policy():
+        connection = connect(paths)
+        try:
+            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+            project_id = project["project_id"] if project else None
+            return fetch_project_recovery_overview(connection, project_id=project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.post("/api/escalations/request")
     def escalation_request_action(payload: EscalationRequestPayload):
         connection = connect(paths)
@@ -530,6 +548,25 @@ def create_app(project_root="."):
             project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
             project_id = project["project_id"] if project else None
             return set_provider_settings(connection, provider_id, payload.actor_id, payload.settings, project_id=project_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/recovery-policy/actions/set")
+    def recovery_policy_set_action(payload: RecoveryPolicyRequest):
+        connection = connect(paths)
+        try:
+            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+            project_id = project["project_id"] if project else None
+            return update_project_recovery_policy(
+                connection,
+                payload.actor_id,
+                payload.policy,
+                project_id=project_id,
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

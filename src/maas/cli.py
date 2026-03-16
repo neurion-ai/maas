@@ -13,6 +13,7 @@ from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.provider_runtime import run_provider_task
+from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import (
@@ -171,6 +172,17 @@ def build_parser():
     worker_parser.add_argument("--task-id", required=True)
     worker_parser.add_argument("--provider-type", default="python_script")
     worker_parser.add_argument("--artifact-path", default=".maas/artifacts/example.txt")
+
+    recovery_parser = subparsers.add_parser("recovery")
+    recovery_subparsers = recovery_parser.add_subparsers(dest="recovery_command", required=True)
+
+    recovery_show_parser = recovery_subparsers.add_parser("show")
+    recovery_show_parser.add_argument("--project-root", default=".")
+
+    recovery_set_parser = recovery_subparsers.add_parser("set")
+    recovery_set_parser.add_argument("--project-root", default=".")
+    recovery_set_parser.add_argument("--actor-id", required=True)
+    recovery_set_parser.add_argument("--policy-json", default="{}")
 
     lifecycle_parser = subparsers.add_parser("lifecycle")
     lifecycle_subparsers = lifecycle_parser.add_subparsers(dest="lifecycle_command", required=True)
@@ -393,6 +405,27 @@ def command_worker(args):
         connection.close()
 
 
+def command_recovery(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.recovery_command == "show":
+            print(json.dumps(fetch_project_recovery_overview(connection), indent=2))
+        elif args.recovery_command == "set":
+            print(
+                json.dumps(
+                    update_project_recovery_policy(
+                        connection,
+                        args.actor_id,
+                        json.loads(args.policy_json),
+                    ),
+                    indent=2,
+                )
+            )
+    finally:
+        connection.close()
+
+
 def command_lifecycle(args):
     paths = project_paths(args.project_root)
     connection = connect(paths)
@@ -465,6 +498,8 @@ def main(argv=None):
         command_escalation(args)
     elif args.command == "worker":
         command_worker(args)
+    elif args.command == "recovery":
+        command_recovery(args)
     elif args.command == "lifecycle":
         command_lifecycle(args)
 

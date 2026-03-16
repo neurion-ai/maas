@@ -375,6 +375,11 @@ select {
   color: var(--muted);
 }
 
+.recovery-settings {
+  display: grid;
+  gap: 18px;
+}
+
 .data-list {
   display: grid;
   gap: 12px;

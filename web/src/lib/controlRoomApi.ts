@@ -12,6 +12,7 @@ import type {
   LiveSnapshot,
   OverviewResponse,
   ProvidersResponse,
+  RecoveryPolicyResponse,
   QuarantineQueueResponse,
   ReopenQuarantineEntryResponse,
   RestoreAndRequeueQuarantineEntryResponse,
@@ -336,6 +337,49 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
   run_targets: []
 };
 
+const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
+  project_id: "proj_fallback",
+  policy: {
+    auto_retry_timeout_sessions: false,
+    auto_retry_failed_sessions: false,
+    max_timed_out_retries: 1,
+    max_failed_session_retries: 1,
+    timed_out_retry_cooldown_seconds: 60,
+    failed_session_retry_cooldown_seconds: 120,
+    recover_and_requeue_cooldown_seconds: 30,
+    retry_backoff_multiplier: 2,
+    retry_backoff_max_seconds: 900
+  },
+  defaults: {
+    auto_retry_timeout_sessions: false,
+    auto_retry_failed_sessions: false,
+    max_timed_out_retries: 1,
+    max_failed_session_retries: 1,
+    timed_out_retry_cooldown_seconds: 60,
+    failed_session_retry_cooldown_seconds: 120,
+    recover_and_requeue_cooldown_seconds: 30,
+    retry_backoff_multiplier: 2,
+    retry_backoff_max_seconds: 900
+  },
+  summary: {
+    retry_backoff_tasks: 0,
+    tasks_with_retry_history: 0,
+    recoverable_blocked_tasks: 0,
+    open_quarantine_entries: 0,
+    open_failure_alerts: 0,
+    open_repeated_failure_alerts: 0
+  },
+  backoff_preview: {
+    timed_out_retry_delays: [{ attempt: 1, delay_seconds: 60 }],
+    failed_session_retry_delays: [{ attempt: 1, delay_seconds: 120 }],
+    recover_and_requeue_delays: [
+      { attempt: 1, delay_seconds: 30 },
+      { attempt: 2, delay_seconds: 60 },
+      { attempt: 3, delay_seconds: 120 }
+    ]
+  }
+};
+
 async function fetchJson<T>(
   path: string,
   fallback: T,
@@ -474,6 +518,10 @@ export function fetchProviders() {
   return fetchJson<ProvidersResponse>("/api/providers", PROVIDERS_FALLBACK);
 }
 
+export function fetchRecoveryPolicy() {
+  return fetchJson<RecoveryPolicyResponse>("/api/recovery-policy", RECOVERY_POLICY_FALLBACK);
+}
+
 export async function runProviderTask(providerId: string, projectId: string, agentId: string, taskId: string) {
   const payload = await postJson<{
     session_id: string;
@@ -503,6 +551,16 @@ export async function setProviderSettings(providerId: string, settings: Record<s
   const payload = await postJson(`/api/providers/${providerId}/actions/set-settings`, {
     actor_id: "agent_allocator",
     settings
+  });
+  return payload;
+}
+
+export async function setRecoveryPolicy(
+  policy: Record<string, string | number | boolean>
+) {
+  const payload = await postJson("/api/recovery-policy/actions/set", {
+    actor_id: "agent_allocator",
+    policy
   });
   return payload;
 }

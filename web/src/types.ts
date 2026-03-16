@@ -500,6 +500,42 @@ export interface ProvidersResponse {
   run_targets: ProviderRunTarget[];
 }
 
+export interface RecoveryDelayPreviewItem {
+  attempt: number;
+  delay_seconds: number;
+}
+
+export interface RecoveryPolicySettings {
+  auto_retry_timeout_sessions: boolean;
+  auto_retry_failed_sessions: boolean;
+  max_timed_out_retries: number;
+  max_failed_session_retries: number;
+  timed_out_retry_cooldown_seconds: number;
+  failed_session_retry_cooldown_seconds: number;
+  recover_and_requeue_cooldown_seconds: number;
+  retry_backoff_multiplier: number;
+  retry_backoff_max_seconds: number;
+}
+
+export interface RecoveryPolicyResponse {
+  project_id: string;
+  policy: RecoveryPolicySettings;
+  defaults: RecoveryPolicySettings;
+  summary: {
+    retry_backoff_tasks: number;
+    tasks_with_retry_history: number;
+    recoverable_blocked_tasks: number;
+    open_quarantine_entries: number;
+    open_failure_alerts: number;
+    open_repeated_failure_alerts: number;
+  };
+  backoff_preview: {
+    timed_out_retry_delays: RecoveryDelayPreviewItem[];
+    failed_session_retry_delays: RecoveryDelayPreviewItem[];
+    recover_and_requeue_delays: RecoveryDelayPreviewItem[];
+  };
+}
+
 export interface LiveSnapshot {
   generated_at: string;
   counts: {

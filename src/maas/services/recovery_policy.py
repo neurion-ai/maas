@@ -223,6 +223,42 @@ def _recovery_task_items(connection, project_id, where_clause, params, limit=8):
     return [dict(row) for row in rows]
 
 
+def _recovery_quarantine_entries(connection, project_id, limit=8):
+    rows = connection.execute(
+        """
+        SELECT
+            quarantine_queue.queue_id,
+            quarantine_queue.project_id,
+            quarantine_queue.session_id,
+            quarantine_queue.task_id,
+            quarantine_queue.failure_id,
+            quarantine_queue.status,
+            quarantine_queue.reason,
+            quarantine_queue.artifact_count,
+            quarantine_queue.resolution_note,
+            quarantine_queue.created_at,
+            quarantine_queue.updated_at,
+            quarantine_queue.resolved_at,
+            failure_log.failure_type,
+            failure_log.summary,
+            tasks.title AS task_title,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
+            agents.display_name AS agent_name
+        FROM quarantine_queue
+        LEFT JOIN failure_log ON failure_log.failure_id = quarantine_queue.failure_id
+        LEFT JOIN tasks ON tasks.task_id = quarantine_queue.task_id
+        LEFT JOIN agents ON agents.agent_id = failure_log.agent_id
+        WHERE quarantine_queue.project_id = ?
+          AND quarantine_queue.status = 'open'
+        ORDER BY quarantine_queue.created_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def fetch_project_recovery_overview(connection, project_id=None):
     project_id = _resolve_project_id(connection, project_id)
     policy = fetch_project_recovery_policy(connection, project_id)
@@ -254,6 +290,12 @@ def fetch_project_recovery_overview(connection, project_id=None):
             "tasks.auto_retry_limit IS NOT NULL AND tasks.status NOT IN ('done', 'cancelled')",
             [],
         ),
+        "recoverable_blocked_tasks": _recovery_task_items(
+            connection,
+            project_id,
+            "tasks.status = 'blocked' AND tasks.review_state IN ('session_failed', 'stale_session')",
+            [],
+        ),
         "task_retry_history": _recovery_task_items(
             connection,
             project_id,
@@ -269,6 +311,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
             ),
             [],
         ),
+        "open_quarantine_entries": _recovery_quarantine_entries(connection, project_id),
     }
 
 

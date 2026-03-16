@@ -380,8 +380,10 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     ]
   },
   task_retry_overrides: [],
+  recoverable_blocked_tasks: [],
   task_retry_history: [],
-  active_retry_backoff: []
+  active_retry_backoff: [],
+  open_quarantine_entries: []
 };
 
 async function fetchJson<T>(
@@ -505,6 +507,13 @@ export async function reopenQuarantineEntry(queueId: string) {
     actor_id: "agent_allocator"
   });
   return payload as ReopenQuarantineEntryResponse;
+}
+
+export async function recoverTask(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/recover`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
 }
 
 export async function recoverAndRequeueTask(taskId: string) {

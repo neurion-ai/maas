@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchOverview, runFailureOperatorAction, runSupervisorPass } from "../lib/controlRoomApi";
+import { fetchOverview, runAlertOperatorAction, runFailureOperatorAction, runSupervisorPass } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OverviewResponse, SupervisorRunResponse } from "../types";
 import { StatCard } from "../components/StatCard";
@@ -10,6 +10,7 @@ export function OverviewPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isRunningSupervisor, setIsRunningSupervisor] = useState(false);
   const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
+  const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -81,6 +82,25 @@ export function OverviewPage() {
       setNotice("Failure action failed; keep the incident under operator review.");
     } finally {
       setPendingFailureAction(null);
+    }
+  }
+
+  async function handleOverviewRepeatedFailureAction(taskId: string) {
+    const repeatedFailure = overview?.repeated_failures.find((item) => item.task_id === taskId);
+    if (!repeatedFailure?.operator_action) {
+      return;
+    }
+
+    setPendingRepeatedFailureAction(`${taskId}:${repeatedFailure.operator_action.action}`);
+    setNotice(null);
+    try {
+      await runAlertOperatorAction(repeatedFailure.operator_action);
+      setOverview(await fetchOverview());
+      setNotice(`Resolved the repeated-failure incident for ${taskId}.`);
+    } catch {
+      setNotice("Repeated-failure resolution failed; keep the task under operator review.");
+    } finally {
+      setPendingRepeatedFailureAction(null);
     }
   }
 
@@ -241,6 +261,41 @@ export function OverviewPage() {
                           ? "Dismissing..."
                           : item.secondary_operator_action.label
                         : item.secondary_operator_action.label}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <h2>Repeated failures</h2>
+            <p>Tasks that are still over the repeated-failure threshold and may need explicit operator triage.</p>
+          </header>
+          <div className="data-list">
+            {(overview?.repeated_failures ?? []).map((item) => (
+              <div key={item.task_id} className="data-list__item">
+                <div>
+                  <strong>{item.task_title ?? item.task_id}</strong>
+                  <p>{item.failure_count} logged failures</p>
+                </div>
+                <div className="data-list__meta">
+                  <span>{item.task_id}</span>
+                  <span>
+                    {item.latest_failure_at ? new Date(item.latest_failure_at).toLocaleTimeString() : "No timestamp"}
+                  </span>
+                  {item.operator_action ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--approve"
+                      disabled={pendingRepeatedFailureAction === `${item.task_id}:${item.operator_action.action}`}
+                      onClick={() => void handleOverviewRepeatedFailureAction(item.task_id)}
+                    >
+                      {pendingRepeatedFailureAction === `${item.task_id}:${item.operator_action.action}`
+                        ? "Resolving..."
+                        : item.operator_action.label}
                     </button>
                   ) : null}
                 </div>

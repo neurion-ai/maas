@@ -219,6 +219,68 @@ class DashboardApiTest(unittest.TestCase):
                 },
             )
 
+    def test_overview_repeated_failures_include_operator_actions_when_alert_is_open(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Dashboard Repeated Failure Actions Test",
+                description="Dashboard repeated failure actions test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, failure_type, summary, detail_json
+                    ) VALUES
+                        (?, ?, ?, 'session_failed', 'First repeated failure', '{}'),
+                        (?, ?, ?, 'session_failed', 'Second repeated failure', '{}')
+                    """,
+                    (generate_id("fail"), project_id, task_id, generate_id("fail"), project_id, task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES (
+                        ?,
+                        ?,
+                        'critical',
+                        'Repeated task failures',
+                        ?,
+                        'open'
+                    )
+                    """,
+                    (
+                        generate_id("alert"),
+                        project_id,
+                        "Task {0} (Define project workspace contracts) has failed 2 times. Latest failure: Second repeated failure".format(
+                            task_id
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            repeated_failure = client.get("/api/overview").json()["repeated_failures"][0]
+
+            self.assertEqual(
+                repeated_failure["operator_action"],
+                {
+                    "action": "resolve_repeated_failures",
+                    "label": "Resolve repeated failures",
+                    "resource_type": "task",
+                    "resource_id": task_id,
+                },
+            )
+
     def test_agent_roster_is_enriched(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Roster Test", description="Roster test", project_type="custom")

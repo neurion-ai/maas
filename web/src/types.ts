@@ -165,7 +165,11 @@ export interface FailureItem {
 }
 
 export interface FailureOperatorAction {
-  action: "recover_and_requeue_task" | "restore_failure_artifacts" | "restore_and_requeue_quarantine_entry";
+  action:
+    | "recover_and_requeue_task"
+    | "restore_failure_artifacts"
+    | "restore_and_requeue_quarantine_entry"
+    | "reopen_quarantine_entry";
   label: string;
   resource_type: "task" | "failure" | "quarantine";
   resource_id: string;

@@ -758,6 +758,19 @@ def _infer_failure_operator_action(failure):
         }
 
     if (
+        queue_id
+        and queue_status == "dismissed"
+        and failure.get("quarantined_artifact_count", 0) > 0
+    ):
+        return {
+            "action": "reopen_quarantine_entry",
+            "label": "Reopen",
+            "resource_type": "quarantine",
+            "resource_id": queue_id,
+            "related_task_id": failure.get("task_id"),
+        }
+
+    if (
         failure.get("failure_id")
         and queue_status == "open"
         and failure.get("quarantined_artifact_count", 0) > 0

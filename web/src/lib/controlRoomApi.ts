@@ -11,6 +11,7 @@ import type {
   OverviewResponse,
   ProvidersResponse,
   QuarantineQueueResponse,
+  RestoreAndRequeueQuarantineEntryResponse,
   RestoreFailureArtifactsResponse,
   RestoreQuarantineEntryResponse,
   SupervisorRunResponse
@@ -368,6 +369,16 @@ export async function restoreQuarantineEntry(queueId: string) {
     actor_id: "agent_allocator"
   });
   return payload as RestoreQuarantineEntryResponse;
+}
+
+export async function restoreAndRequeueQuarantineEntry(queueId: string) {
+  const payload = await postJson<RestoreAndRequeueQuarantineEntryResponse>(
+    `/api/quarantine/${queueId}/actions/restore-and-requeue`,
+    {
+      actor_id: "agent_allocator"
+    }
+  );
+  return payload as RestoreAndRequeueQuarantineEntryResponse;
 }
 
 export async function dismissQuarantineEntry(queueId: string) {

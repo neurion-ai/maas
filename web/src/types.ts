@@ -176,6 +176,8 @@ export interface QuarantineQueueItem {
   failure_id?: string | null;
   task_id?: string | null;
   task_title?: string | null;
+  task_status?: string | null;
+  task_review_state?: string | null;
   agent_name?: string | null;
   failure_type?: string | null;
   summary?: string | null;
@@ -228,6 +230,19 @@ export interface RestoreQuarantineEntryResponse {
   restored_artifacts: QuarantinedArtifactItem[];
   restored_count: number;
   status: "restored";
+}
+
+export interface RestoreAndRequeueQuarantineEntryResponse {
+  queue_id: string;
+  task_id: string;
+  session_id: string;
+  restored_artifacts: QuarantinedArtifactItem[];
+  restored_count: number;
+  status: "restored";
+  task_status: string;
+  task_review_state?: string | null;
+  next_retry_at?: string | null;
+  next_retry_reason?: string | null;
 }
 
 export interface DismissQuarantineEntryResponse {

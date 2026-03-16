@@ -199,8 +199,20 @@ def recover_task(connection, task_id, actor_id):
 
 def recover_and_requeue_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
+    refreshed_task = _recover_and_requeue_task(connection, task, actor_id)
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": refreshed_task["status"],
+        "review_state": refreshed_task["review_state"],
+        "next_retry_at": refreshed_task["next_retry_at"],
+        "next_retry_reason": refreshed_task["next_retry_reason"],
+    }
+
+
+def _recover_and_requeue_task(connection, task, actor_id):
     recovery_policy = fetch_project_recovery_policy(connection, task["project_id"])
-    failure_count = failure_attempt_count(connection, task_id)
+    failure_count = failure_attempt_count(connection, task["task_id"])
     cooldown_seconds = recover_and_requeue_cooldown_seconds(recovery_policy, failure_count)
     next_retry_at = retry_deadline(cooldown_seconds)
     next_retry_reason = "recover_and_requeue" if next_retry_at is not None else None
@@ -218,23 +230,15 @@ def recover_and_requeue_task(connection, task_id, actor_id):
             "cooldown_seconds": cooldown_seconds,
         },
     )
-    refresh_ready_tasks(connection)
-    refreshed_task = connection.execute(
+    refresh_ready_tasks(connection, commit=False)
+    return connection.execute(
         """
         SELECT status, review_state, next_retry_at, next_retry_reason
         FROM tasks
         WHERE task_id = ?
         """,
-        (task_id,),
+        (task["task_id"],),
     ).fetchone()
-    connection.commit()
-    return {
-        "task_id": task_id,
-        "status": refreshed_task["status"],
-        "review_state": refreshed_task["review_state"],
-        "next_retry_at": refreshed_task["next_retry_at"],
-        "next_retry_reason": refreshed_task["next_retry_reason"],
-    }
 
 
 def _load_recoverable_task(connection, task_id, actor_id):
@@ -439,6 +443,47 @@ def restore_quarantine_entry(connection, project_paths, queue_id, actor_id):
         "restored_artifacts": restored_artifacts,
         "restored_count": len(restored_artifacts),
         "status": "restored",
+    }
+
+
+def restore_and_requeue_quarantine_entry(connection, project_paths, queue_id, actor_id):
+    queue_entry = connection.execute(
+        """
+        SELECT queue_id, project_id, task_id, session_id, status
+        FROM quarantine_queue
+        WHERE queue_id = ?
+        """,
+        (queue_id,),
+    ).fetchone()
+    if queue_entry is None:
+        raise ValueError("Quarantine entry not found")
+    if queue_entry["status"] != "open":
+        raise ValueError("Only open quarantine entries can be restored and requeued")
+    if queue_entry["task_id"] is None:
+        raise ValueError("Quarantine entry is not linked to a recoverable task")
+
+    task = _load_recoverable_task(connection, queue_entry["task_id"], actor_id)
+    restored_artifacts = _restore_quarantine_session(
+        connection,
+        project_paths,
+        queue_entry,
+        actor_id,
+        resource_type="quarantine",
+        resource_id=queue_id,
+    )
+    refreshed_task = _recover_and_requeue_task(connection, task, actor_id)
+    connection.commit()
+    return {
+        "queue_id": queue_id,
+        "task_id": task["task_id"],
+        "session_id": queue_entry["session_id"],
+        "restored_artifacts": restored_artifacts,
+        "restored_count": len(restored_artifacts),
+        "status": "restored",
+        "task_status": refreshed_task["status"],
+        "task_review_state": refreshed_task["review_state"],
+        "next_retry_at": refreshed_task["next_retry_at"],
+        "next_retry_reason": refreshed_task["next_retry_reason"],
     }
 
 

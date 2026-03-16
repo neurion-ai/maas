@@ -684,6 +684,8 @@ def fetch_quarantine_queue(connection, limit=20):
             failure_log.failure_type,
             failure_log.summary,
             tasks.title AS task_title,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
             agents.display_name AS agent_name
         FROM quarantine_queue
         LEFT JOIN failure_log ON failure_log.failure_id = quarantine_queue.failure_id

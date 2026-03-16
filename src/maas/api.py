@@ -29,6 +29,7 @@ from maas.services.steering import (
     reassign_task,
     recover_agent,
     recover_task,
+    release_task_retry_backoff,
     reopen_quarantine_entry,
     restore_and_requeue_quarantine_entry,
     restore_quarantine_entry,
@@ -719,6 +720,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return set_task_retry_limit(connection, task_id, payload.actor_id, payload.auto_retry_limit)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/release-retry-backoff")
+    def task_release_retry_backoff_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return release_task_retry_backoff(connection, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

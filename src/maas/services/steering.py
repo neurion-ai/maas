@@ -261,6 +261,74 @@ def set_task_retry_limit(connection, task_id, actor_id, auto_retry_limit=None):
     return {"task_id": task_id, "auto_retry_limit": normalized_limit}
 
 
+def release_task_retry_backoff(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, review_state, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "release_task_retry_backoff", "task", task_id)
+    if task["status"] in ("done", "cancelled"):
+        raise ValueError("Retry backoff cannot be released for tasks in status {0}".format(task["status"]))
+    if task["review_state"] != "retry_backoff" and task["next_retry_at"] is None:
+        raise ValueError("Task is not currently waiting on retry backoff")
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    refreshed = refresh_ready_tasks(connection, commit=False)
+    task_after = connection.execute(
+        """
+        SELECT status, review_state, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "release_task_retry_backoff",
+        "task",
+        task_id,
+        {
+            "previous_review_state": task["review_state"],
+            "previous_next_retry_at": task["next_retry_at"],
+            "previous_next_retry_reason": task["next_retry_reason"],
+            "ready_changes": refreshed,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "retry_backoff_released",
+        "Task retry cooldown released by operator and readiness re-evaluated.",
+    )
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": task_after["status"],
+        "review_state": task_after["review_state"],
+        "next_retry_at": task_after["next_retry_at"],
+        "next_retry_reason": task_after["next_retry_reason"],
+    }
+
+
 def recover_and_requeue_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
     refreshed_task = _recover_and_requeue_task(connection, task, actor_id)

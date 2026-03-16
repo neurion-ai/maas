@@ -335,6 +335,14 @@ export interface ProviderRuntimeControls {
   model?: string;
 }
 
+export interface ProviderEditableRuntimeControls {
+  cli_command?: string;
+  timeout_seconds?: number | string;
+  permission_mode?: string;
+  sandbox?: string;
+  model?: string;
+}
+
 export interface ProviderRunSummary {
   total_runs: number;
   active_runs: number;
@@ -385,6 +393,7 @@ export interface ProviderStatusItem {
   lifecycle_phases: string[];
   available_execution_modes?: string[];
   runtime_controls?: ProviderRuntimeControls;
+  configurable_runtime_controls?: ProviderEditableRuntimeControls;
   config_warnings?: string[];
   is_runnable?: boolean;
   run_summary?: ProviderRunSummary;

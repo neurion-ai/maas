@@ -177,6 +177,10 @@ def _resolve_provider_status(provider, config):
     provider["configured_execution_mode"] = configured_mode
     provider["effective_execution_mode"] = provider["execution_mode"]
     provider["runtime_controls"] = {}
+    provider["configurable_runtime_controls"] = {
+        key: merged_settings.get(key, "")
+        for key in rules["runtime_controls"]
+    }
     provider["config_warnings"] = warnings
     provider["is_runnable"] = True
 
@@ -460,6 +464,96 @@ def update_provider_mode(connection, provider_id, actor_id, mode, project_id=Non
             actor_id,
             provider_id,
             json.dumps({"mode": persisted_mode}),
+        ),
+    )
+    connection.commit()
+    return get_provider_status(provider_id, connection=connection, project_id=project_id)
+
+
+def _normalize_provider_setting_value(provider_name, setting_name, value):
+    if setting_name == "timeout_seconds":
+        try:
+            timeout_value = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("{0} timeout_seconds must be a positive integer.".format(provider_name))
+        if timeout_value <= 0:
+            raise ValueError("{0} timeout_seconds must be greater than zero.".format(provider_name))
+        return timeout_value
+
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError("{0} {1} must be a string.".format(provider_name, setting_name))
+    return value.strip()
+
+
+def update_provider_settings(connection, provider_id, actor_id, settings, project_id=None):
+    provider = get_provider(provider_id)
+    rules = PROVIDER_RUNTIME_RULES[provider_id]
+    allowed_keys = set(rules["runtime_controls"])
+    requested_settings = settings or {}
+    unknown_keys = sorted(set(requested_settings) - allowed_keys)
+    if unknown_keys:
+        raise ValueError(
+            "Unsupported provider settings for {0}: {1}.".format(
+                provider["name"],
+                ", ".join(unknown_keys),
+            )
+        )
+
+    if project_id is None:
+        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+    else:
+        project = connection.execute(
+            "SELECT project_id FROM projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+    if project is None:
+        raise ValueError("Project not found")
+    project_id = project["project_id"]
+
+    ensure_board_action_allowed(connection, actor_id, project_id, "configure_provider", "provider", provider_id)
+
+    normalized_updates = {}
+    for key, value in requested_settings.items():
+        normalized_updates[key] = _normalize_provider_setting_value(provider["name"], key, value)
+
+    if not normalized_updates:
+        return get_provider_status(provider_id, connection=connection, project_id=project_id)
+
+    json_set_parts = []
+    params = []
+    for key, value in normalized_updates.items():
+        json_set_parts.append("?, ?")
+        params.extend(["$.providers.{0}.{1}".format(provider_id, key), value])
+
+    connection.execute(
+        """
+        UPDATE projects
+        SET config_json = json_set(
+                CASE
+                    WHEN json_valid(config_json) THEN config_json
+                    ELSE '{{}}'
+                END,
+                {0}
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+        """.format(", ".join(json_set_parts)),
+        tuple(params + [project_id]),
+    )
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, 'configure_provider', 'provider', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            provider_id,
+            json.dumps({"settings": normalized_updates}),
         ),
     )
     connection.commit()

@@ -16,7 +16,7 @@ from maas.services.escalations import approve_escalation, fetch_escalations, rej
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream
-from maas.services.provider_runtime import provider_runtime_overview, run_provider_task, set_provider_mode
+from maas.services.provider_runtime import provider_runtime_overview, run_provider_task, set_provider_mode, set_provider_settings
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
@@ -136,6 +136,11 @@ class ProviderRunRequest(BaseModel):
 class ProviderModeRequest(BaseModel):
     actor_id: str
     mode: str
+
+
+class ProviderSettingsRequest(BaseModel):
+    actor_id: str
+    settings: dict = {}
 
 
 def create_app(project_root="."):
@@ -415,6 +420,20 @@ def create_app(project_root="."):
             project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
             project_id = project["project_id"] if project else None
             return set_provider_mode(connection, provider_id, payload.actor_id, payload.mode, project_id=project_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/providers/{provider_id}/actions/set-settings")
+    def provider_set_settings_action(provider_id: str, payload: ProviderSettingsRequest):
+        connection = connect(paths)
+        try:
+            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+            project_id = project["project_id"] if project else None
+            return set_provider_settings(connection, provider_id, payload.actor_id, payload.settings, project_id=project_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

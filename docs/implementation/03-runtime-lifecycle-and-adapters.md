@@ -4,6 +4,11 @@
 
 - [ ] Batch 3 is only partially shipped on `main`.
 
+## Current Checkout
+
+- [x] This branch adds editable provider runtime settings from the Providers view.
+- [ ] This branch still does not add broader external provider coverage beyond the local Claude and Codex CLI paths.
+
 ## Shipped On `main`
 
 - [x] Lifecycle operations: `start_session`, `heartbeat`, `log_activity`, `produce_artifact`, `end_session`
@@ -15,7 +20,7 @@
 - [x] Lifecycle starts validate `provider_type` against the provider registry
 - [x] `claude_code` can run through a real local Claude CLI path when explicitly enabled in project config
 - [x] `openai_codex` can run through a real local Codex CLI path when explicitly enabled in project config
-- [x] Provider status reads expose effective mode, runtime controls, config warnings, recent run history, and manual run targets
+- [x] Provider status reads expose effective mode, runtime controls, config warnings, recent run history, manual run targets, and mode state
 
 ## Still To Do On `main`
 

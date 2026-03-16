@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchRecoveryPolicy, setRecoveryPolicy } from "../lib/controlRoomApi";
+import { fetchRecoveryPolicy, setRecoveryPolicy, setTaskRetryLimit } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { RecoveryPolicyResponse, RecoveryPolicySettings } from "../types";
+import type { RecoveryPolicyResponse, RecoveryPolicySettings, RecoveryTaskItem } from "../types";
 
 type RecoveryDraft = Record<keyof RecoveryPolicySettings, string>;
 
@@ -20,6 +20,8 @@ const NUMBER_FIELDS: (keyof RecoveryPolicySettings)[] = [
   "retry_backoff_multiplier",
   "retry_backoff_max_seconds"
 ];
+
+const RETRY_LIMIT_OPTIONS = [null, 0, 1, 2, 3, 5, 10] as const;
 
 function buildDraft(
   payload: RecoveryPolicyResponse,
@@ -68,11 +70,78 @@ function previewLabel(items: { attempt: number; delay_seconds: number }[]) {
   return items.map((item) => `#${item.attempt}: ${item.delay_seconds}s`).join(" | ");
 }
 
+function formatRetryLimit(autoRetryLimit?: number | null) {
+  return autoRetryLimit == null ? "Project default" : `${autoRetryLimit} max auto retries`;
+}
+
+function RecoveryTaskList({
+  items,
+  pendingTaskId,
+  onRetryLimitChange
+}: {
+  items: RecoveryTaskItem[];
+  pendingTaskId: string | null;
+  onRetryLimitChange: (taskId: string, autoRetryLimit: number | null) => void;
+}) {
+  return (
+    <div className="data-list">
+      {items.map((item) => (
+        <div key={item.task_id} className="data-list__item">
+          <div>
+            <strong>{item.title}</strong>
+            <p>
+              {item.goal_title ?? "Unlinked goal"}
+              {item.agent_name ? ` | ${item.agent_name}` : ""}
+            </p>
+            <p>
+              Status: {item.status}
+              {item.review_state ? ` | ${item.review_state}` : ""}
+              {item.failure_count ? ` | ${item.failure_count} failures` : ""}
+            </p>
+            <p>
+              Retry budget: {formatRetryLimit(item.auto_retry_limit)}
+              {item.retry_count ? ` | ${item.retry_count} retries used` : ""}
+              {item.last_retry_reason ? ` | last: ${item.last_retry_reason}` : ""}
+            </p>
+            {item.next_retry_at ? (
+              <p>
+                Next retry: {new Date(item.next_retry_at).toLocaleString()}
+                {item.next_retry_reason ? ` (${item.next_retry_reason})` : ""}
+              </p>
+            ) : null}
+          </div>
+          <div className="data-list__meta">
+            <span>P{item.priority}</span>
+            {item.latest_failure_at ? <span>{new Date(item.latest_failure_at).toLocaleString()}</span> : null}
+            <label className="task-inline-control">
+              <span>Retry limit</span>
+              <select
+                value={item.auto_retry_limit == null ? "" : String(item.auto_retry_limit)}
+                disabled={pendingTaskId === item.task_id}
+                onChange={(event) =>
+                  onRetryLimitChange(item.task_id, event.target.value === "" ? null : Number(event.target.value))
+                }
+              >
+                {Array.from(new Set([...RETRY_LIMIT_OPTIONS, item.auto_retry_limit ?? null])).map((value) => (
+                  <option key={value == null ? "default" : value} value={value == null ? "" : String(value)}>
+                    {value == null ? "Project default" : value}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function RecoveryPage() {
   const [recovery, setRecovery] = useState<RecoveryPolicyResponse | null>(null);
   const [draft, setDraft] = useState<RecoveryDraft | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingSave, setPendingSave] = useState(false);
+  const [pendingTaskRetryLimit, setPendingTaskRetryLimit] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -137,6 +206,24 @@ export function RecoveryPage() {
     await handleSave(defaultsDraft);
   }
 
+  async function handleTaskRetryLimitChange(taskId: string, autoRetryLimit: number | null) {
+    setPendingTaskRetryLimit(taskId);
+    setNotice(null);
+    try {
+      await setTaskRetryLimit(taskId, autoRetryLimit);
+      await reload();
+      setNotice(
+        autoRetryLimit == null
+          ? `Task ${taskId} now follows the project retry policy.`
+          : `Task ${taskId} retry limit set to ${autoRetryLimit}.`
+      );
+    } catch {
+      setNotice("Task retry limit update failed; keeping the current recovery snapshot under review.");
+    } finally {
+      setPendingTaskRetryLimit(null);
+    }
+  }
+
   const currentDraft = draft;
 
   return (
@@ -152,6 +239,7 @@ export function RecoveryPage() {
 
       <section className="stats-grid">
         <StatCard label="Backoff tasks" value={recovery?.summary.retry_backoff_tasks ?? 0} tone="warn" />
+        <StatCard label="Retry overrides" value={recovery?.summary.tasks_with_retry_overrides ?? 0} />
         <StatCard label="Retry history" value={recovery?.summary.tasks_with_retry_history ?? 0} />
         <StatCard label="Recoverable blocked" value={recovery?.summary.recoverable_blocked_tasks ?? 0} tone="warn" />
         <StatCard label="Open failure alerts" value={recovery?.summary.open_failure_alerts ?? 0} tone="warn" />
@@ -298,6 +386,56 @@ export function RecoveryPage() {
               </div>
             </div>
           </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Task retry overrides</h2>
+              <p>Tasks that diverge from project policy. Use this to review and clear one-off retry exceptions without hunting through the board.</p>
+            </div>
+          </header>
+          {(recovery?.task_retry_overrides ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.task_retry_overrides ?? []}
+              pendingTaskId={pendingTaskRetryLimit}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No task overrides</strong>
+                  <p>All tasks currently follow the project recovery policy.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Active retry backoff</h2>
+              <p>Tasks currently cooling down before another automatic or operator-triggered retry window opens.</p>
+            </div>
+          </header>
+          {(recovery?.active_retry_backoff ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.active_retry_backoff ?? []}
+              pendingTaskId={pendingTaskRetryLimit}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No active cooldowns</strong>
+                  <p>No tasks are currently waiting on a retry backoff window.</p>
+                </div>
+              </div>
+            </div>
+          )}
         </article>
       </section>
     </section>

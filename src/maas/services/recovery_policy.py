@@ -158,14 +158,63 @@ def _recovery_summary(connection, project_id):
         """,
         (project_id,),
     ).fetchone()[0]
+    tasks_with_retry_overrides = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM tasks
+        WHERE project_id = ?
+          AND auto_retry_limit IS NOT NULL
+        """,
+        (project_id,),
+    ).fetchone()[0]
     return {
         "retry_backoff_tasks": tasks_row["retry_backoff_tasks"] or 0,
         "tasks_with_retry_history": tasks_row["tasks_with_retry_history"] or 0,
         "recoverable_blocked_tasks": tasks_row["recoverable_blocked_tasks"] or 0,
+        "tasks_with_retry_overrides": tasks_with_retry_overrides or 0,
         "open_quarantine_entries": open_quarantine_entries or 0,
         "open_failure_alerts": open_failure_alerts or 0,
         "open_repeated_failure_alerts": open_repeated_failure_alerts or 0,
     }
+
+
+def _recovery_task_items(connection, project_id, where_clause, params, limit=8):
+    rows = connection.execute(
+        """
+        SELECT
+            tasks.task_id,
+            tasks.title,
+            tasks.status,
+            tasks.review_state,
+            tasks.priority,
+            tasks.retry_count,
+            tasks.auto_retry_limit,
+            tasks.last_retry_at,
+            tasks.last_retry_reason,
+            tasks.next_retry_at,
+            tasks.next_retry_reason,
+            tasks.updated_at,
+            goals.title AS goal_title,
+            agents.display_name AS agent_name,
+            failures.failure_count,
+            failures.latest_failure_at
+        FROM tasks
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
+        LEFT JOIN (
+            SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
+            FROM failure_log
+            WHERE task_id IS NOT NULL
+            GROUP BY task_id
+        ) AS failures ON failures.task_id = tasks.task_id
+        WHERE tasks.project_id = ?
+          AND {0}
+        ORDER BY tasks.priority DESC, tasks.updated_at DESC, tasks.created_at ASC
+        LIMIT ?
+        """.format(where_clause),
+        tuple([project_id] + list(params) + [limit]),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def fetch_project_recovery_overview(connection, project_id=None):
@@ -193,6 +242,18 @@ def fetch_project_recovery_overview(connection, project_id=None):
                 policy,
             ),
         },
+        "task_retry_overrides": _recovery_task_items(
+            connection,
+            project_id,
+            "tasks.auto_retry_limit IS NOT NULL",
+            [],
+        ),
+        "active_retry_backoff": _recovery_task_items(
+            connection,
+            project_id,
+            "(tasks.review_state = 'retry_backoff' OR tasks.next_retry_at IS NOT NULL)",
+            [],
+        ),
     }
 
 

@@ -365,6 +365,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     retry_backoff_tasks: 0,
     tasks_with_retry_history: 0,
     recoverable_blocked_tasks: 0,
+    tasks_with_retry_overrides: 0,
     open_quarantine_entries: 0,
     open_failure_alerts: 0,
     open_repeated_failure_alerts: 0
@@ -377,7 +378,9 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
       { attempt: 2, delay_seconds: 60 },
       { attempt: 3, delay_seconds: 120 }
     ]
-  }
+  },
+  task_retry_overrides: [],
+  active_retry_backoff: []
 };
 
 async function fetchJson<T>(
@@ -561,6 +564,14 @@ export async function setRecoveryPolicy(
   const payload = await postJson("/api/recovery-policy/actions/set", {
     actor_id: "agent_allocator",
     policy
+  });
+  return payload;
+}
+
+export async function setTaskRetryLimit(taskId: string, autoRetryLimit: number | null) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/set-retry-limit`, {
+    actor_id: "agent_allocator",
+    auto_retry_limit: autoRetryLimit
   });
   return payload;
 }

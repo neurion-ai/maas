@@ -383,7 +383,9 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   recoverable_blocked_tasks: [],
   task_retry_history: [],
   active_retry_backoff: [],
-  open_quarantine_entries: []
+  open_quarantine_entries: [],
+  open_failure_alerts: [],
+  repeated_failure_incidents: []
 };
 
 async function fetchJson<T>(

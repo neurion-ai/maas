@@ -561,6 +561,8 @@ export interface RecoveryPolicyResponse {
   task_retry_history: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
   open_quarantine_entries: QuarantineQueueItem[];
+  open_failure_alerts: AlertItem[];
+  repeated_failure_incidents: RepeatedFailureItem[];
 }
 
 export interface LiveSnapshot {

@@ -70,7 +70,7 @@ def _can_recover_agent(connection, agent_id):
     return active_session is None
 
 
-def _infer_operator_action(connection, title, description):
+def infer_operator_action(connection, title, description):
     if title == "Task session failed":
         match = TASK_SESSION_FAILED_PATTERN.match(description)
         if match is not None and _can_recover_task(connection, match.group("task_id")):
@@ -230,7 +230,7 @@ def fetch_alerts(connection):
     grouped = {"open": [], "acknowledged": [], "resolved": []}
     for row in rows:
         alert = dict(row)
-        operator_action = _infer_operator_action(connection, alert["title"], alert["description"])
+        operator_action = infer_operator_action(connection, alert["title"], alert["description"])
         if operator_action is not None:
             alert["operator_action"] = operator_action
         grouped.setdefault(alert["status"], []).append(alert)

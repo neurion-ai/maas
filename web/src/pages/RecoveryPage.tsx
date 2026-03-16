@@ -7,13 +7,21 @@ import {
   recoverTask,
   releaseTaskRetryBackoff,
   resetTaskRetryState,
+  runAlertOperatorAction,
   restoreAndRequeueQuarantineEntry,
   restoreQuarantineEntry,
   setRecoveryPolicy,
   setTaskRetryLimit
 } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { QuarantineQueueItem, RecoveryPolicyResponse, RecoveryPolicySettings, RecoveryTaskItem } from "../types";
+import type {
+  AlertItem,
+  QuarantineQueueItem,
+  RecoveryPolicyResponse,
+  RecoveryPolicySettings,
+  RecoveryTaskItem,
+  RepeatedFailureItem
+} from "../types";
 
 type RecoveryDraft = Record<keyof RecoveryPolicySettings, string>;
 
@@ -252,6 +260,81 @@ function RecoveryQuarantineList({
   );
 }
 
+function RecoveryAlertList({
+  alerts,
+  pendingAlertActionId,
+  onRunAction
+}: {
+  alerts: AlertItem[];
+  pendingAlertActionId: string | null;
+  onRunAction: (alertId: string) => void;
+}) {
+  return (
+    <div className="data-list">
+      {alerts.map((alert) => (
+        <div key={alert.alert_id} className="data-list__item">
+          <div>
+            <strong>{alert.title}</strong>
+            <p>{alert.description}</p>
+          </div>
+          <div className="data-list__meta">
+            <span>{alert.severity}</span>
+            <span>{new Date(alert.created_at).toLocaleString()}</span>
+            {alert.operator_action ? (
+              <button
+                type="button"
+                className="task-action task-action--approve"
+                disabled={pendingAlertActionId === alert.alert_id}
+                onClick={() => onRunAction(alert.alert_id)}
+              >
+                {pendingAlertActionId === alert.alert_id ? "Running..." : alert.operator_action.label}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RecoveryRepeatedFailureList({
+  items,
+  pendingTaskId,
+  onRunAction
+}: {
+  items: RepeatedFailureItem[];
+  pendingTaskId: string | null;
+  onRunAction: (taskId: string) => void;
+}) {
+  return (
+    <div className="data-list">
+      {items.map((item) => (
+        <div key={item.task_id} className="data-list__item">
+          <div>
+            <strong>{item.task_title ?? item.task_id}</strong>
+            <p>
+              Failures: {item.failure_count}
+              {item.latest_failure_at ? ` | Latest: ${new Date(item.latest_failure_at).toLocaleString()}` : ""}
+            </p>
+          </div>
+          <div className="data-list__meta">
+            {item.operator_action ? (
+              <button
+                type="button"
+                className="task-action task-action--approve"
+                disabled={pendingTaskId === item.task_id}
+                onClick={() => onRunAction(item.task_id)}
+              >
+                {pendingTaskId === item.task_id ? "Resolving..." : item.operator_action.label}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function RecoveryPage() {
   const [recovery, setRecovery] = useState<RecoveryPolicyResponse | null>(null);
   const [draft, setDraft] = useState<RecoveryDraft | null>(null);
@@ -259,6 +342,8 @@ export function RecoveryPage() {
   const [pendingSave, setPendingSave] = useState(false);
   const [pendingTaskActionId, setPendingTaskActionId] = useState<string | null>(null);
   const [pendingQueueAction, setPendingQueueAction] = useState<string | null>(null);
+  const [pendingAlertActionId, setPendingAlertActionId] = useState<string | null>(null);
+  const [pendingRepeatedFailureTaskId, setPendingRepeatedFailureTaskId] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -438,6 +523,42 @@ export function RecoveryPage() {
       setNotice("Quarantine dismissal failed; leave the entry open for operator review.");
     } finally {
       setPendingQueueAction(null);
+    }
+  }
+
+  async function handleOpenFailureAlertAction(alertId: string) {
+    const alert = recovery?.open_failure_alerts.find((item) => item.alert_id === alertId);
+    if (!alert?.operator_action) {
+      return;
+    }
+    setPendingAlertActionId(alertId);
+    setNotice(null);
+    try {
+      await runAlertOperatorAction(alert.operator_action);
+      await reload();
+      setNotice(`Ran ${alert.operator_action.label.toLowerCase()} from the recovery queue.`);
+    } catch {
+      setNotice("Recovery alert action failed; keep the incident under operator review.");
+    } finally {
+      setPendingAlertActionId(null);
+    }
+  }
+
+  async function handleRepeatedFailureIncidentAction(taskId: string) {
+    const incident = recovery?.repeated_failure_incidents.find((item) => item.task_id === taskId);
+    if (!incident?.operator_action) {
+      return;
+    }
+    setPendingRepeatedFailureTaskId(taskId);
+    setNotice(null);
+    try {
+      await runAlertOperatorAction(incident.operator_action);
+      await reload();
+      setNotice(`Resolved repeated-failure incident for ${taskId}.`);
+    } catch {
+      setNotice("Repeated-failure resolution failed; keep the task under operator review.");
+    } finally {
+      setPendingRepeatedFailureTaskId(null);
     }
   }
 
@@ -710,6 +831,56 @@ export function RecoveryPage() {
                 <div>
                   <strong>No open quarantine incidents</strong>
                   <p>No quarantined artifacts are currently waiting for operator review.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Open failure alerts</h2>
+              <p>Task-failure incidents that are still open and actionable from the recovery workbench.</p>
+            </div>
+          </header>
+          {(recovery?.open_failure_alerts ?? []).length ? (
+            <RecoveryAlertList
+              alerts={recovery?.open_failure_alerts ?? []}
+              pendingAlertActionId={pendingAlertActionId}
+              onRunAction={(alertId) => void handleOpenFailureAlertAction(alertId)}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No open failure alerts</strong>
+                  <p>No task-failure alerts are currently waiting for operator action.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Repeated failure incidents</h2>
+              <p>Tasks that still have open repeated-failure alerts and can be resolved directly from Recovery.</p>
+            </div>
+          </header>
+          {(recovery?.repeated_failure_incidents ?? []).length ? (
+            <RecoveryRepeatedFailureList
+              items={recovery?.repeated_failure_incidents ?? []}
+              pendingTaskId={pendingRepeatedFailureTaskId}
+              onRunAction={(taskId) => void handleRepeatedFailureIncidentAction(taskId)}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No repeated-failure incidents</strong>
+                  <p>No task currently has an open repeated-failure alert to resolve.</p>
                 </div>
               </div>
             </div>

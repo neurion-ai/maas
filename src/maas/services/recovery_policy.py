@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 import json
 
 from maas.ids import generate_id
+from maas.services.alerts import infer_operator_action
+from maas.services.failure_memory import fetch_repeated_failure_tasks
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -159,7 +161,7 @@ def _recovery_summary(connection, project_id):
         FROM alerts
         WHERE project_id = ?
           AND status = 'open'
-          AND title = 'Repeated task failures detected'
+          AND title = 'Repeated task failures'
         """,
         (project_id,),
     ).fetchone()[0]
@@ -259,6 +261,34 @@ def _recovery_quarantine_entries(connection, project_id, limit=8):
     return [dict(row) for row in rows]
 
 
+def _recovery_open_failure_alerts(connection, project_id, limit=8):
+    rows = connection.execute(
+        """
+        SELECT alert_id, project_id, severity, title, description, status, created_at
+        FROM alerts
+        WHERE project_id = ?
+          AND status = 'open'
+          AND title = 'Task session failed'
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (project_id, limit),
+    ).fetchall()
+    alerts = []
+    for row in rows:
+        alert = dict(row)
+        operator_action = infer_operator_action(connection, alert["title"], alert["description"])
+        if operator_action is not None:
+            alert["operator_action"] = operator_action
+        alerts.append(alert)
+    return alerts
+
+
+def _recovery_repeated_failure_incidents(connection, limit=8):
+    incidents = fetch_repeated_failure_tasks(connection, limit=limit)
+    return [incident for incident in incidents if incident.get("operator_action")]
+
+
 def fetch_project_recovery_overview(connection, project_id=None):
     project_id = _resolve_project_id(connection, project_id)
     policy = fetch_project_recovery_policy(connection, project_id)
@@ -312,6 +342,8 @@ def fetch_project_recovery_overview(connection, project_id=None):
             [],
         ),
         "open_quarantine_entries": _recovery_quarantine_entries(connection, project_id),
+        "open_failure_alerts": _recovery_open_failure_alerts(connection, project_id),
+        "repeated_failure_incidents": _recovery_repeated_failure_incidents(connection),
     }
 
 

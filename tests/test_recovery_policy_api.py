@@ -216,6 +216,89 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(quarantine_entries[0]["artifact_count"], 1)
             self.assertEqual(quarantine_entries[0]["task_review_state"], "session_failed")
 
+    def test_recovery_policy_endpoint_includes_open_failure_alerts_and_repeated_failure_incidents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_failure_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                repeated_failure_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_failure_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES
+                        ('fail_repeat_1', ?, ?, NULL, 'agent_allocator', 'session_failed', 'Repeated failure 1', '{}'),
+                        ('fail_repeat_2', ?, ?, NULL, 'agent_allocator', 'session_failed', 'Repeated failure 2', '{}'),
+                        ('fail_repeat_3', ?, ?, NULL, 'agent_allocator', 'session_failed', 'Repeated failure 3', '{}')
+                    """,
+                    (
+                        project_id,
+                        repeated_failure_task_id,
+                        project_id,
+                        repeated_failure_task_id,
+                        project_id,
+                        repeated_failure_task_id,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES
+                        ('alert_recovery_task_failure', ?, 'warning', 'Task session failed', ?, 'open'),
+                        ('alert_recovery_repeated_failure', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task {0} failed in session sess_recovery_123. Session crashed".format(task_failure_id),
+                        project_id,
+                        "Task {0} (Define project workspace contracts) has failed 3 times. Latest failure: Repeated failure 3".format(
+                            repeated_failure_task_id
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["open_failure_alerts"], 1)
+            self.assertEqual(payload["summary"]["open_repeated_failure_alerts"], 1)
+            self.assertEqual(
+                payload["open_failure_alerts"][0]["operator_action"],
+                {
+                    "action": "recover_task",
+                    "label": "Recover task",
+                    "resource_type": "task",
+                    "resource_id": task_failure_id,
+                },
+            )
+            self.assertEqual(
+                payload["repeated_failure_incidents"][0]["operator_action"],
+                {
+                    "action": "resolve_repeated_failures",
+                    "label": "Resolve repeated failures",
+                    "resource_type": "task",
+                    "resource_id": repeated_failure_task_id,
+                },
+            )
+
     def test_recovery_policy_endpoint_excludes_terminal_tasks_from_override_and_backoff_lists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")

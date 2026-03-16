@@ -68,6 +68,7 @@
 - [x] Stale-session detection in the supervisor pass
 - [x] Failure-memory logging for failed and timed-out sessions
 - [x] Timed-out session auto-retry with retry state surfaced in task and failure reads
+- [x] Failed-session auto-retry with retry state surfaced in task and failure reads
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
 - [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces

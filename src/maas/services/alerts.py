@@ -164,7 +164,14 @@ def _resolve_alerts_by_query(connection, query, params, project_id, actor_id, re
     return resolved_alert_ids
 
 
-def resolve_task_session_failed_alerts(connection, project_id, task_id, actor_id, reason):
+def resolve_task_session_failed_alerts(
+    connection,
+    project_id,
+    task_id,
+    actor_id,
+    reason,
+    activity_description="Task failure alerts resolved after task recovery.",
+):
     return _resolve_alerts_by_query(
         connection,
         """
@@ -182,7 +189,7 @@ def resolve_task_session_failed_alerts(connection, project_id, task_id, actor_id
         reason,
         task_id,
         "task_failure_alert_resolved",
-        "Task failure alerts resolved after task recovery.",
+        activity_description,
     )
 
 

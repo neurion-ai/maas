@@ -16,6 +16,7 @@
 - [x] Failed and timed-out session artifacts are isolated under `.maas/quarantine/`
 - [x] Quarantine details are visible in failure reads and overview failure surfaces
 - [x] Timed-out sessions can auto-retry under project recovery policy
+- [x] Failed sessions can auto-retry under project recovery policy
 - [x] A first-class quarantine queue exposes open, restored, and dismissed incidents
 - [x] Operators can resolve repeated-failure incidents from the Alerts view without changing task state
 - [x] Operators can recover failure-blocked tasks

@@ -13,6 +13,7 @@
 - [x] Supporting reads for overview, goals, agents, activity, alerts, failures, escalations, and providers
 - [x] React control-room views for Overview, Board, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations
 - [x] Operator controls for manual supervisor runs and assign-next actions
+- [x] Providers view can trigger safe manual provider runs for assigned tasks
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 
 ## Still To Do On `main`

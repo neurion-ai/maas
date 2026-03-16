@@ -389,6 +389,14 @@ export async function runProviderTask(providerId: string, projectId: string, age
   };
 }
 
+export async function setProviderMode(providerId: string, mode: string) {
+  const payload = await postJson(`/api/providers/${providerId}/actions/set-mode`, {
+    actor_id: "agent_allocator",
+    mode
+  });
+  return payload;
+}
+
 async function postJson<T>(path: string, body: Record<string, string | number | null | undefined>): Promise<T | null> {
   const response = await fetch(path, {
     method: "POST",

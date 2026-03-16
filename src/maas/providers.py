@@ -4,6 +4,8 @@ from copy import deepcopy
 import json
 
 from maas.config import DEFAULT_PROVIDER_SETTINGS
+from maas.ids import generate_id
+from maas.services.security import ensure_board_action_allowed
 
 
 STANDARD_PROVIDER_LIFECYCLE_VERSION = "provider_runtime_v1"
@@ -400,6 +402,68 @@ def fetch_provider_runtime_overview(connection=None, project_id=None):
         "providers": list_provider_status(connection=connection, project_id=project_id),
         "run_targets": _provider_run_targets(connection, project_id),
     }
+
+
+def update_provider_mode(connection, provider_id, actor_id, mode, project_id=None):
+    provider = get_provider(provider_id)
+    rules = PROVIDER_RUNTIME_RULES[provider_id]
+    normalized_mode = "local_simulation" if mode in ("simulated", "local_simulation") else mode
+    if normalized_mode not in rules["available_execution_modes"]:
+        raise ValueError(
+            "Unsupported execution mode '{0}' for {1}; expected one of: {2}.".format(
+                normalized_mode,
+                provider["name"],
+                ", ".join(rules["available_execution_modes"]),
+            )
+        )
+
+    if project_id is None:
+        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+    else:
+        project = connection.execute(
+            "SELECT project_id FROM projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+    if project is None:
+        raise ValueError("Project not found")
+    project_id = project["project_id"]
+
+    ensure_board_action_allowed(connection, actor_id, project_id, "configure_provider", "provider", provider_id)
+    persisted_mode = "simulated" if normalized_mode == "local_simulation" else normalized_mode
+    config_path = "$.providers.{0}.mode".format(provider_id)
+
+    connection.execute(
+        """
+        UPDATE projects
+        SET config_json = json_set(
+                CASE
+                    WHEN json_valid(config_json) THEN config_json
+                    ELSE '{}'
+                END,
+                ?,
+                ?
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+        """,
+        (config_path, persisted_mode, project_id),
+    )
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, 'configure_provider', 'provider', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            provider_id,
+            json.dumps({"mode": persisted_mode}),
+        ),
+    )
+    connection.commit()
+    return get_provider_status(provider_id, connection=connection, project_id=project_id)
 
 
 def get_provider_status(provider_id, connection=None, project_id=None):

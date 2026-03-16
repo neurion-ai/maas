@@ -16,6 +16,7 @@
 - [x] Providers view can trigger safe manual provider runs for assigned tasks
 - [x] Providers view can switch provider execution mode between simulation and available local live modes
 - [x] Providers view can edit provider runtime settings
+- [x] Overview and Failures views expose direct failure operator actions instead of remaining read-only summaries
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 
 ## Still To Do On `main`

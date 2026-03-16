@@ -8,11 +8,6 @@ MAAS is being implemented as a single-project, greenfield-first, board-first age
 
 This roadmap now needs to be read alongside the actual implementation status in `docs/implementation/STATUS.md`.
 
-## Current Checkout
-
-- [x] The current branch extends `main` with editable provider runtime settings from the Providers view.
-- [ ] The current branch still does not change the larger missing areas like broader providers, brownfield, or multi-project support.
-
 Legend for the checklist column:
 
 - `[x]` shipped on `main`
@@ -22,7 +17,7 @@ Legend for the checklist column:
 |---|---|---|
 | 1. Core kernel and scaffold | `[x]` | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
 | 2. Goal/task engine | `[ ]` | Goal records, task DAG storage, board-visible task states, dependency-aware ready refresh, acceptance evaluation, first-pass assignment |
-| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus local Claude and Codex CLI paths, provider runtime status/history reads, manual provider runs, and provider mode switching |
+| 3. Runtime lifecycle and adapters | `[ ]` | Lifecycle operations, API/CLI entrypoints, provider registry, concrete simulated adapters for Python Script, Claude Code, and OpenAI Codex, plus local Claude and Codex CLI paths, provider runtime status/history reads, manual provider runs, provider mode switching, and editable provider settings |
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, and board/overview/goal tree/failure/provider reads |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
@@ -66,9 +61,9 @@ This repository now includes:
 - [x] Concrete simulated provider adapters for Python Script, Claude Code, and OpenAI Codex
 - [x] Local Claude Code CLI integration behind explicit provider config
 - [x] Local OpenAI Codex CLI integration behind explicit provider config
-- [x] Provider runtime status/read-model visibility including config warnings, recent run history, manual run targets, and provider mode state
+- [x] Provider runtime status/read-model visibility including config warnings, recent run history, manual run targets, provider mode state, and editable settings
 - [x] Lifecycle API/CLI surface
-- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations views plus provider run and mode controls
+- [x] A React control-room shell under `web/` with Board, Overview, Goal Tree, Agent Roster, Activity, Providers, Failures, Alerts, and Escalations views plus provider run, mode, and settings controls
 
 ## Recommended Reading Order
 

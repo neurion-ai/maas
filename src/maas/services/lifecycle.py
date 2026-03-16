@@ -4,8 +4,117 @@ import json
 
 from maas.ids import generate_id
 from maas.providers import get_provider
+from maas.services.recovery_policy import (
+    failed_session_retry_cooldown_seconds,
+    fetch_project_recovery_policy,
+    retry_deadline,
+    task_failed_session_retry_limit,
+)
 from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
 from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
+
+
+def _audit_auto_retry(connection, project_id, task_id, actor_id, detail):
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, 'auto_retry_task', 'task', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            task_id,
+            json.dumps(detail),
+        ),
+    )
+
+
+def _activity_auto_retry(connection, project_id, agent_id, task_id, description, details):
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, 'task_auto_retried', 'resilience', ?, ?, 'warning')
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            agent_id,
+            task_id,
+            description,
+            json.dumps(details),
+        ),
+    )
+
+
+def _maybe_auto_retry_failed_task(connection, project_id, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, retry_count, auto_retry_limit
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        return None
+    if task["status"] != "in_progress":
+        return None
+
+    recovery_policy = fetch_project_recovery_policy(connection, project_id)
+    if not recovery_policy["auto_retry_failed_sessions"]:
+        return None
+
+    retry_limit = task_failed_session_retry_limit(task, recovery_policy)
+    if retry_limit <= 0 or task["retry_count"] >= retry_limit:
+        return None
+
+    next_retry_count = task["retry_count"] + 1
+    cooldown_seconds = failed_session_retry_cooldown_seconds(recovery_policy, next_retry_count)
+    next_retry_at = retry_deadline(cooldown_seconds)
+    next_retry_reason = "session_failed" if next_retry_at is not None else None
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'planned',
+            assigned_agent_id = NULL,
+            progress_pct = 0,
+            review_state = NULL,
+            last_heartbeat_at = NULL,
+            retry_count = ?,
+            last_retry_at = CURRENT_TIMESTAMP,
+            last_retry_reason = 'session_failed',
+            next_retry_at = ?,
+            next_retry_reason = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (next_retry_count, next_retry_at, next_retry_reason, task_id),
+    )
+    detail = {
+        "failure_type": "session_failed",
+        "retry_count": next_retry_count,
+        "retry_limit": retry_limit,
+        "cooldown_seconds": cooldown_seconds,
+        "next_retry_at": next_retry_at,
+    }
+    _audit_auto_retry(connection, project_id, task_id, actor_id, detail)
+    _activity_auto_retry(
+        connection,
+        project_id,
+        task["assigned_agent_id"],
+        task_id,
+        "Task returned to the planning queue for automatic retry after a failed session.",
+        detail,
+    )
+    return {
+        "task_id": task_id,
+        "retry_count": next_retry_count,
+        "retry_limit": retry_limit,
+        "next_retry_at": next_retry_at,
+    }
 
 
 def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
@@ -223,14 +332,6 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
             (row["task_id"],),
         )
     elif outcome == "failed":
-        connection.execute(
-            """
-            UPDATE tasks
-            SET status = 'blocked', review_state = 'session_failed', updated_at = CURRENT_TIMESTAMP
-            WHERE task_id = ? AND status = 'in_progress'
-            """,
-            (row["task_id"],),
-        )
         failure_id = record_failure(
             connection,
             row["project_id"],
@@ -294,6 +395,21 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
             ),
         )
         maybe_raise_repeated_failure_alert(connection, row["project_id"], row["task_id"], summary or "Session failed")
+        auto_retry = _maybe_auto_retry_failed_task(
+            connection,
+            row["project_id"],
+            row["task_id"],
+            actor_id=row["agent_id"],
+        )
+        if auto_retry is None:
+            connection.execute(
+                """
+                UPDATE tasks
+                SET status = 'blocked', review_state = 'session_failed', updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ? AND status = 'in_progress'
+                """,
+                (row["task_id"],),
+            )
     elif outcome == "cancelled":
         record_failure(
             connection,

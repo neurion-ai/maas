@@ -40,13 +40,58 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
       timer = null;
     }
 
+    function clearSseSource() {
+      source?.close();
+      source = null;
+    }
+
+    function clearWebsocket() {
+      socket?.close();
+      socket = null;
+    }
+
+    function connectWebsocket() {
+      if (cancelled || socket || source) {
+        return;
+      }
+      try {
+        setTransport("websocket");
+        setConnected(false);
+        socket = new WebSocket(buildLiveWebsocketUrl());
+        socket.onopen = () => {
+          if (cancelled) {
+            return;
+          }
+          stopPollingFallback();
+          setTransport("websocket");
+          setConnected(true);
+        };
+        socket.onmessage = bumpPulse;
+        socket.onerror = () => {
+          socket?.close();
+        };
+        socket.onclose = () => {
+          socket = null;
+          if (!cancelled) {
+            startSseFallback();
+          }
+        };
+      } catch {
+        socket = null;
+        startSseFallback();
+      }
+    }
+
     function startPollingFallback() {
-      if (cancelled || timer != null) {
+      if (cancelled || timer != null || socket || source) {
         return;
       }
       setTransport("polling");
       setConnected(false);
-      timer = window.setInterval(bumpPulse, 15000);
+      timer = window.setInterval(() => {
+        bumpPulse();
+        connectWebsocket();
+      }, 15000);
     }
 
     function startSseFallback() {
@@ -67,8 +112,7 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
         };
         source.addEventListener("dashboard", bumpPulse);
         source.onerror = () => {
-          source?.close();
-          source = null;
+          clearSseSource();
           startPollingFallback();
         };
       } catch {
@@ -77,37 +121,12 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    try {
-      setTransport("websocket");
-      setConnected(false);
-      socket = new WebSocket(buildLiveWebsocketUrl());
-      socket.onopen = () => {
-        if (cancelled) {
-          return;
-        }
-        stopPollingFallback();
-        setTransport("websocket");
-        setConnected(true);
-      };
-      socket.onmessage = bumpPulse;
-      socket.onerror = () => {
-        socket?.close();
-      };
-      socket.onclose = () => {
-        socket = null;
-        if (!cancelled) {
-          startSseFallback();
-        }
-      };
-    } catch {
-      socket = null;
-      startSseFallback();
-    }
+    connectWebsocket();
 
     return () => {
       cancelled = true;
-      socket?.close();
-      source?.close();
+      clearWebsocket();
+      clearSseSource();
       stopPollingFallback();
     };
   }, []);

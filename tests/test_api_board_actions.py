@@ -199,6 +199,76 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(halted_card["review_state"], "halted_by_operator")
             self.assertEqual(halted_card["capabilities"], [])
 
+    def test_set_task_retry_limit_updates_board_card_and_can_clear(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Retry Limit Test", description="Retry limit steering", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            board_payload = client.get("/api/board", params={"search": "Wire the scheduler and board read model"}).json()
+            task = [
+                item
+                for column in board_payload["columns"]
+                for item in column["tasks"]
+                if item["title"] == "Wire the scheduler and board read model"
+            ][0]
+
+            set_response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task["task_id"]),
+                json={"actor_id": "agent_allocator", "auto_retry_limit": 3},
+            )
+            self.assertEqual(set_response.status_code, 200)
+            self.assertEqual(set_response.json()["auto_retry_limit"], 3)
+
+            after_set = client.get("/api/board", params={"search": "Wire the scheduler and board read model"}).json()
+            updated_task = [
+                item
+                for column in after_set["columns"]
+                for item in column["tasks"]
+                if item["task_id"] == task["task_id"]
+            ][0]
+            self.assertEqual(updated_task["auto_retry_limit"], 3)
+
+            clear_response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task["task_id"]),
+                json={"actor_id": "agent_allocator", "auto_retry_limit": None},
+            )
+            self.assertEqual(clear_response.status_code, 200)
+            self.assertIsNone(clear_response.json()["auto_retry_limit"])
+
+            after_clear = client.get("/api/board", params={"search": "Wire the scheduler and board read model"}).json()
+            cleared_task = [
+                item
+                for column in after_clear["columns"]
+                for item in column["tasks"]
+                if item["task_id"] == task["task_id"]
+            ][0]
+            self.assertIsNone(cleared_task["auto_retry_limit"])
+
+    def test_set_task_retry_limit_rejects_invalid_values_and_permissions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Retry Limit Test", description="Retry limit steering", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            task_payload = client.get("/api/board", params={"search": "Wire the scheduler and board read model"}).json()
+            task_id = [
+                item["task_id"]
+                for column in task_payload["columns"]
+                for item in column["tasks"]
+                if item["title"] == "Wire the scheduler and board read model"
+            ][0]
+
+            invalid_response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task_id),
+                json={"actor_id": "agent_allocator", "auto_retry_limit": -1},
+            )
+            self.assertEqual(invalid_response.status_code, 400)
+            self.assertIn("Retry limit", invalid_response.json()["detail"])
+
+            forbidden_response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task_id),
+                json={"actor_id": "agent_researcher", "auto_retry_limit": 2},
+            )
+            self.assertEqual(forbidden_response.status_code, 403)
+
     def test_recover_failed_task_returns_it_to_planned_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Recover Task Test", description="Recover failure-blocked task", project_type="custom")

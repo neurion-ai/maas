@@ -11,6 +11,8 @@ interface BoardColumnProps {
   onReassign?: (taskId: string, agentId: string) => void;
   onHalt?: (taskId: string) => void;
   onRecover?: (taskId: string) => void;
+  onRecoverAndRequeue?: (taskId: string) => void;
+  onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
 export function BoardColumn({
@@ -22,7 +24,9 @@ export function BoardColumn({
   onPriorityChange,
   onReassign,
   onHalt,
-  onRecover
+  onRecover,
+  onRecoverAndRequeue,
+  onRetryLimitChange
 }: BoardColumnProps) {
   return (
     <section className="board-column">
@@ -46,6 +50,8 @@ export function BoardColumn({
             onReassign={onReassign}
             onHalt={onHalt}
             onRecover={onRecover}
+            onRecoverAndRequeue={onRecoverAndRequeue}
+            onRetryLimitChange={onRetryLimitChange}
           />
         ))}
       </div>

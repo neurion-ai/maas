@@ -193,6 +193,9 @@ export function FailuresPage() {
                       {item.last_retry_reason ? ` (${item.last_retry_reason})` : ""}
                     </p>
                   ) : null}
+                  <p>
+                    Retry budget: {item.auto_retry_limit == null ? "Project default" : `${item.auto_retry_limit} max auto retries`}
+                  </p>
                   {item.next_retry_at ? (
                     <p>
                       Next retry window: {new Date(item.next_retry_at).toLocaleString()}

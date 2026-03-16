@@ -26,6 +26,7 @@ export interface BoardTask {
   priority: number;
   progress_pct?: number | null;
   retry_count?: number;
+  auto_retry_limit?: number | null;
   last_retry_at?: string | null;
   last_retry_reason?: string | null;
   next_retry_at?: string | null;
@@ -207,6 +208,7 @@ export interface FailureItem {
   task_title?: string | null;
   agent_name?: string | null;
   retry_count?: number;
+  auto_retry_limit?: number | null;
   last_retry_at?: string | null;
   last_retry_reason?: string | null;
   next_retry_at?: string | null;

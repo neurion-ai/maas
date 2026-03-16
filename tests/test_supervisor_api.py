@@ -226,6 +226,66 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["retry_count"], 0)
             self.assertIsNone(task["last_retry_reason"])
 
+    def test_supervisor_auto_retry_uses_task_retry_limit_override(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Retry Override Test",
+                description="Supervisor retry override test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._enable_timeout_auto_retry(connection, max_retries=0)
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                blocker_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE task_id = ?", (blocker_task_id,))
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            override_response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task_id),
+                json={"actor_id": "agent_allocator", "auto_retry_limit": 2},
+            )
+            self.assertEqual(override_response.status_code, 200)
+
+            connection = connect(result["paths"])
+            try:
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, auto_retry_limit, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertTrue(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertEqual(task["status"], "planned")
+            self.assertEqual(task["review_state"], "retry_backoff")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["auto_retry_limit"], 2)
+            self.assertEqual(task["last_retry_reason"], "session_timed_out")
+
     def test_supervisor_leaves_timed_out_task_blocked_when_retry_budget_is_exhausted(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

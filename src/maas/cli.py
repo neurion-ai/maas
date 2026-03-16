@@ -23,6 +23,7 @@ from maas.services.steering import (
     recover_and_requeue_task,
     recover_task,
     resolve_task_repeated_failures,
+    set_task_retry_limit,
     restore_and_requeue_quarantine_entry,
     restore_quarantine_entry,
     restore_failure_artifacts,
@@ -91,6 +92,14 @@ def build_parser():
     task_resolve_repeated_failures_parser.add_argument("--project-root", default=".")
     task_resolve_repeated_failures_parser.add_argument("--task-id", required=True)
     task_resolve_repeated_failures_parser.add_argument("--actor-id", required=True)
+
+    task_retry_limit_parser = task_subparsers.add_parser("set-retry-limit")
+    task_retry_limit_parser.add_argument("--project-root", default=".")
+    task_retry_limit_parser.add_argument("--task-id", required=True)
+    task_retry_limit_parser.add_argument("--actor-id", required=True)
+    task_retry_limit_group = task_retry_limit_parser.add_mutually_exclusive_group(required=True)
+    task_retry_limit_group.add_argument("--limit", type=int)
+    task_retry_limit_group.add_argument("--clear", action="store_true")
 
     task_allocate_parser = task_subparsers.add_parser("allocate")
     task_allocate_parser.add_argument("--project-root", default=".")
@@ -297,6 +306,18 @@ def command_task(args):
             print(json.dumps(recover_and_requeue_task(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "resolve-repeated-failures":
             print(json.dumps(resolve_task_repeated_failures(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "set-retry-limit":
+            print(
+                json.dumps(
+                    set_task_retry_limit(
+                        connection,
+                        args.task_id,
+                        args.actor_id,
+                        None if args.clear else args.limit,
+                    ),
+                    indent=2,
+                )
+            )
         elif args.task_command == "allocate":
             if args.agent_id:
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))

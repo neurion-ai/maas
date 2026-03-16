@@ -794,6 +794,335 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertEqual(reopen_item["operator_action"]["action"], "reopen_quarantine_entry")
             self.assertIsNone(reopen_item.get("secondary_operator_action"))
 
+    def test_artifact_detail_api_exposes_related_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Related Test",
+                description="Artifacts related test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_related", project_id, "Artifact Related Agent"),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES
+                        ('task_artifact_related', ?, 'Artifact related task', '', 'ready', 60, '[]'),
+                        ('task_artifact_unrelated', ?, 'Artifact unrelated task', '', 'ready', 60, '[]')
+                    """,
+                    (project_id, project_id),
+                )
+                for task_id in ("task_artifact_related", "task_artifact_unrelated"):
+                    grant_task_capabilities(
+                        connection,
+                        project_id,
+                        task_id,
+                        "agent_artifact_related",
+                        TASK_EXECUTION_CAPABILITIES,
+                        granted_by="test_setup",
+                    )
+                connection.commit()
+
+                first_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_related",
+                    task_id="task_artifact_related",
+                    provider_type="python_script",
+                    status_message="Starting first related artifact",
+                )
+                first_path = os.path.join(result["paths"].artifacts_dir, "related-first.txt")
+                with open(first_path, "w", encoding="utf-8") as handle:
+                    handle.write("first\n")
+                first_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=first_session_id,
+                    task_id="task_artifact_related",
+                    artifact_type="note",
+                    path=first_path,
+                )
+                end_session(connection, first_session_id, "completed", "Completed first related artifact")
+                connection.execute(
+                    "UPDATE tasks SET status = 'ready', review_state = NULL WHERE task_id = 'task_artifact_related'"
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_related",
+                    "agent_artifact_related",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+
+                second_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_related",
+                    task_id="task_artifact_related",
+                    provider_type="python_script",
+                    status_message="Starting second related artifact",
+                )
+                second_path = os.path.join(result["paths"].artifacts_dir, "related-second.txt")
+                with open(second_path, "w", encoding="utf-8") as handle:
+                    handle.write("second\n")
+                second_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=second_session_id,
+                    task_id="task_artifact_related",
+                    artifact_type="provider_report",
+                    path=second_path,
+                )
+                end_session(connection, second_session_id, "completed", "Completed second related artifact")
+
+                unrelated_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_related",
+                    task_id="task_artifact_unrelated",
+                    provider_type="python_script",
+                    status_message="Starting unrelated artifact",
+                )
+                unrelated_path = os.path.join(result["paths"].artifacts_dir, "unrelated.txt")
+                with open(unrelated_path, "w", encoding="utf-8") as handle:
+                    handle.write("unrelated\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=unrelated_session_id,
+                    task_id="task_artifact_unrelated",
+                    artifact_type="note",
+                    path=unrelated_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get(f"/api/artifacts/{first_artifact_id}").json()
+
+            self.assertEqual(payload["artifact_id"], first_artifact_id)
+            related_ids = [entry["artifact_id"] for entry in payload["related_artifacts"]]
+            self.assertIn(second_artifact_id, related_ids)
+            self.assertNotIn(first_artifact_id, related_ids)
+            self.assertEqual(len(related_ids), 1)
+
+    def test_artifact_compare_api_returns_unified_diff_for_text_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Compare Test",
+                description="Artifacts compare test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_compare", project_id, "Artifact Compare Agent"),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact compare task', '', 'ready', 60, '[]')
+                    """,
+                    ("task_artifact_compare", project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_compare",
+                    "agent_artifact_compare",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                left_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_compare",
+                    task_id="task_artifact_compare",
+                    provider_type="python_script",
+                    status_message="Starting left artifact",
+                )
+                left_path = os.path.join(result["paths"].artifacts_dir, "compare-left.txt")
+                with open(left_path, "w", encoding="utf-8") as handle:
+                    handle.write("alpha\nbeta\n")
+                left_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=left_session_id,
+                    task_id="task_artifact_compare",
+                    artifact_type="note",
+                    path=left_path,
+                )
+                end_session(connection, left_session_id, "completed", "Completed left artifact")
+                connection.execute(
+                    "UPDATE tasks SET status = 'ready', review_state = NULL WHERE task_id = 'task_artifact_compare'"
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_compare",
+                    "agent_artifact_compare",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+
+                right_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_compare",
+                    task_id="task_artifact_compare",
+                    provider_type="python_script",
+                    status_message="Starting right artifact",
+                )
+                right_path = os.path.join(result["paths"].artifacts_dir, "compare-right.txt")
+                with open(right_path, "w", encoding="utf-8") as handle:
+                    handle.write("alpha\ngamma\n")
+                right_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=right_session_id,
+                    task_id="task_artifact_compare",
+                    artifact_type="note",
+                    path=right_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get(
+                f"/api/artifacts/{left_artifact_id}/compare/{right_artifact_id}"
+            ).json()
+
+            self.assertTrue(payload["comparable"])
+            self.assertEqual(payload["left"]["artifact_id"], left_artifact_id)
+            self.assertEqual(payload["right"]["artifact_id"], right_artifact_id)
+            self.assertIn("--- compare-left.txt", payload["unified_diff"])
+            self.assertIn("+++ compare-right.txt", payload["unified_diff"])
+            self.assertIn("-beta", payload["unified_diff"])
+            self.assertIn("+gamma", payload["unified_diff"])
+
+    def test_artifact_compare_api_reports_preview_unavailable_for_binary_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Compare Binary Test",
+                description="Artifacts compare binary test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_compare_binary", project_id, "Artifact Compare Binary Agent"),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact compare binary task', '', 'ready', 60, '[]')
+                    """,
+                    ("task_artifact_compare_binary", project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_compare_binary",
+                    "agent_artifact_compare_binary",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                text_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_compare_binary",
+                    task_id="task_artifact_compare_binary",
+                    provider_type="python_script",
+                    status_message="Starting text artifact",
+                )
+                text_path = os.path.join(result["paths"].artifacts_dir, "compare-text.txt")
+                with open(text_path, "w", encoding="utf-8") as handle:
+                    handle.write("plain text\n")
+                text_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=text_session_id,
+                    task_id="task_artifact_compare_binary",
+                    artifact_type="note",
+                    path=text_path,
+                )
+                end_session(connection, text_session_id, "completed", "Completed text artifact")
+                connection.execute(
+                    "UPDATE tasks SET status = 'ready', review_state = NULL WHERE task_id = 'task_artifact_compare_binary'"
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_compare_binary",
+                    "agent_artifact_compare_binary",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+
+                binary_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_compare_binary",
+                    task_id="task_artifact_compare_binary",
+                    provider_type="python_script",
+                    status_message="Starting binary artifact",
+                )
+                binary_path = os.path.join(result["paths"].artifacts_dir, "compare-binary.bin")
+                with open(binary_path, "wb") as handle:
+                    handle.write(b"\x00binary")
+                binary_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=binary_session_id,
+                    task_id="task_artifact_compare_binary",
+                    artifact_type="provider_report",
+                    path=binary_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get(
+                f"/api/artifacts/{text_artifact_id}/compare/{binary_artifact_id}"
+            ).json()
+
+            self.assertFalse(payload["comparable"])
+            self.assertEqual(payload["reason"], "preview_unavailable")
+            self.assertIsNone(payload["unified_diff"])
+            self.assertEqual(payload["right"]["preview"]["reason"], "binary_file")
+
     def test_artifacts_api_rejects_invalid_offset(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(

@@ -3,6 +3,7 @@ import type {
   AgentRosterResponse,
   AlertOperatorAction,
   AlertsResponse,
+  ArtifactComparisonResponse,
   ArtifactDetail,
   ArtifactsResponse,
   DismissQuarantineEntryResponse,
@@ -469,6 +470,17 @@ export async function fetchArtifactDetail(artifactId: string, signal?: AbortSign
     throw new Error(`Unexpected status: ${response.status}`);
   }
   return (await response.json()) as ArtifactDetail;
+}
+
+export async function fetchArtifactComparison(leftArtifactId: string, rightArtifactId: string, signal?: AbortSignal) {
+  const response = await fetch(`/api/artifacts/${leftArtifactId}/compare/${rightArtifactId}`, { signal });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+  return (await response.json()) as ArtifactComparisonResponse;
 }
 
 export function artifactDownloadUrl(artifactId: string) {

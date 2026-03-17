@@ -9,10 +9,91 @@ from maas.api import create_app
 from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
 from maas.services.lifecycle import end_session
-from maas.services.scheduler import evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler import assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 
 
 class SchedulerApiTest(unittest.TestCase):
+    def test_assign_next_task_returns_explicit_scheduler_score(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Scheduler Score Test", description="Scheduler score test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE status IN ('planned', 'ready', 'assigned', 'blocked')")
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', 'Scheduler Builder', 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_scheduler_builder", project_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, retry_count, acceptance_criteria_json
+                    ) VALUES
+                        ('task_scheduler_build', ?, 'Implement scheduler scoring engine', '', 'ready', 80, 0, '[]'),
+                        ('task_scheduler_retry', ?, 'Document queue notes', '', 'ready', 80, 2, '[]')
+                    """,
+                    (project_id, project_id),
+                )
+                connection.commit()
+
+                result_payload = assign_next_task(connection, "agent_scheduler_builder", actor_id="agent_allocator")
+            finally:
+                connection.close()
+
+            self.assertTrue(result_payload["assigned"])
+            self.assertEqual(result_payload["task_id"], "task_scheduler_build")
+            self.assertIsInstance(result_payload["scheduler_score"], int)
+            factor_map = {factor["key"]: factor["value"] for factor in result_payload["scheduler_factors"]}
+            self.assertEqual(factor_map["priority"], 80)
+            self.assertEqual(factor_map["role_bonus"], 40)
+            self.assertNotIn("retry_penalty", factor_map)
+
+    def test_ready_task_reserved_for_assigned_agent_keeps_assignment_lock_in_scheduler_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Scheduler Assignment Lock Test", description="Scheduler assignment lock test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE status IN ('planned', 'ready', 'assigned', 'blocked')")
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES
+                        ('agent_scheduler_locked', ?, 'builder', 'Locked Builder', 'idle', '{"board_actions": true}'),
+                        ('agent_scheduler_other', ?, 'builder', 'Other Builder', 'idle', '{"board_actions": true}')
+                    """,
+                    (project_id, project_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, retry_count, assigned_agent_id, acceptance_criteria_json
+                    ) VALUES
+                        ('task_scheduler_locked', ?, 'Implement locked scheduler work', '', 'ready', 80, 0, 'agent_scheduler_locked', '[]')
+                    """,
+                    (project_id,),
+                )
+                connection.commit()
+
+                ready_payload = resolve_ready_tasks(connection)
+                other_result = assign_next_task(connection, "agent_scheduler_other", actor_id="agent_allocator")
+            finally:
+                connection.close()
+
+            self.assertEqual(len(ready_payload), 1)
+            self.assertEqual(ready_payload[0]["task_id"], "task_scheduler_locked")
+            self.assertEqual(ready_payload[0]["scheduler_status"], "reserved_for_assigned_agent")
+            self.assertEqual(ready_payload[0]["scheduler_agent_id"], "agent_scheduler_locked")
+            self.assertIsNone(ready_payload[0]["scheduler_rank"])
+            self.assertIn("reserved for assigned agent", ready_payload[0]["scheduler_summary"])
+            self.assertFalse(other_result["assigned"])
+            self.assertIsNone(other_result["task_id"])
+
     def test_refresh_ready_tasks_can_skip_commit_for_atomic_callers(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Scheduler Atomicity Test", description="Scheduler atomicity test", project_type="custom")

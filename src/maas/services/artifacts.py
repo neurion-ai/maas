@@ -3,9 +3,11 @@
 import json
 import mimetypes
 import os
+from difflib import unified_diff
 
 RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
 ARTIFACT_PREVIEW_MAX_BYTES = 8192
+ARTIFACT_COMPARE_MAX_CHARS = 20000
 
 
 def _load_metadata(value):
@@ -107,6 +109,16 @@ def _artifact_preview(absolute_path):
         "truncated": truncated,
         "content": content,
     }
+
+
+def _preview_is_comparable(preview):
+    return preview.get("kind") in ("text", "json") and preview.get("content") is not None
+
+
+def _truncate_text(value, limit):
+    if len(value) <= limit:
+        return value, False
+    return value[:limit], True
 
 
 def _state_summary(connection, project_paths):
@@ -438,6 +450,34 @@ def _attach_quarantine_actions(connection, items):
     return enriched_items
 
 
+def _related_artifact_items(connection, project_paths, focus_item, limit=6):
+    task_id = focus_item.get("task_id")
+    if not task_id:
+        return []
+
+    rows = connection.execute(
+        _artifact_row_query("WHERE artifacts.task_id = ? AND artifacts.artifact_id != ?")
+        + "\nORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC LIMIT ?",
+        (task_id, focus_item["artifact_id"], limit),
+    ).fetchall()
+    items = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, row) for row in rows])
+    related = []
+    for item in items:
+        related.append(
+            {
+                "artifact_id": item["artifact_id"],
+                "artifact_type": item["artifact_type"],
+                "file_name": item["file_name"],
+                "display_path": item["display_path"],
+                "artifact_state": item["artifact_state"],
+                "provider_type": item.get("provider_type"),
+                "session_id": item.get("session_id"),
+                "created_at": item["created_at"],
+            }
+        )
+    return related
+
+
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
     where, params = _artifact_where_clause(project_paths, filters)
     base_from = _artifact_base_from()
@@ -522,6 +562,7 @@ def fetch_artifact_detail(connection, project_paths, artifact_id):
         "download_content_type": _download_content_type(absolute_path) if can_download else None,
         "preview": _artifact_preview(absolute_path),
         "quarantine_entry": quarantine_entry,
+        "related_artifacts": _related_artifact_items(connection, project_paths, enriched_item),
     }
 
 
@@ -541,4 +582,40 @@ def resolve_artifact_download(connection, project_paths, artifact_id):
         "absolute_path": absolute_path,
         "file_name": os.path.basename(absolute_path),
         "content_type": _download_content_type(absolute_path),
+    }
+
+
+def fetch_artifact_comparison(connection, project_paths, left_artifact_id, right_artifact_id):
+    left_detail = fetch_artifact_detail(connection, project_paths, left_artifact_id)
+    right_detail = fetch_artifact_detail(connection, project_paths, right_artifact_id)
+    if left_detail is None or right_detail is None:
+        return None
+
+    left_preview = left_detail["preview"]
+    right_preview = right_detail["preview"]
+    if not _preview_is_comparable(left_preview) or not _preview_is_comparable(right_preview):
+        return {
+            "left": left_detail,
+            "right": right_detail,
+            "comparable": False,
+            "reason": "preview_unavailable",
+            "unified_diff": None,
+            "truncated": False,
+        }
+
+    diff_lines = unified_diff(
+        left_preview["content"].splitlines(),
+        right_preview["content"].splitlines(),
+        fromfile=left_detail["file_name"],
+        tofile=right_detail["file_name"],
+        lineterm="",
+    )
+    diff_text, diff_truncated = _truncate_text("\n".join(diff_lines), ARTIFACT_COMPARE_MAX_CHARS)
+    return {
+        "left": left_detail,
+        "right": right_detail,
+        "comparable": True,
+        "reason": None,
+        "unified_diff": diff_text,
+        "truncated": bool(left_preview.get("truncated") or right_preview.get("truncated") or diff_truncated),
     }

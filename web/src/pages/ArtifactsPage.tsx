@@ -1,12 +1,13 @@
 import { startTransition, useDeferredValue, useEffect, useState } from "react";
 import {
   artifactDownloadUrl,
+  fetchArtifactComparison,
   fetchArtifactDetail,
   fetchArtifacts,
   runFailureOperatorAction
 } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { ArtifactDetail, ArtifactsResponse } from "../types";
+import type { ArtifactComparisonResponse, ArtifactDetail, ArtifactsResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 const PAGE_SIZE = 25;
@@ -28,10 +29,19 @@ function formatPreviewReason(reason?: string | null) {
   return (reason ?? "unsupported_file").replaceAll("_", " ");
 }
 
+function formatComparisonReason(reason?: string | null) {
+  if (reason === "preview_unavailable") {
+    return "One or both artifacts do not expose a safe text or JSON preview.";
+  }
+  return formatPreviewReason(reason);
+}
+
 export function ArtifactsPage() {
   const [artifacts, setArtifacts] = useState<ArtifactsResponse | null>(null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactDetail | null>(null);
+  const [selectedCompareArtifactId, setSelectedCompareArtifactId] = useState<string | null>(null);
+  const [artifactComparison, setArtifactComparison] = useState<ArtifactComparisonResponse | null>(null);
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
   const [providerFilter, setProviderFilter] = useState("all");
@@ -41,6 +51,7 @@ export function ArtifactsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDetailRefreshing, setIsDetailRefreshing] = useState(false);
+  const [isComparisonRefreshing, setIsComparisonRefreshing] = useState(false);
   const [pendingArtifactAction, setPendingArtifactAction] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const livePulse = useLivePulse();
@@ -132,6 +143,38 @@ export function ArtifactsPage() {
     };
   }, [selectedArtifactId, livePulse]);
 
+  useEffect(() => {
+    setSelectedCompareArtifactId(null);
+    setArtifactComparison(null);
+  }, [selectedArtifactId]);
+
+  useEffect(() => {
+    if (!selectedArtifactId || !selectedCompareArtifactId) {
+      setArtifactComparison(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    async function loadComparison() {
+      setIsComparisonRefreshing(true);
+      try {
+        const payload = await fetchArtifactComparison(selectedArtifactId, selectedCompareArtifactId, controller.signal);
+        setArtifactComparison(payload);
+      } catch (error) {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          setNotice("Artifact comparison failed; keep using the current detail snapshot.");
+        }
+      } finally {
+        setIsComparisonRefreshing(false);
+      }
+    }
+
+    void loadComparison();
+    return () => {
+      controller.abort();
+    };
+  }, [selectedArtifactId, selectedCompareArtifactId, livePulse]);
+
   async function handleArtifactAction(artifactId: string, actionKind: "primary" | "secondary" = "primary") {
     const artifact = artifacts?.items.find((item) => item.artifact_id === artifactId);
     const operatorAction =
@@ -145,6 +188,8 @@ export function ArtifactsPage() {
     try {
       await runFailureOperatorAction(operatorAction);
       await loadArtifacts();
+      setSelectedCompareArtifactId(null);
+      setArtifactComparison(null);
       if (selectedArtifactId === artifactId) {
         const payload = await fetchArtifactDetail(artifactId);
         setSelectedArtifact(payload);
@@ -507,6 +552,87 @@ export function ArtifactsPage() {
                 <h3>Metadata</h3>
                 <pre className="artifact-preview">{JSON.stringify(detailArtifact.metadata, null, 2)}</pre>
               </div>
+
+              <div className="artifact-detail__section">
+                <div className="data-panel__header">
+                  <div>
+                    <h3>Compare against related artifacts</h3>
+                    <p>Recent sibling artifacts from the same task for quick text and JSON diffs.</p>
+                  </div>
+                  <div className="status-chip">
+                    <span className={`status-chip__dot ${isComparisonRefreshing ? "is-live" : ""}`} />
+                    {isComparisonRefreshing ? "Refreshing compare" : "Compare ready"}
+                  </div>
+                </div>
+                <div className="data-list">
+                  {(detailArtifact.related_artifacts ?? []).map((item) => (
+                    <div key={item.artifact_id} className="data-list__item">
+                      <div>
+                        <strong>{item.file_name}</strong>
+                        <p>{item.display_path}</p>
+                        <p>
+                          {item.artifact_type}
+                          {item.provider_type ? ` | ${item.provider_type}` : ""}
+                        </p>
+                      </div>
+                      <div className="data-list__meta">
+                        <span className={`goal-status goal-status--${item.artifact_state}`}>{item.artifact_state}</span>
+                        <span>{new Date(item.created_at).toLocaleString()}</span>
+                        <button
+                          type="button"
+                          className="task-action task-action--secondary"
+                          onClick={() => setSelectedCompareArtifactId(item.artifact_id)}
+                        >
+                          {selectedCompareArtifactId === item.artifact_id ? "Comparing" : "Compare"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(detailArtifact.related_artifacts ?? []).length === 0 ? (
+                    <div className="data-list__item">
+                      <div>
+                        <strong>No related artifacts yet.</strong>
+                        <p>This artifact has no recent siblings from the same task to compare against.</p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {artifactComparison ? (
+                <div className="artifact-detail__section">
+                  <h3>Comparison</h3>
+                  <div className="artifact-detail__grid">
+                    <div>
+                      <span>Left</span>
+                      <strong>{artifactComparison.left.file_name}</strong>
+                    </div>
+                    <div>
+                      <span>Right</span>
+                      <strong>{artifactComparison.right.file_name}</strong>
+                    </div>
+                    <div>
+                      <span>Left state</span>
+                      <strong>{artifactComparison.left.artifact_state}</strong>
+                    </div>
+                    <div>
+                      <span>Right state</span>
+                      <strong>{artifactComparison.right.artifact_state}</strong>
+                    </div>
+                  </div>
+                  {artifactComparison.comparable ? (
+                    <>
+                      <p>
+                        Unified diff
+                        {artifactComparison.truncated ? " (truncated)" : ""}
+                      </p>
+                      <pre className="artifact-preview">{artifactComparison.unified_diff || "No text differences detected."}</pre>
+                    </>
+                  ) : (
+                    <p>Comparison unavailable: {formatComparisonReason(artifactComparison.reason)}.</p>
+                  )}
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="data-list__item">

@@ -203,6 +203,17 @@ export interface ArtifactPreview {
   content?: string | null;
 }
 
+export interface ArtifactRelatedItem {
+  artifact_id: string;
+  artifact_type: string;
+  file_name: string;
+  display_path: string;
+  artifact_state: "active" | "quarantined" | "restored" | "external";
+  provider_type?: string | null;
+  session_id?: string | null;
+  created_at: string;
+}
+
 export interface ArtifactDetail extends ArtifactItem {
   absolute_path?: string | null;
   metadata: Record<string, unknown>;
@@ -218,6 +229,16 @@ export interface ArtifactDetail extends ArtifactItem {
     updated_at?: string | null;
     resolved_at?: string | null;
   } | null;
+  related_artifacts?: ArtifactRelatedItem[];
+}
+
+export interface ArtifactComparisonResponse {
+  left: ArtifactDetail;
+  right: ArtifactDetail;
+  comparable: boolean;
+  reason?: string | null;
+  unified_diff?: string | null;
+  truncated?: boolean;
 }
 
 export interface OverviewResponse {

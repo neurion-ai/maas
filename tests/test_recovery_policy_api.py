@@ -179,6 +179,9 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                 needs_replan_task_id = connection.execute(
                     "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
                 ).fetchone()["task_id"]
+                review_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Validate seeded lifecycle semantics'"
+                ).fetchone()["task_id"]
                 connection.execute(
                     """
                     UPDATE tasks
@@ -201,6 +204,18 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     """,
                     (needs_replan_task_id,),
                 )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review',
+                        review_state = 'retry_backoff',
+                        retry_count = 3,
+                        next_retry_at = '2099-01-02 00:00:00',
+                        next_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (review_task_id,),
+                )
                 connection.commit()
             finally:
                 connection.close()
@@ -213,6 +228,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
 
             candidate_items = {item["task_id"]: item for item in payload["replanning_candidates"]}
             self.assertIn(candidate_task_id, candidate_items)
+            self.assertNotIn(review_task_id, candidate_items)
             self.assertEqual(candidate_items[candidate_task_id]["review_state"], "retry_backoff")
             self.assertIn("replan", candidate_items[candidate_task_id]["replan_reason"].lower())
 

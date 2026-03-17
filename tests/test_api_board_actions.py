@@ -469,6 +469,40 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(task_after_finish["status"], "ready")
             self.assertIsNone(task_after_finish["review_state"])
 
+    def test_mark_for_replan_allows_tasks_waiting_only_on_next_retry_deadline(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Replan Task Test", description="Replan task steering", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'planned',
+                        review_state = NULL,
+                        retry_count = 0,
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'recover_and_requeue'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/tasks/{task_id}/actions/mark-for-replan",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "blocked")
+            self.assertEqual(response.json()["review_state"], "needs_replan")
+
     def test_recover_failed_task_returns_it_to_planned_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Recover Task Test", description="Recover failure-blocked task", project_type="custom")

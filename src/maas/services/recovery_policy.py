@@ -123,11 +123,12 @@ def _recovery_summary(connection, project_id):
             SUM(CASE WHEN status = 'blocked' AND review_state = 'needs_replan' THEN 1 ELSE 0 END) AS needs_replan_tasks,
             SUM(
                 CASE
-                    WHEN status NOT IN ('done', 'cancelled', 'in_progress')
+                    WHEN status NOT IN ('done', 'cancelled', 'in_progress', 'review')
                          AND COALESCE(review_state, '') != 'needs_replan'
                          AND (
                              review_state IN ('session_failed', 'stale_session', 'retry_backoff')
                              OR COALESCE(retry_count, 0) > 0
+                             OR next_retry_at IS NOT NULL
                          ) THEN 1
                     ELSE 0
                 END
@@ -341,6 +342,8 @@ def _replan_reason(task):
         return "Cooling down repeatedly; operator replanning can break the retry loop."
     if task.get("review_state") in ("session_failed", "stale_session"):
         return "Failure-blocked and likely needs plan or scope changes."
+    if task.get("next_retry_at"):
+        return "Queued for another retry; operator replanning can replace the current retry path."
     if (task.get("retry_count") or 0) > 0:
         return "Retry history suggests the current plan is unstable."
     return "Operator replanning recommended."
@@ -351,10 +354,11 @@ def _replanning_candidate_tasks(connection, project_id, limit=8):
         connection,
         project_id,
         (
-            "tasks.status NOT IN ('done', 'cancelled', 'in_progress') "
+            "tasks.status NOT IN ('done', 'cancelled', 'in_progress', 'review') "
             "AND COALESCE(tasks.review_state, '') != 'needs_replan' "
             "AND (tasks.review_state IN ('session_failed', 'stale_session', 'retry_backoff') "
-            "OR COALESCE(tasks.retry_count, 0) > 0)"
+            "OR COALESCE(tasks.retry_count, 0) > 0 "
+            "OR tasks.next_retry_at IS NOT NULL)"
         ),
         [],
         limit=limit,

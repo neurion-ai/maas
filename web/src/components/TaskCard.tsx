@@ -118,8 +118,8 @@ export function TaskCard({
     task.status !== "review" &&
     task.review_state !== "needs_replan" &&
     !!onMarkForReplan &&
-    ((task.failure_count ?? 0) > 0 ||
-      (task.retry_count ?? 0) > 0 ||
+    ((task.retry_count ?? 0) > 0 ||
+      !!task.next_retry_at ||
       task.review_state === "retry_backoff" ||
       RECOVERABLE_REVIEW_STATES.has(task.review_state ?? ""));
   const canFinishReplan = task.status === "blocked" && task.review_state === "needs_replan" && !!onFinishReplan;

@@ -3,6 +3,8 @@
 import json
 import mimetypes
 import os
+import tempfile
+import zipfile
 from difflib import unified_diff
 
 RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
@@ -583,6 +585,80 @@ def _dependency_artifact_links(connection, project_paths, focus_item, direction,
     return links
 
 
+def _artifact_export_rows(connection, project_paths, task_id=None, session_id=None):
+    clauses = []
+    params = []
+    if task_id:
+        clauses.append("artifacts.task_id = ?")
+        params.append(task_id)
+    if session_id:
+        clauses.append("artifacts.session_id = ?")
+        params.append(session_id)
+    if len(clauses) != 1:
+        raise ValueError("exactly one export scope is required")
+
+    rows = connection.execute(
+        _artifact_row_query("WHERE " + clauses[0]) + "\nORDER BY artifacts.created_at ASC, artifacts.artifact_id ASC",
+        tuple(params),
+    ).fetchall()
+    items = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, row) for row in rows])
+    return rows, items
+
+
+def build_artifact_export_bundle(connection, project_paths, task_id=None, session_id=None):
+    rows, items = _artifact_export_rows(connection, project_paths, task_id=task_id, session_id=session_id)
+    if not rows:
+        return None
+
+    scope_type = "task" if task_id else "session"
+    scope_id = task_id or session_id
+    manifest = {
+        "scope_type": scope_type,
+        "scope_id": scope_id,
+        "artifact_count": len(items),
+        "artifacts": [],
+    }
+
+    temp_file = tempfile.NamedTemporaryFile(prefix="maas-artifact-export-", suffix=".zip", delete=False)
+    temp_file_path = temp_file.name
+    temp_file.close()
+
+    with zipfile.ZipFile(temp_file_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for row, item in zip(rows, items):
+            absolute_path = _absolute_path(project_paths, row["path"])
+            export_entry = {
+                "artifact_id": item["artifact_id"],
+                "file_name": item["file_name"],
+                "display_path": item["display_path"],
+                "artifact_type": item["artifact_type"],
+                "artifact_state": item["artifact_state"],
+                "task_id": item.get("task_id"),
+                "session_id": item.get("session_id"),
+                "included": False,
+                "reason": None,
+            }
+            if _can_download_artifact(project_paths, absolute_path):
+                archive.write(absolute_path, arcname="artifacts/{0}-{1}".format(item["artifact_id"], item["file_name"]))
+                export_entry["included"] = True
+            elif not absolute_path or not os.path.exists(absolute_path):
+                export_entry["reason"] = "missing_file"
+            elif not os.path.isfile(absolute_path):
+                export_entry["reason"] = "not_a_file"
+            elif not _path_within(project_paths.root, absolute_path):
+                export_entry["reason"] = "external_file"
+            else:
+                export_entry["reason"] = "export_unavailable"
+            manifest["artifacts"].append(export_entry)
+
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
+
+    return {
+        "absolute_path": temp_file_path,
+        "file_name": "{0}-{1}-artifacts.zip".format(scope_type, scope_id),
+        "content_type": "application/zip",
+    }
+
+
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
     where, params = _artifact_where_clause(project_paths, filters)
     base_from = _artifact_base_from()
@@ -665,6 +741,8 @@ def fetch_artifact_detail(connection, project_paths, artifact_id):
         "metadata": _metadata_snapshot(metadata),
         "absolute_path": absolute_path,
         "download_url": "/api/artifacts/{0}/download".format(artifact_id) if can_download else None,
+        "task_export_url": "/api/artifacts/export?task_id={0}".format(enriched_item["task_id"]) if enriched_item.get("task_id") else None,
+        "session_export_url": "/api/artifacts/export?session_id={0}".format(enriched_item["session_id"]) if enriched_item.get("session_id") else None,
         "download_content_type": _download_content_type(absolute_path) if can_download else None,
         "preview": _artifact_preview(absolute_path),
         "quarantine_entry": quarantine_entry,

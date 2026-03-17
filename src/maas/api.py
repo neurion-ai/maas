@@ -10,7 +10,13 @@ from pydantic import BaseModel
 from maas.db import connect, project_paths
 from maas.paths import ProjectPaths
 from maas.services.alerts import fetch_alerts, update_alert_status
-from maas.services.artifacts import fetch_artifact_comparison, fetch_artifact_detail, fetch_artifacts, resolve_artifact_download
+from maas.services.artifacts import (
+    build_artifact_export_bundle,
+    fetch_artifact_comparison,
+    fetch_artifact_detail,
+    fetch_artifacts,
+    resolve_artifact_download,
+)
 from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
@@ -383,6 +389,29 @@ def create_app(project_root="."):
             )
         finally:
             connection.close()
+
+    @app.get("/api/artifacts/export")
+    def artifact_export(task_id: str = "", session_id: str = ""):
+        connection = connect(paths)
+        try:
+            try:
+                bundle = build_artifact_export_bundle(
+                    connection,
+                    paths,
+                    task_id=task_id or None,
+                    session_id=session_id or None,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+        if bundle is None:
+            raise HTTPException(status_code=404, detail="artifact export scope not found")
+        return FileResponse(
+            bundle["absolute_path"],
+            media_type=bundle["content_type"],
+            filename=bundle["file_name"],
+        )
 
     @app.get("/api/artifacts/{artifact_id}")
     def artifact_detail(artifact_id: str):

@@ -227,6 +227,8 @@ export interface ArtifactDetail extends ArtifactItem {
   absolute_path?: string | null;
   metadata: Record<string, unknown>;
   download_url?: string | null;
+  task_export_url?: string | null;
+  session_export_url?: string | null;
   download_content_type?: string | null;
   preview: ArtifactPreview;
   lineage_summary?: {

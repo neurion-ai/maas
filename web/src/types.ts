@@ -215,6 +215,14 @@ export interface ArtifactRelatedItem {
   created_at: string;
 }
 
+export interface ArtifactTaskLink {
+  task_id: string;
+  task_title?: string | null;
+  dependency_type: "blocks" | "informs" | "conflicts";
+  artifact_count: number;
+  recent_artifacts: ArtifactRelatedItem[];
+}
+
 export interface ArtifactDetail extends ArtifactItem {
   absolute_path?: string | null;
   metadata: Record<string, unknown>;
@@ -235,6 +243,8 @@ export interface ArtifactDetail extends ArtifactItem {
     resolved_at?: string | null;
   } | null;
   session_artifacts?: ArtifactRelatedItem[];
+  upstream_task_artifacts?: ArtifactTaskLink[];
+  downstream_task_artifacts?: ArtifactTaskLink[];
   related_artifacts?: ArtifactRelatedItem[];
 }
 

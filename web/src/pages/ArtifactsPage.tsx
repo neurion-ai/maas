@@ -36,6 +36,10 @@ function formatComparisonReason(reason?: string | null) {
   return formatPreviewReason(reason);
 }
 
+function formatDependencyType(value: string) {
+  return value.replaceAll("_", " ");
+}
+
 export function ArtifactsPage() {
   const [artifacts, setArtifacts] = useState<ArtifactsResponse | null>(null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
@@ -228,12 +232,72 @@ export function ArtifactsPage() {
     setOffset(0);
     setTaskFilter(nextTaskId ?? "");
     setSessionFilter("");
+    setSelectedArtifactId(null);
+    setSelectedArtifact(null);
+    setSelectedCompareArtifactId(null);
+    setArtifactComparison(null);
   }
 
   function applySessionFilter(nextSessionId?: string | null) {
     setOffset(0);
     setSessionFilter(nextSessionId ?? "");
     setTaskFilter("");
+    setSelectedArtifactId(null);
+    setSelectedArtifact(null);
+    setSelectedCompareArtifactId(null);
+    setArtifactComparison(null);
+  }
+
+  function renderTaskArtifactLinks(
+    heading: string,
+    description: string,
+    links: ArtifactDetail["upstream_task_artifacts"] | undefined
+  ) {
+    return (
+      <div className="artifact-detail__section">
+        <div className="data-panel__header">
+          <div>
+            <h3>{heading}</h3>
+            <p>{description}</p>
+          </div>
+        </div>
+        <div className="data-list">
+          {(links ?? []).map((link) => (
+            <div key={`${heading}-${link.task_id}-${link.dependency_type}`} className="data-list__item">
+              <div>
+                <strong>{link.task_title ?? link.task_id}</strong>
+                <p>
+                  {formatDependencyType(link.dependency_type)} | {link.artifact_count} artifact
+                  {link.artifact_count === 1 ? "" : "s"}
+                </p>
+                {link.recent_artifacts.length > 0 ? (
+                  <p>{link.recent_artifacts.map((artifact) => artifact.file_name).join(", ")}</p>
+                ) : (
+                  <p>No artifacts recorded on this task yet.</p>
+                )}
+              </div>
+              <div className="data-list__meta">
+                <button
+                  type="button"
+                  className="task-action task-action--secondary"
+                  onClick={() => applyTaskFilter(link.task_id)}
+                >
+                  Show task artifacts
+                </button>
+              </div>
+            </div>
+          ))}
+          {(links ?? []).length === 0 ? (
+            <div className="data-list__item">
+              <div>
+                <strong>No linked task artifacts.</strong>
+                <p>No dependency-linked task artifacts are associated with this artifact yet.</p>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -676,6 +740,18 @@ export function ArtifactsPage() {
                   ) : null}
                 </div>
               </div>
+
+              {renderTaskArtifactLinks(
+                "Upstream task artifacts",
+                "Artifacts from tasks that feed or block this task through dependency links.",
+                detailArtifact.upstream_task_artifacts
+              )}
+
+              {renderTaskArtifactLinks(
+                "Downstream task artifacts",
+                "Artifacts from tasks that depend on this task through dependency links.",
+                detailArtifact.downstream_task_artifacts
+              )}
 
               <div className="artifact-detail__section">
                 <div className="data-panel__header">

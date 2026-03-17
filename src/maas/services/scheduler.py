@@ -44,7 +44,7 @@ def _brownfield_signal(task_row):
         "map imported repository area"
     ):
         return {"kind": "repo_area_map", "label": "Imported repo area"}
-    if title.startswith("validate imported workflow:") or title.startswith("review imported workflow:"):
+    if title.startswith("validate imported workflow") or title.startswith("review imported workflow"):
         return {"kind": "workflow_validation", "label": "Imported workflow"}
     if "align runtime and provider settings" in title:
         return {"kind": "runtime_alignment", "label": "Runtime alignment"}

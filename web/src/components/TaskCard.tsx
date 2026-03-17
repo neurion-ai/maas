@@ -38,6 +38,16 @@ function formatAge(hours?: number | null) {
   return `${(hours / 24).toFixed(1)}d old`;
 }
 
+function formatSchedulerFactors(task: BoardTask) {
+  const factors = task.scheduler_factors ?? [];
+  if (!factors.length) {
+    return "No score factors";
+  }
+  return factors
+    .map((factor) => `${factor.value > 0 ? "+" : ""}${factor.value} ${factor.label.toLowerCase()}`)
+    .join(", ");
+}
+
 interface TaskCardProps {
   task: BoardTask;
   agentOptions?: FilterOption[];
@@ -155,6 +165,26 @@ export function TaskCard({
               ? `${new Date(task.next_retry_at).toLocaleString()}${task.next_retry_reason ? ` (${task.next_retry_reason})` : ""}`
               : "Ready now"}
           </dd>
+        </div>
+        <div>
+          <dt>Scheduler</dt>
+          <dd>{task.scheduler_summary ?? "No scheduler rationale yet"}</dd>
+        </div>
+        <div>
+          <dt>Score</dt>
+          <dd>
+            {task.scheduler_score != null
+              ? `${task.scheduler_score}${task.scheduler_rank != null ? ` (rank #${task.scheduler_rank})` : ""}`
+              : "N/A"}
+          </dd>
+        </div>
+        <div>
+          <dt>Fit</dt>
+          <dd>{task.scheduler_agent?.name ?? "No active match"}</dd>
+        </div>
+        <div>
+          <dt>Factors</dt>
+          <dd>{formatSchedulerFactors(task)}</dd>
         </div>
       </dl>
       {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue || canSetRetryLimit) && (

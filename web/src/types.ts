@@ -13,6 +13,12 @@ export interface BoardAgent {
   status?: string;
 }
 
+export interface SchedulerFactor {
+  key: string;
+  label: string;
+  value: number;
+}
+
 export interface BoardGoal {
   id: string;
   title: string;
@@ -38,6 +44,12 @@ export interface BoardTask {
   agent?: BoardAgent | null;
   failure_count?: number;
   latest_failure_at?: string | null;
+  scheduler_status?: string | null;
+  scheduler_summary?: string | null;
+  scheduler_score?: number | null;
+  scheduler_rank?: number | null;
+  scheduler_agent?: BoardAgent | null;
+  scheduler_factors?: SchedulerFactor[];
 }
 
 export interface BoardColumn {

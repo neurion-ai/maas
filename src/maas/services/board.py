@@ -3,6 +3,7 @@
 from datetime import datetime
 
 from maas.constants import BOARD_COLUMNS
+from maas.services.scheduler import describe_task_scheduler, scheduler_decisions_for_tasks
 
 
 def _parse_timestamp(value):
@@ -98,6 +99,14 @@ def fetch_board(connection, filters=None):
             {"agent_id": row["agent_id"], "capability": row["capability"]}
         )
 
+    agent_rows = connection.execute(
+        """
+        SELECT agent_id, project_id, role, display_name, status, current_task_id
+        FROM agents
+        ORDER BY display_name ASC
+        """
+    ).fetchall()
+
     rows = connection.execute(
         """
         SELECT
@@ -114,6 +123,7 @@ def fetch_board(connection, filters=None):
             tasks.next_retry_reason,
             tasks.progress_pct,
             tasks.review_state,
+            tasks.assigned_agent_id,
             tasks.created_at,
             tasks.updated_at,
             tasks.last_heartbeat_at,
@@ -129,11 +139,14 @@ def fetch_board(connection, filters=None):
         """
     ).fetchall()
 
+    scheduler_decisions = scheduler_decisions_for_tasks(rows, agent_rows)
+
     cards_by_status = {}
     filtered_rows = [row for row in rows if _matches_filters(row, filters or {})]
     for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
         column_key = _board_column_key(row["status"])
+        scheduler = describe_task_scheduler(row, scheduler_decisions.get(row["task_id"]))
         card = {
             "task_id": row["task_id"],
             "title": row["title"],
@@ -159,6 +172,19 @@ def fetch_board(connection, filters=None):
             "latest_failure_at": failures_by_task.get(row["task_id"], {}).get("latest_failure_at"),
             "heartbeat_age_seconds": _age_seconds(row["last_heartbeat_at"]),
             "age_hours": round(age_minutes / 60.0, 1) if age_minutes is not None else None,
+            "scheduler_status": scheduler.get("scheduler_status"),
+            "scheduler_summary": scheduler.get("scheduler_summary"),
+            "scheduler_score": scheduler.get("scheduler_score"),
+            "scheduler_rank": scheduler.get("scheduler_rank"),
+            "scheduler_agent": (
+                {
+                    "id": scheduler.get("scheduler_agent_id"),
+                    "name": scheduler.get("scheduler_agent_name"),
+                }
+                if scheduler.get("scheduler_agent_id")
+                else None
+            ),
+            "scheduler_factors": scheduler.get("scheduler_factors", []),
         }
         cards_by_status.setdefault(column_key, []).append(card)
 

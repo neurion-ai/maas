@@ -124,6 +124,14 @@ export interface OverviewOnboarding {
       detail?: string;
     }>;
     repo_areas?: string[];
+    codebase_map?: Array<{
+      name: string;
+      path?: string;
+      kind: string;
+      primary_language: string;
+      file_count: number;
+      summary?: string;
+    }>;
   };
   review_task_id?: string | null;
   review_task_status?: string | null;

@@ -104,10 +104,23 @@ lint = "example:main"
                 config["onboarding"]["discovery_summary"]["workflow_details"][0]["detail"],
             )
             self.assertIn("src", config["onboarding"]["discovery_summary"]["repo_areas"])
+            self.assertEqual(
+                config["onboarding"]["discovery_summary"]["codebase_map"][0]["name"],
+                "src",
+            )
+            self.assertEqual(
+                config["onboarding"]["discovery_summary"]["codebase_map"][0]["kind"],
+                "source",
+            )
+            self.assertEqual(
+                config["onboarding"]["discovery_summary"]["codebase_map"][1]["kind"],
+                "tests",
+            )
             self.assertIn("Review imported project understanding", task_titles)
             self.assertIn("Validate imported workflow: lint", task_titles)
             self.assertIn("Validate imported workflow: test", task_titles)
-            self.assertIn("Map imported repo area: src", task_titles)
+            self.assertIn("Map imported source area: src", task_titles)
+            self.assertIn("Map imported test surface: tests", task_titles)
             self.assertIn("Align runtime and provider settings with existing tooling", task_titles)
 
     def test_bootstrap_auto_detects_brownfield_from_hidden_repo_signals(self):
@@ -170,6 +183,8 @@ lint = "example:main"
             self.assertTrue(
                 any(signal.get("path") == ".github/workflows/invalid.yml" for signal in discovery["workflow_signals"])
             )
+            self.assertEqual(discovery["codebase_map"][0]["name"], ".github")
+            self.assertEqual(discovery["codebase_map"][0]["kind"], "automation")
 
     def test_bootstrap_keeps_top_level_directories_when_root_files_dominate(self):
         with tempfile.TemporaryDirectory() as tmpdir:

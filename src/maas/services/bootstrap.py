@@ -91,6 +91,15 @@ WORKFLOW_SIGNAL_LABELS = {
     "github_actions": "GitHub Actions workflow",
 }
 
+CODEBASE_AREA_LABELS = {
+    "source": "source area",
+    "tests": "test surface",
+    "docs": "docs surface",
+    "automation": "automation surface",
+    "config": "config surface",
+    "mixed": "repo area",
+}
+
 
 def default_project_name(project_root):
     return os.path.basename(os.path.abspath(project_root)) or "maas-project"
@@ -250,6 +259,66 @@ def _top_entries(counts, limit=4):
     return ordered[:limit]
 
 
+def _classify_codebase_area(name, discovery):
+    lowered = (name or "").lower()
+    if name in (discovery.get("docs_roots") or []) or lowered in {"docs", "doc"}:
+        return "docs"
+    if name in (discovery.get("test_roots") or []) or "test" in lowered or lowered == "spec":
+        return "tests"
+    if lowered in {"scripts", "tools", ".github"}:
+        return "automation"
+    if lowered in {"config", "configs"}:
+        return "config"
+    if lowered in {"src", "app", "apps", "api", "server", "client", "web", "lib", "libs", "pkg", "packages", "services"}:
+        return "source"
+    return "mixed"
+
+
+def _build_codebase_map(discovery):
+    codebase_map = []
+    for item in discovery.get("top_level_dirs", []):
+        kind = _classify_codebase_area(item["name"], discovery)
+        summary_parts = [
+            "{language} stack".format(language=item["primary_language"]),
+            "{count} files".format(count=item["file_count"]),
+        ]
+        if kind == "tests":
+            summary_parts.append("test entrypoint area")
+        elif kind == "docs":
+            summary_parts.append("operator-facing docs area")
+        elif kind == "automation":
+            summary_parts.append("automation and workflow area")
+        elif kind == "source":
+            summary_parts.append("primary implementation area")
+        codebase_map.append(
+            {
+                "name": item["name"],
+                "path": item["name"],
+                "kind": kind,
+                "primary_language": item["primary_language"],
+                "file_count": item["file_count"],
+                "summary": ", ".join(summary_parts),
+            }
+        )
+        if len(codebase_map) >= 4:
+            break
+
+    if not codebase_map and discovery.get("total_files"):
+        codebase_map.append(
+            {
+                "name": "repository_root",
+                "path": ".",
+                "kind": "mixed",
+                "primary_language": discovery.get("primary_language") or "unknown",
+                "file_count": discovery.get("total_files") or 0,
+                "summary": "root-level repo layout with {count} files".format(
+                    count=discovery.get("total_files") or 0
+                ),
+            }
+        )
+    return codebase_map
+
+
 def discover_brownfield_project(project_root):
     project_root = os.path.abspath(project_root)
     discovery = {
@@ -397,6 +466,7 @@ def discover_brownfield_project(project_root):
         unique_signals.append(signal)
     discovery["workflow_signals"] = unique_signals[:10]
     discovery["scripts"] = [signal["name"] for signal in discovery["workflow_signals"] if signal["kind"] in {"make_target", "npm_script", "python_script"}][:6]
+    discovery["codebase_map"] = _build_codebase_map(discovery)
     return discovery
 
 
@@ -416,6 +486,16 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             "{kind}:{name}".format(kind=item["kind"], name=item["name"])
             for item in discovery["workflow_signals"]
         ) or "none detected"
+        codebase_map = "\n".join(
+            "- {name} ({kind}, {language}, {count} files): {summary}".format(
+                name=item["name"],
+                kind=CODEBASE_AREA_LABELS.get(item["kind"], item["kind"]),
+                language=item["primary_language"],
+                count=item["file_count"],
+                summary=item["summary"],
+            )
+            for item in discovery.get("codebase_map", [])
+        ) or "- none detected"
         docs = ", ".join(discovery["docs_roots"]) or "none detected"
         tests = ", ".join(discovery["test_roots"]) or "none detected"
         readme_excerpt = discovery["readme_excerpt"] or "No README excerpt available."
@@ -442,6 +522,8 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
 ## Workflow Signals
 
 - Detected commands and automation: {workflows}
+- Imported codebase map:
+{codebase_map}
 - Initial README excerpt:
 
 {readme_excerpt}
@@ -469,6 +551,7 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             docs=docs,
             tests=tests,
             workflows=workflows,
+            codebase_map=codebase_map,
             readme_excerpt=readme_excerpt,
         )
     return """# Project Understanding
@@ -519,6 +602,17 @@ def build_discovery_summary(discovery):
             for item in discovery["workflow_signals"][:5]
         ],
         "repo_areas": [item["name"] for item in discovery["top_level_dirs"][:4]],
+        "codebase_map": [
+            {
+                "name": item["name"],
+                "path": item.get("path") or item["name"],
+                "kind": item["kind"],
+                "primary_language": item["primary_language"],
+                "file_count": item["file_count"],
+                "summary": item.get("summary") or "",
+            }
+            for item in discovery.get("codebase_map", [])[:4]
+        ],
     }
 
 
@@ -545,6 +639,18 @@ def _operator_workflow_signals(discovery):
         seen.add(key)
         operator_signals.append(item)
     return operator_signals[:3]
+
+
+def _operator_codebase_entries(discovery):
+    entries = []
+    seen = set()
+    for item in discovery.get("codebase_map", []):
+        key = item["name"]
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(item)
+    return entries[:2]
 
 
 def build_brownfield_task_specs(discovery):
@@ -582,15 +688,19 @@ def build_brownfield_task_specs(discovery):
         workflow_priority -= 2
 
     repo_area_priority = 88
-    for item in discovery.get("top_level_dirs", [])[:2]:
+    for item in _operator_codebase_entries(discovery):
+        kind_label = CODEBASE_AREA_LABELS.get(item["kind"], "repo area")
         task_specs.append(
             (
                 "blocked",
-                "Map imported repo area: {name}".format(name=item["name"]),
+                "Map imported {kind}: {name}".format(kind=kind_label, name=item["name"]),
                 "agent_allocator",
                 repo_area_priority,
-                "Turn the imported repo area `{name}` into an operator-visible ownership/workflow area.".format(
-                    name=item["name"]
+                "Turn the imported {kind} `{name}` into an operator-visible ownership/workflow area using the discovered {language} stack and {count} files.".format(
+                    kind=kind_label,
+                    name=item["name"],
+                    language=item["primary_language"],
+                    count=item["file_count"],
                 ),
                 BROWNFIELD_PENDING_REVIEW_STATE,
                 0,

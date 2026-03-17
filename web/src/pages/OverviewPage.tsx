@@ -216,6 +216,26 @@ export function OverviewPage() {
                     </div>
                   </div>
                 ) : null}
+                {(overview.onboarding.discovery_summary.codebase_map?.length ?? 0) > 0 ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Imported codebase map</strong>
+                      {overview.onboarding.discovery_summary.codebase_map?.map((item) => (
+                        <p key={`${item.name}-${item.path ?? ""}`}>
+                          <strong>{item.name}</strong>
+                          {` · ${item.kind.replaceAll("_", " ")}`}
+                          {item.path ? ` · ${item.path}` : ""}
+                          {` · ${item.primary_language}`}
+                          {` · ${item.file_count} files`}
+                          {item.summary ? ` · ${item.summary}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.discovery_summary.codebase_map?.length ?? 0} mapped areas</span>
+                    </div>
+                  </div>
+                ) : null}
                 {overview.onboarding.reviewed_at ? (
                 <div className="data-list__item">
                   <div>

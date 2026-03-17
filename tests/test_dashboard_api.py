@@ -58,8 +58,21 @@ class DashboardApiTest(unittest.TestCase):
     def test_overview_exposes_brownfield_onboarding_state(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, ".github", "workflows"), exist_ok=True)
             with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
                 handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, ".github", "workflows", "ci.yml"), "w", encoding="utf-8") as handle:
+                handle.write("name: CI\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n")
             with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
                 handle.write("print('hello')\n")
 
@@ -71,10 +84,14 @@ class DashboardApiTest(unittest.TestCase):
             self.assertEqual(overview_payload["onboarding"]["mode"], "brownfield")
             self.assertEqual(overview_payload["onboarding"]["review_status"], "review_pending")
             self.assertTrue(overview_payload["onboarding"]["review_required"])
-            self.assertEqual(overview_payload["onboarding"]["pending_gated_tasks"], 1)
+            self.assertEqual(overview_payload["onboarding"]["pending_gated_tasks"], 5)
             self.assertEqual(
                 overview_payload["onboarding"]["discovery_summary"]["primary_language"],
                 "python",
+            )
+            self.assertGreaterEqual(
+                len(overview_payload["onboarding"]["discovery_summary"]["workflow_details"]),
+                1,
             )
             self.assertIn(
                 "src",

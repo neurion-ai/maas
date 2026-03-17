@@ -95,6 +95,14 @@ lint = "example:main"
             self.assertEqual(blocked_gated_count, 6)
             self.assertIn("python_script:lint", config["onboarding"]["discovery_summary"]["workflow_labels"])
             self.assertIn("make_target:test", config["onboarding"]["discovery_summary"]["workflow_labels"])
+            self.assertEqual(
+                config["onboarding"]["discovery_summary"]["workflow_details"][0]["path"],
+                "pyproject.toml",
+            )
+            self.assertIn(
+                "example:main",
+                config["onboarding"]["discovery_summary"]["workflow_details"][0]["detail"],
+            )
             self.assertIn("src", config["onboarding"]["discovery_summary"]["repo_areas"])
             self.assertIn("Review imported project understanding", task_titles)
             self.assertIn("Validate imported workflow: lint", task_titles)
@@ -126,6 +134,9 @@ lint = "example:main"
                 discovery = json.load(handle)
             self.assertTrue(
                 any(item["path"] == ".github/workflows" for item in discovery["notable_files"])
+            )
+            self.assertTrue(
+                any(signal.get("path") == ".github/workflows/ci.yml" for signal in discovery["workflow_signals"])
             )
             connection = sqlite3.connect(result["paths"].db_path)
             try:

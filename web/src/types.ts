@@ -118,6 +118,11 @@ export interface OverviewOnboarding {
     total_files?: number;
     package_managers?: string[];
     workflow_labels?: string[];
+    workflow_details?: Array<{
+      label: string;
+      path?: string;
+      detail?: string;
+    }>;
     repo_areas?: string[];
   };
   review_task_id?: string | null;

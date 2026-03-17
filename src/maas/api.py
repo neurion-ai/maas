@@ -24,6 +24,7 @@ from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_que
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
 from maas.services.provider_runtime import provider_runtime_overview, run_provider_task, set_provider_mode, set_provider_settings
+from maas.services.projects import list_projects, resolve_project_id
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
@@ -158,16 +159,19 @@ class ProviderRunRequest(BaseModel):
 class ProviderModeRequest(BaseModel):
     actor_id: str
     mode: str
+    project_id: Optional[str] = None
 
 
 class ProviderSettingsRequest(BaseModel):
     actor_id: str
     settings: dict = {}
+    project_id: Optional[str] = None
 
 
 class RecoveryPolicyRequest(BaseModel):
     actor_id: str
     policy: dict = {}
+    project_id: Optional[str] = None
 
 
 def _parse_limit(value, default):
@@ -194,6 +198,15 @@ def _parse_offset(value, default=0):
     return parsed
 
 
+def _selected_project_id(connection, project_id=None):
+    if project_id is None:
+        return resolve_project_id(connection)
+    resolved = resolve_project_id(connection, project_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    return resolved
+
+
 def create_app(project_root="."):
     app = FastAPI(title="MAAS", version="0.1.0")
     paths = ProjectPaths(project_root)
@@ -209,22 +222,39 @@ def create_app(project_root="."):
     def health():
         return {"status": "ok", "project_root": paths.root}
 
-    @app.get("/api/live")
-    def live():
+    @app.get("/api/projects")
+    def projects():
         connection = connect(paths)
         try:
-            return build_live_snapshot(connection)
+            return {"projects": list_projects(connection)}
+        finally:
+            connection.close()
+
+    @app.get("/api/live")
+    def live(project_id: str = None):
+        connection = connect(paths)
+        try:
+            return build_live_snapshot(connection, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 
     @app.get("/api/live/stream")
-    def live_stream():
+    def live_stream(project_id: str = None):
         root = paths.root
 
         def connection_factory():
             return connect(project_paths(root))
 
-        return StreamingResponse(sse_stream(connection_factory), media_type="text/event-stream")
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+        finally:
+            connection.close()
+
+        return StreamingResponse(
+            sse_stream(connection_factory, project_id=scoped_project_id),
+            media_type="text/event-stream",
+        )
 
     @app.websocket("/api/live/ws")
     async def live_websocket(websocket: WebSocket):
@@ -233,14 +263,25 @@ def create_app(project_root="."):
         def connection_factory():
             return connect(project_paths(root))
 
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, websocket.query_params.get("project_id"))
+        except HTTPException:
+            await websocket.close(code=1008, reason="project not found")
+            return
+        finally:
+            if connection:
+                connection.close()
+
         await websocket.accept()
         try:
-            await websocket_stream(websocket.send_json, connection_factory)
+            await websocket_stream(websocket.send_json, connection_factory, project_id=scoped_project_id)
         except WebSocketDisconnect:
             return
 
     @app.get("/api/board")
     def board(
+        project_id: str = None,
         search: str = "",
         agent_id: str = None,
         goal_id: str = None,
@@ -250,6 +291,7 @@ def create_app(project_root="."):
     ):
         connection = connect(paths)
         try:
+            scoped_project_id = _selected_project_id(connection, project_id)
             return fetch_board(
                 connection,
                 filters={
@@ -260,20 +302,24 @@ def create_app(project_root="."):
                     "blocked_only": blocked_only,
                     "review_only": review_only,
                 },
+                project_id=scoped_project_id,
             )
         finally:
             connection.close()
 
     @app.get("/api/goals")
-    def goals():
+    def goals(project_id: str = None):
         connection = connect(paths)
         try:
+            scoped_project_id = _selected_project_id(connection, project_id)
             rows = connection.execute(
                 """
                 SELECT goal_id, parent_goal_id, title, description, status, goal_type, priority, created_at
                 FROM goals
+                WHERE project_id = ?
                 ORDER BY priority DESC, created_at ASC
-                """
+                """,
+                (scoped_project_id,),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
@@ -296,67 +342,73 @@ def create_app(project_root="."):
             connection.close()
 
     @app.get("/api/goals/tree")
-    def goals_tree():
+    def goals_tree(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_goal_tree(connection)
+            return fetch_goal_tree(connection, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 
     @app.get("/api/overview")
-    def overview():
+    def overview(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_overview(connection)
+            return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 
     @app.get("/api/agents")
-    def agents():
+    def agents(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_agent_roster(connection)
+            return fetch_agent_roster(connection, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 
     @app.get("/api/activity")
-    def activity(limit=20):
+    def activity(limit=20, project_id: str = None):
         connection = connect(paths)
         try:
+            scoped_project_id = _selected_project_id(connection, project_id)
             rows = connection.execute(
                 """
-                SELECT activity_id, agent_id, task_id, action, category, description, severity, created_at
+                SELECT activity_id, project_id, agent_id, task_id, action, category, description, severity, created_at
                 FROM activity_log
+                WHERE project_id = ?
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (scoped_project_id, limit),
             ).fetchall()
             return [dict(row) for row in rows]
         finally:
             connection.close()
 
     @app.get("/api/alerts")
-    def alerts():
+    def alerts(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_alerts(connection)
+            return fetch_alerts(connection, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 
     @app.get("/api/escalations")
-    def escalations():
+    def escalations(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_escalations(connection)
+            return fetch_escalations(connection, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 
     @app.get("/api/failures")
-    def failures(limit=20):
+    def failures(limit=20, project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_failure_log(connection, limit=int(limit))
+            return fetch_failure_log(
+                connection,
+                limit=int(limit),
+                project_id=_selected_project_id(connection, project_id),
+            )
         finally:
             connection.close()
 
@@ -371,11 +423,13 @@ def create_app(project_root="."):
         task_id: str = "",
         session_id: str = "",
         missing_only: bool = False,
+        project_id: str = None,
     ):
         parsed_limit = _parse_limit(limit, 100)
         parsed_offset = _parse_offset(offset, 0)
         connection = connect(paths)
         try:
+            scoped_project_id = _selected_project_id(connection, project_id)
             return fetch_artifacts(
                 connection,
                 paths,
@@ -390,6 +444,7 @@ def create_app(project_root="."):
                     "session_id": session_id,
                     "missing_only": missing_only,
                 },
+                project_id=scoped_project_id,
             )
         finally:
             connection.close()
@@ -491,10 +546,14 @@ def create_app(project_root="."):
             connection.close()
 
     @app.get("/api/quarantine")
-    def quarantine(limit=20):
+    def quarantine(limit=20, project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_quarantine_queue(connection, limit=int(limit))
+            return fetch_quarantine_queue(
+                connection,
+                limit=int(limit),
+                project_id=_selected_project_id(connection, project_id),
+            )
         finally:
             connection.close()
 
@@ -547,22 +606,22 @@ def create_app(project_root="."):
             connection.close()
 
     @app.get("/api/providers")
-    def providers():
+    def providers(project_id: str = None):
         connection = connect(paths)
         try:
-            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-            project_id = project["project_id"] if project else None
-            return provider_runtime_overview(connection=connection, project_id=project_id)
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return provider_runtime_overview(connection=connection, project_id=scoped_project_id)
         finally:
             connection.close()
 
     @app.get("/api/recovery-policy")
-    def recovery_policy():
+    def recovery_policy(project_id: str = None):
         connection = connect(paths)
         try:
-            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-            project_id = project["project_id"] if project else None
-            return fetch_project_recovery_overview(connection, project_id=project_id)
+            return fetch_project_recovery_overview(
+                connection,
+                project_id=_selected_project_id(connection, project_id),
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -635,9 +694,13 @@ def create_app(project_root="."):
     def provider_set_mode_action(provider_id: str, payload: ProviderModeRequest):
         connection = connect(paths)
         try:
-            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-            project_id = project["project_id"] if project else None
-            return set_provider_mode(connection, provider_id, payload.actor_id, payload.mode, project_id=project_id)
+            return set_provider_mode(
+                connection,
+                provider_id,
+                payload.actor_id,
+                payload.mode,
+                project_id=_selected_project_id(connection, payload.project_id),
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
@@ -649,9 +712,13 @@ def create_app(project_root="."):
     def provider_set_settings_action(provider_id: str, payload: ProviderSettingsRequest):
         connection = connect(paths)
         try:
-            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-            project_id = project["project_id"] if project else None
-            return set_provider_settings(connection, provider_id, payload.actor_id, payload.settings, project_id=project_id)
+            return set_provider_settings(
+                connection,
+                provider_id,
+                payload.actor_id,
+                payload.settings,
+                project_id=_selected_project_id(connection, payload.project_id),
+            )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
@@ -663,13 +730,11 @@ def create_app(project_root="."):
     def recovery_policy_set_action(payload: RecoveryPolicyRequest):
         connection = connect(paths)
         try:
-            project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-            project_id = project["project_id"] if project else None
             return update_project_recovery_policy(
                 connection,
                 payload.actor_id,
                 payload.policy,
-                project_id=project_id,
+                project_id=_selected_project_id(connection, payload.project_id),
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))

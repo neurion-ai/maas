@@ -138,13 +138,16 @@ def _truncate_text(value, limit):
     return value[:limit], True
 
 
-def _state_summary(connection, project_paths):
-    rows = connection.execute(
-        """
+def _state_summary(connection, project_paths, project_id=None):
+    query = """
         SELECT path, metadata_json
         FROM artifacts
-        """
-    ).fetchall()
+    """
+    params = ()
+    if project_id is not None:
+        query += "\nWHERE project_id = ?"
+        params = (project_id,)
+    rows = connection.execute(query, params).fetchall()
     summary = {
         "total_artifacts": 0,
         "active_artifacts": 0,
@@ -164,28 +167,32 @@ def _state_summary(connection, project_paths):
     return summary
 
 
-def _type_counts(connection):
-    rows = connection.execute(
-        """
+def _type_counts(connection, project_id=None):
+    query = """
         SELECT artifact_type, COUNT(*) AS count
         FROM artifacts
-        GROUP BY artifact_type
-        ORDER BY count DESC, artifact_type ASC
-        """
-    ).fetchall()
+    """
+    params = ()
+    if project_id is not None:
+        query += "\nWHERE project_id = ?"
+        params = (project_id,)
+    query += "\nGROUP BY artifact_type\nORDER BY count DESC, artifact_type ASC"
+    rows = connection.execute(query, params).fetchall()
     return [{"artifact_type": row["artifact_type"], "count": row["count"]} for row in rows]
 
 
-def _provider_counts(connection):
-    rows = connection.execute(
-        """
+def _provider_counts(connection, project_id=None):
+    query = """
         SELECT COALESCE(sessions.provider_type, 'unknown') AS provider_type, COUNT(*) AS count
         FROM artifacts
         LEFT JOIN sessions ON sessions.session_id = artifacts.session_id
-        GROUP BY COALESCE(sessions.provider_type, 'unknown')
-        ORDER BY count DESC, provider_type ASC
-        """
-    ).fetchall()
+    """
+    params = ()
+    if project_id is not None:
+        query += "\nWHERE artifacts.project_id = ?"
+        params = (project_id,)
+    query += "\nGROUP BY COALESCE(sessions.provider_type, 'unknown')\nORDER BY count DESC, provider_type ASC"
+    rows = connection.execute(query, params).fetchall()
     return [{"provider_type": row["provider_type"], "count": row["count"]} for row in rows]
 
 
@@ -219,10 +226,13 @@ def _artifact_state_sql(project_paths):
     )
 
 
-def _artifact_where_clause(project_paths, filters):
+def _artifact_where_clause(project_paths, filters, project_id=None):
     filters = filters or {}
     state_sql, params = _artifact_state_sql(project_paths)
     where = []
+    if project_id is not None:
+        where.append("artifacts.project_id = :project_id")
+        params["project_id"] = project_id
 
     if filters.get("provider_type") and filters["provider_type"] != "all":
         where.append("COALESCE(sessions.provider_type, 'unknown') = :provider_type")
@@ -738,8 +748,8 @@ def purge_artifact_scope(connection, project_paths, task_id=None, session_id=Non
     }
 
 
-def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
-    where, params = _artifact_where_clause(project_paths, filters)
+def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None, project_id=None):
+    where, params = _artifact_where_clause(project_paths, filters, project_id=project_id)
     base_from = _artifact_base_from()
     where_sql = ""
     if where:
@@ -769,9 +779,9 @@ def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None
     paged_items = _attach_quarantine_actions(connection, paged_items)
 
     return {
-        "summary": _state_summary(connection, project_paths),
-        "artifact_types": _type_counts(connection),
-        "provider_types": _provider_counts(connection),
+        "summary": _state_summary(connection, project_paths, project_id=project_id),
+        "artifact_types": _type_counts(connection, project_id=project_id),
+        "provider_types": _provider_counts(connection, project_id=project_id),
         "items": paged_items,
         "filtered_count": filtered_count,
         "offset": offset,

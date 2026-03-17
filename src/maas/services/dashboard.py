@@ -5,6 +5,7 @@ import json
 
 from maas.services.escalations import fetch_escalations
 from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_repeated_failure_tasks, repeated_failure_task_count
+from maas.services.projects import resolve_project
 
 
 BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
@@ -103,16 +104,34 @@ def _derive_onboarding_state(connection, project_row):
     }
 
 
-def fetch_overview(connection):
-    project = connection.execute(
-        """
-        SELECT project_id, name, description, project_type, config_json
-        FROM projects
-        ORDER BY created_at ASC
-        LIMIT 1
-        """
-    ).fetchone()
+def fetch_overview(connection, project_id=None):
+    project = resolve_project(connection, project_id)
     onboarding = _derive_onboarding_state(connection, project)
+    if project is None:
+        return {
+            "project": None,
+            "onboarding": onboarding,
+            "summary": {
+                "tasks_total": 0,
+                "tasks_in_progress": 0,
+                "tasks_review": 0,
+                "tasks_blocked": 0,
+                "goals_total": 0,
+                "goals_active": 0,
+                "alerts_open": 0,
+                "alerts_critical": 0,
+                "escalations_open": 0,
+                "failures_total": 0,
+                "repeated_failure_tasks": 0,
+                "agents_running": 0,
+            },
+            "active_work": [],
+            "recent_activity": [],
+            "recent_failures": [],
+            "repeated_failures": [],
+        }
+
+    scoped_project_id = project["project_id"]
 
     task_counts = {
         row["status"]: row["count"]
@@ -120,8 +139,10 @@ def fetch_overview(connection):
             """
             SELECT status, COUNT(*) AS count
             FROM tasks
+            WHERE project_id = ?
             GROUP BY status
-            """
+            """,
+            (scoped_project_id,),
         ).fetchall()
     }
     goal_counts = {
@@ -130,8 +151,10 @@ def fetch_overview(connection):
             """
             SELECT status, COUNT(*) AS count
             FROM goals
+            WHERE project_id = ?
             GROUP BY status
-            """
+            """,
+            (scoped_project_id,),
         ).fetchall()
     }
     alert_counts = {
@@ -140,9 +163,10 @@ def fetch_overview(connection):
             """
             SELECT severity, COUNT(*) AS count
             FROM alerts
-            WHERE status = 'open'
+            WHERE project_id = ? AND status = 'open'
             GROUP BY severity
-            """
+            """,
+            (scoped_project_id,),
         ).fetchall()
     }
 
@@ -164,10 +188,12 @@ def fetch_overview(connection):
             FROM tasks
             LEFT JOIN goals ON goals.goal_id = tasks.goal_id
             LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
-            WHERE tasks.status IN ('in_progress', 'review', 'blocked')
+            WHERE tasks.project_id = ?
+              AND tasks.status IN ('in_progress', 'review', 'blocked')
             ORDER BY tasks.priority DESC, tasks.created_at ASC
             LIMIT 6
-            """
+            """,
+            (scoped_project_id,),
         ).fetchall()
     ]
 
@@ -177,9 +203,11 @@ def fetch_overview(connection):
             """
             SELECT action, description, severity, created_at
             FROM activity_log
+            WHERE project_id = ?
             ORDER BY created_at DESC
             LIMIT 8
-            """
+            """,
+            (scoped_project_id,),
         ).fetchall()
     ]
     recent_failures = [
@@ -198,14 +226,16 @@ def fetch_overview(connection):
                 tasks.review_state AS task_review_state
             FROM failure_log
             LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
+            WHERE failure_log.project_id = ?
             ORDER BY failure_log.created_at DESC
             LIMIT 5
-            """
+            """,
+            (scoped_project_id,),
         ).fetchall()
     ]
     recent_failures = enrich_failures_with_quarantine(connection, recent_failures)
-    repeated_failure_tasks = fetch_repeated_failure_tasks(connection, limit=5)
-    escalation_summary = fetch_escalations(connection)["summary"]
+    repeated_failure_tasks = fetch_repeated_failure_tasks(connection, limit=5, project_id=scoped_project_id)
+    escalation_summary = fetch_escalations(connection, project_id=scoped_project_id)["summary"]
 
     return {
         "project": (
@@ -230,11 +260,13 @@ def fetch_overview(connection):
             "alerts_critical": alert_counts.get("critical", 0),
             "escalations_open": escalation_summary["open"],
             "failures_total": connection.execute(
-                "SELECT COUNT(*) AS count FROM failure_log"
+                "SELECT COUNT(*) AS count FROM failure_log WHERE project_id = ?",
+                (scoped_project_id,),
             ).fetchone()["count"],
-            "repeated_failure_tasks": repeated_failure_task_count(connection),
+            "repeated_failure_tasks": repeated_failure_task_count(connection, project_id=scoped_project_id),
             "agents_running": connection.execute(
-                "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
+                "SELECT COUNT(*) AS count FROM agents WHERE project_id = ? AND status = 'running'",
+                (scoped_project_id,),
             ).fetchone()["count"],
         },
         "active_work": active_tasks,
@@ -244,20 +276,24 @@ def fetch_overview(connection):
     }
 
 
-def fetch_goal_tree(connection):
+def fetch_goal_tree(connection, project_id=None):
     goal_rows = connection.execute(
         """
         SELECT goal_id, parent_goal_id, title, description, status, goal_type, priority
         FROM goals
+        WHERE project_id = ?
         ORDER BY priority DESC, created_at ASC
-        """
+        """,
+        (project_id,),
     ).fetchall()
     task_rows = connection.execute(
         """
         SELECT goal_id, status, COUNT(*) AS count
         FROM tasks
+        WHERE project_id = ?
         GROUP BY goal_id, status
-        """
+        """,
+        (project_id,),
     ).fetchall()
 
     task_counts_by_goal = {}
@@ -290,7 +326,7 @@ def fetch_goal_tree(connection):
     return {"roots": roots, "total_goals": len(goal_rows)}
 
 
-def fetch_agent_roster(connection):
+def fetch_agent_roster(connection, project_id=None):
     rows = connection.execute(
         """
         SELECT
@@ -303,8 +339,10 @@ def fetch_agent_roster(connection):
             tasks.title AS current_task_title
         FROM agents
         LEFT JOIN tasks ON tasks.task_id = agents.current_task_id
+        WHERE agents.project_id = ?
         ORDER BY agents.display_name ASC
-        """
+        """,
+        (project_id,),
     ).fetchall()
 
     agents = []

@@ -235,17 +235,22 @@ def resolve_brownfield_onboarding_alerts(connection, project_id, actor_id, reaso
     )
 
 
-def fetch_alerts(connection):
-    rows = connection.execute(
-        """
+def fetch_alerts(connection, project_id=None):
+    query = """
         SELECT alert_id, project_id, severity, title, description, status, created_at
         FROM alerts
+    """
+    params = []
+    if project_id is not None:
+        query += "\nWHERE project_id = ?"
+        params.append(project_id)
+    query += """
         ORDER BY
             CASE status WHEN 'open' THEN 0 WHEN 'acknowledged' THEN 1 ELSE 2 END,
             CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
             created_at DESC
-        """
-    ).fetchall()
+    """
+    rows = connection.execute(query, tuple(params)).fetchall()
 
     grouped = {"open": [], "acknowledged": [], "resolved": []}
     for row in rows:

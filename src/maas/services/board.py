@@ -74,24 +74,37 @@ def _board_column_key(status):
     return status
 
 
-def fetch_board(connection, filters=None):
-    failure_rows = connection.execute(
-        """
+def fetch_board(connection, filters=None, project_id=None):
+    failure_query = """
         SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
         FROM failure_log
         WHERE task_id IS NOT NULL
-        GROUP BY task_id
-        """
+    """
+    failure_params = []
+    if project_id is not None:
+        failure_query += "\n  AND project_id = ?"
+        failure_params.append(project_id)
+    failure_query += "\nGROUP BY task_id"
+    failure_rows = connection.execute(
+        failure_query,
+        tuple(failure_params),
     ).fetchall()
     failures_by_task = {row["task_id"]: dict(row) for row in failure_rows}
 
-    capability_rows = connection.execute(
-        """
-        SELECT task_id, agent_id, capability
+    capability_query = """
+        SELECT task_capability_grants.task_id, task_capability_grants.agent_id, task_capability_grants.capability
         FROM task_capability_grants
-        WHERE revoked_at IS NULL
-        ORDER BY created_at ASC
-        """
+        JOIN tasks ON tasks.task_id = task_capability_grants.task_id
+        WHERE task_capability_grants.revoked_at IS NULL
+    """
+    capability_params = []
+    if project_id is not None:
+        capability_query += "\n  AND tasks.project_id = ?"
+        capability_params.append(project_id)
+    capability_query += "\nORDER BY task_capability_grants.created_at ASC"
+    capability_rows = connection.execute(
+        capability_query,
+        tuple(capability_params),
     ).fetchall()
     capabilities_by_task = {}
     for row in capability_rows:
@@ -99,16 +112,21 @@ def fetch_board(connection, filters=None):
             {"agent_id": row["agent_id"], "capability": row["capability"]}
         )
 
-    agent_rows = connection.execute(
-        """
+    agent_query = """
         SELECT agent_id, project_id, role, display_name, status, current_task_id
         FROM agents
-        ORDER BY display_name ASC
-        """
+    """
+    agent_params = []
+    if project_id is not None:
+        agent_query += "\nWHERE project_id = ?"
+        agent_params.append(project_id)
+    agent_query += "\nORDER BY display_name ASC"
+    agent_rows = connection.execute(
+        agent_query,
+        tuple(agent_params),
     ).fetchall()
 
-    rows = connection.execute(
-        """
+    task_query = """
         SELECT
             tasks.task_id,
             tasks.title,
@@ -135,8 +153,15 @@ def fetch_board(connection, filters=None):
         FROM tasks
         LEFT JOIN goals ON goals.goal_id = tasks.goal_id
         LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
-        ORDER BY tasks.priority DESC, tasks.created_at ASC
-        """
+    """
+    task_params = []
+    if project_id is not None:
+        task_query += "\nWHERE tasks.project_id = ?"
+        task_params.append(project_id)
+    task_query += "\nORDER BY tasks.priority DESC, tasks.created_at ASC"
+    rows = connection.execute(
+        task_query,
+        tuple(task_params),
     ).fetchall()
 
     scheduler_decisions = scheduler_decisions_for_tasks(rows, agent_rows)
@@ -188,9 +213,12 @@ def fetch_board(connection, filters=None):
         }
         cards_by_status.setdefault(column_key, []).append(card)
 
-    active_agents = connection.execute(
-        "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
-    ).fetchone()["count"]
+    active_agents_query = "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
+    active_agents_params = []
+    if project_id is not None:
+        active_agents_query += " AND project_id = ?"
+        active_agents_params.append(project_id)
+    active_agents = connection.execute(active_agents_query, tuple(active_agents_params)).fetchone()["count"]
 
     columns = []
     for status, label in BOARD_COLUMNS:
@@ -202,20 +230,23 @@ def fetch_board(connection, filters=None):
             }
         )
 
-    agent_options = connection.execute(
-        """
+    agent_options_query = """
         SELECT agent_id AS id, display_name AS label
         FROM agents
-        ORDER BY display_name ASC
-        """
-    ).fetchall()
-    goal_options = connection.execute(
-        """
+    """
+    goal_options_query = """
         SELECT goal_id AS id, title AS label
         FROM goals
-        ORDER BY priority DESC, created_at ASC
-        """
-    ).fetchall()
+    """
+    options_params = []
+    if project_id is not None:
+        agent_options_query += "\nWHERE project_id = ?"
+        goal_options_query += "\nWHERE project_id = ?"
+        options_params.append(project_id)
+    agent_options_query += "\nORDER BY display_name ASC"
+    goal_options_query += "\nORDER BY priority DESC, created_at ASC"
+    agent_options = connection.execute(agent_options_query, tuple(options_params)).fetchall()
+    goal_options = connection.execute(goal_options_query, tuple(options_params)).fetchall()
 
     selected_filters = {
         "search": (filters or {}).get("search") or "",

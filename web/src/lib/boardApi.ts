@@ -1,4 +1,5 @@
 import type { BoardColumnKey, BoardFiltersInput, BoardResponse, FilterOption } from "../types";
+import { appendProjectScope } from "./projectScope";
 
 const DEFAULT_ACTOR_ID = "agent_allocator";
 
@@ -261,7 +262,7 @@ async function postJson(path: string, body: Record<string, string | number | nul
 export async function fetchBoard(filters: BoardFiltersInput = {}, signal?: AbortSignal): Promise<BoardResponse> {
   try {
     const query = buildBoardQuery(filters);
-    const response = await fetch(query ? `/api/board?${query}` : "/api/board", { signal });
+    const response = await fetch(appendProjectScope(query ? `/api/board?${query}` : "/api/board"), { signal });
     if (!response.ok) {
       throw new Error(`Unexpected status: ${response.status}`);
     }

@@ -556,8 +556,11 @@ def fetch_repeated_failure_tasks(connection, limit=None, project_id=None, action
     return tasks
 
 
-def repeated_failure_task_count(connection):
+def repeated_failure_task_count(connection, project_id=None):
     clause, params = _repeated_failure_clause()
+    if project_id is not None:
+        clause = "({0}) AND failure_log.project_id = ?".format(clause)
+        params = params + (project_id,)
     return connection.execute(
         """
         SELECT COUNT(*) AS count
@@ -849,12 +852,11 @@ def enrich_failures_with_quarantine(connection, failures):
     return enriched
 
 
-def fetch_quarantine_queue(connection, limit=20):
+def fetch_quarantine_queue(connection, limit=20, project_id=None):
     inserted_queue_ids = backfill_quarantine_queue(connection)
     if inserted_queue_ids:
         connection.commit()
-    rows = connection.execute(
-        """
+    query = """
         SELECT
             quarantine_queue.queue_id,
             quarantine_queue.project_id,
@@ -878,6 +880,12 @@ def fetch_quarantine_queue(connection, limit=20):
         LEFT JOIN failure_log ON failure_log.failure_id = quarantine_queue.failure_id
         LEFT JOIN tasks ON tasks.task_id = quarantine_queue.task_id
         LEFT JOIN agents ON agents.agent_id = failure_log.agent_id
+    """
+    params = []
+    if project_id is not None:
+        query += "\nWHERE quarantine_queue.project_id = ?"
+        params.append(project_id)
+    query += """
         ORDER BY
             CASE quarantine_queue.status
                 WHEN 'open' THEN 0
@@ -886,9 +894,9 @@ def fetch_quarantine_queue(connection, limit=20):
             END,
             quarantine_queue.created_at DESC
         LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    """
+    params.append(limit)
+    rows = connection.execute(query, tuple(params)).fetchall()
 
     entries = [dict(row) for row in rows]
     artifacts_by_session = _quarantined_artifacts_by_session(
@@ -903,20 +911,25 @@ def fetch_quarantine_queue(connection, limit=20):
         "summary": {
             "open": connection.execute(
                 "SELECT COUNT(*) AS count FROM quarantine_queue WHERE status = 'open'"
+                + (" AND project_id = ?" if project_id is not None else ""),
+                (project_id,) if project_id is not None else (),
             ).fetchone()["count"],
             "restored": connection.execute(
                 "SELECT COUNT(*) AS count FROM quarantine_queue WHERE status = 'restored'"
+                + (" AND project_id = ?" if project_id is not None else ""),
+                (project_id,) if project_id is not None else (),
             ).fetchone()["count"],
             "dismissed": connection.execute(
                 "SELECT COUNT(*) AS count FROM quarantine_queue WHERE status = 'dismissed'"
+                + (" AND project_id = ?" if project_id is not None else ""),
+                (project_id,) if project_id is not None else (),
             ).fetchone()["count"],
         },
     }
 
 
-def fetch_failure_log(connection, limit=20):
-    rows = connection.execute(
-        """
+def fetch_failure_log(connection, limit=20, project_id=None):
+    query = """
         SELECT
             failure_log.failure_id,
             failure_log.project_id,
@@ -940,14 +953,17 @@ def fetch_failure_log(connection, limit=20):
         FROM failure_log
         LEFT JOIN tasks ON tasks.task_id = failure_log.task_id
         LEFT JOIN agents ON agents.agent_id = failure_log.agent_id
-        ORDER BY failure_log.created_at DESC
-        LIMIT ?
-        """,
-        (limit,),
-    ).fetchall()
+    """
+    params = []
+    if project_id is not None:
+        query += "\nWHERE failure_log.project_id = ?"
+        params.append(project_id)
+    query += "\nORDER BY failure_log.created_at DESC\nLIMIT ?"
+    params.append(limit)
+    rows = connection.execute(query, tuple(params)).fetchall()
 
     recent = enrich_failures_with_quarantine(connection, [dict(row) for row in rows])
-    repeated_tasks = fetch_repeated_failure_tasks(connection)
+    repeated_tasks = fetch_repeated_failure_tasks(connection, project_id=project_id)
 
     return {
         "recent": recent,
@@ -955,10 +971,14 @@ def fetch_failure_log(connection, limit=20):
         "summary": {
             "total_failures": connection.execute(
                 "SELECT COUNT(*) AS count FROM failure_log"
+                + (" WHERE project_id = ?" if project_id is not None else ""),
+                (project_id,) if project_id is not None else (),
             ).fetchone()["count"],
             "tasks_with_failures": connection.execute(
                 "SELECT COUNT(DISTINCT task_id) AS count FROM failure_log WHERE task_id IS NOT NULL"
+                + (" AND project_id = ?" if project_id is not None else ""),
+                (project_id,) if project_id is not None else (),
             ).fetchone()["count"],
-            "repeated_tasks": repeated_failure_task_count(connection),
+            "repeated_tasks": repeated_failure_task_count(connection, project_id=project_id),
         },
     }

@@ -12,6 +12,7 @@
 - [x] The board-first workflow, steering controls, escalation queue, and first-pass resilience foundations are in place.
 - [x] Local live-provider operation exists for Claude Code and OpenAI Codex behind explicit project configuration.
 - [x] Operators can now work incidents from multiple surfaces: Alerts, Failures, Recovery, Overview, and the Artifact browser.
+- [x] Brownfield codebase mapping, multi-project read scoping, and first-pass live-provider isolation hardening are now on `main`.
 - [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
@@ -89,8 +90,8 @@
 
 ### Scheduling and planning
 
-- [ ] Advanced replanning loop
-- [ ] Smarter allocator and scheduling policies beyond the current heuristic pass
+- [ ] Adaptive replanning loop beyond the current manual replan queue
+- [ ] Smarter allocator and scheduling feedback beyond the current explicit scorer
 - [ ] Broader scheduler-driven recovery and requeue policies
 
 ### Providers
@@ -108,10 +109,10 @@
 
 ### Platform expansion
 
-- [ ] Deeper brownfield onboarding and repo-derived planning
-- [ ] Multi-project support
+- [ ] Deeper brownfield onboarding and repo-derived execution planning
+- [ ] Multi-project support beyond the current scoped read foundation
 - [ ] Plugin and domain extension architecture
-- [ ] Strong sandbox and isolation layers
+- [ ] Strong sandbox and isolation layers beyond the current live-provider guardrails
 
 ## Practical Summary
 

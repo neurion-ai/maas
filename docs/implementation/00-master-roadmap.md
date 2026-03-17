@@ -22,7 +22,7 @@ Legend for the checklist column:
 | 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, board/overview/goal tree/failure/provider/artifact reads, artifact browser with preview/download/compare/provenance/export flows, artifact-row operator actions, live websocket transport, and overview/failure/recovery action controls |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
 | 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out and failed-session auto-retry, quarantine queue restore/dismiss/reopen workflows, repeated-failure alerts, failure-action read-model visibility across Failures/Overview/Recovery/Artifacts, and task plus agent recovery exist; broader recovery is still pending |
-| 8. Brownfield and multi-project | `[ ]` | Brownfield onboarding has started on `main`; deeper import, multi-project, and isolation are still pending |
+| 8. Brownfield and multi-project | `[ ]` | Brownfield onboarding, codebase mapping, multi-project read scoping, and first-pass runtime isolation have started on `main`; deeper import, broader project architecture, and stronger isolation are still pending |
 
 ## Progress Summary
 
@@ -30,15 +30,15 @@ Legend for the checklist column:
 - [x] Brownfield onboarding has started on `main` with repo detection, approval gating, imported workflow/repo-area backlog seeding, and overview visibility.
 - [x] The current implementation is roughly `85-90%` complete for that prototype target.
 - [ ] The repository is still much earlier against the broader long-horizon roadmap.
-- [ ] The biggest remaining roadmap buckets are deeper brownfield import, multi-project expansion, stronger isolation, smarter planning and scheduling, broader provider/runtime coverage, and stronger recovery automation.
+- [ ] The biggest remaining roadmap buckets are adaptive planning quality, stronger recovery automation, deeper brownfield execution, broader multi-project architecture, stronger isolation, and broader provider/runtime coverage.
 
 ## Next Recommended PR Sequence
 
-- [ ] `#75` Brownfield codebase map and repo-derived planning:
+- [x] `#75` Brownfield codebase map and repo-derived planning:
   extend brownfield import from summary signals into a real codebase map with detected services, tests, packages, and runnable workflows that seed more concrete reviewable task graphs.
-- [ ] `#76` Multi-project foundation:
+- [x] `#76` Multi-project foundation:
   introduce first-class project scoping for read models, provider config, artifact roots, recovery policy, and operator surfaces so one MAAS workspace can manage more than one project safely.
-- [ ] `#77` Runtime sandbox and isolation hardening:
+- [x] `#77` Runtime sandbox and isolation hardening:
   add stricter provider execution boundaries, artifact-path isolation, and command/runtime guardrails so live-provider and brownfield execution surfaces are safer.
 - [ ] `#78` Adaptive replanning and scheduler feedback:
   expand the explicit scheduler into a feedback loop that can demote, split, or defer stuck work based on retry pressure, failures, and brownfield repo signals.

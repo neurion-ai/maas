@@ -232,12 +232,20 @@ export function ArtifactsPage() {
     setOffset(0);
     setTaskFilter(nextTaskId ?? "");
     setSessionFilter("");
+    setSelectedArtifactId(null);
+    setSelectedArtifact(null);
+    setSelectedCompareArtifactId(null);
+    setArtifactComparison(null);
   }
 
   function applySessionFilter(nextSessionId?: string | null) {
     setOffset(0);
     setSessionFilter(nextSessionId ?? "");
     setTaskFilter("");
+    setSelectedArtifactId(null);
+    setSelectedArtifact(null);
+    setSelectedCompareArtifactId(null);
+    setArtifactComparison(null);
   }
 
   function renderTaskArtifactLinks(

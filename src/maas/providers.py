@@ -180,8 +180,14 @@ def _normalize_cli_command(provider_name, value, warnings):
     return command
 
 
-def _normalize_claude_permission_mode(provider_name, value, warnings):
-    permission_mode = _normalize_string_setting(provider_name, "permission_mode", value, warnings)
+def _normalize_claude_permission_mode(provider_name, value, warnings, required=False):
+    permission_mode = _normalize_string_setting(
+        provider_name,
+        "permission_mode",
+        value,
+        warnings,
+        required=required,
+    )
     if not permission_mode:
         return ""
     if permission_mode not in SAFE_CLAUDE_PERMISSION_MODES:
@@ -288,6 +294,7 @@ def _resolve_provider_status(provider, config):
                 provider["name"],
                 merged_settings.get("permission_mode"),
                 warnings,
+                required=True,
             )
         if "sandbox" in rules["runtime_controls"]:
             merged_settings["sandbox"] = _normalize_codex_sandbox(

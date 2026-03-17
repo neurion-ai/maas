@@ -214,6 +214,34 @@ class ProviderRuntimeTest(unittest.TestCase):
                 },
             )
 
+    def test_providers_endpoint_marks_claude_cli_without_permission_mode_as_misconfigured(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Claude Provider Config Test", description="Claude provider config test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._set_provider_config(
+                    connection,
+                    "claude_code",
+                    {
+                        "mode": "claude_cli",
+                        "cli_command": "claude",
+                        "timeout_seconds": 120,
+                        "permission_mode": "",
+                        "model": "sonnet",
+                    },
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            provider = {item["id"]: item for item in payload["providers"]}["claude_code"]
+
+            self.assertEqual(provider["status"], "misconfigured")
+            self.assertFalse(provider["is_runnable"])
+            self.assertIn("permission_mode must not be empty", " ".join(provider["config_warnings"]))
+
     def test_providers_endpoint_reports_misconfigured_live_provider(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
@@ -771,6 +799,41 @@ class ProviderRuntimeTest(unittest.TestCase):
 
             self.assertEqual(response.status_code, 400)
             self.assertIn("cli_command must be a string", response.json()["detail"])
+
+    def test_provider_run_task_rejects_blank_claude_permission_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._set_provider_config(
+                    connection,
+                    "claude_code",
+                    {
+                        "mode": "claude_cli",
+                        "cli_command": "claude",
+                        "timeout_seconds": 120,
+                        "permission_mode": "",
+                        "model": "sonnet",
+                    },
+                )
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_researcher", "Run invalid Claude adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/claude_code/actions/run-task",
+                json={
+                    "project_id": project_id,
+                    "agent_id": "agent_researcher",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("permission_mode must not be empty", response.json()["detail"])
 
     def test_openai_codex_cli_mode_executes_real_command_path_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:

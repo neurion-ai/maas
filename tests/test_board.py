@@ -24,6 +24,15 @@ class BoardReadModelTest(unittest.TestCase):
                 connection.execute(
                     """
                     UPDATE tasks
+                    SET status = 'ready',
+                        assigned_agent_id = NULL
+                    WHERE task_id = ?
+                    """,
+                    (ready_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
                     SET status = 'planned',
                         review_state = 'retry_backoff',
                         next_retry_at = '2999-01-01 00:00:00',
@@ -53,6 +62,48 @@ class BoardReadModelTest(unittest.TestCase):
             backoff_card = cards[backoff_task_id]
             self.assertEqual(backoff_card["scheduler_status"], "retry_backoff")
             self.assertIn("Cooling down", backoff_card["scheduler_summary"])
+
+    def test_board_scheduler_rationale_honors_assignment_lock_for_ready_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Assignment Lock Test", description="Board assignment lock test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                ready_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_board_locked", project_id, "Board Locked Builder"),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'ready',
+                        assigned_agent_id = 'agent_board_locked'
+                    WHERE task_id = ?
+                    """,
+                    (ready_task_id,),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == ready_task_id
+            )
+            self.assertEqual(card["scheduler_status"], "reserved_for_assigned_agent")
+            self.assertEqual(card["scheduler_agent"]["id"], "agent_board_locked")
+            self.assertIsNone(card["scheduler_rank"])
+            self.assertIn("reserved for assigned agent", card["scheduler_summary"])
 
     def test_board_returns_expected_core_columns(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -316,6 +316,40 @@ def scheduler_decisions_for_tasks(task_rows, agent_rows):
         task_id = task_row["task_id"]
 
         if status == "ready":
+            assigned_agent_id = task_row["assigned_agent_id"]
+            if assigned_agent_id:
+                assigned_agent = agents_by_id.get(assigned_agent_id)
+                if assigned_agent is None:
+                    decisions[task_id] = {
+                        "scheduler_status": "assigned_to_missing_agent",
+                        "scheduler_score": None,
+                        "scheduler_rank": None,
+                        "scheduler_agent_id": None,
+                        "scheduler_agent_name": None,
+                        "scheduler_factors": [],
+                        "scheduler_summary": "Reserved for an agent record that is no longer present.",
+                    }
+                    continue
+
+                scoring = score_task_for_agent(assigned_agent, task_row)
+                decisions[task_id] = {
+                    "scheduler_status": (
+                        "reserved_for_assigned_agent"
+                        if assigned_agent["status"] == "idle" and assigned_agent["current_task_id"] is None
+                        else "waiting_for_assigned_agent"
+                    ),
+                    "scheduler_score": scoring["total_score"],
+                    "scheduler_rank": None,
+                    "scheduler_agent_id": assigned_agent["agent_id"],
+                    "scheduler_agent_name": assigned_agent["display_name"],
+                    "scheduler_factors": scoring["factors"],
+                    "scheduler_summary": (
+                        "Ready, but reserved for assigned agent {0}.".format(assigned_agent["display_name"])
+                        if assigned_agent["status"] == "idle" and assigned_agent["current_task_id"] is None
+                        else "Ready, waiting for assigned agent {0} to become available.".format(assigned_agent["display_name"])
+                    ),
+                }
+                continue
             if idle_agents:
                 best_agent = None
                 best_score = None

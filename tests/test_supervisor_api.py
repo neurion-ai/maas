@@ -10,27 +10,49 @@ from maas.db import connect
 from maas.services.bootstrap import bootstrap_project
 from maas.ids import generate_id
 from maas.services.alerts import fetch_alerts
-from maas.services.lifecycle import heartbeat, produce_artifact
+from maas.services.lifecycle import end_session, heartbeat, produce_artifact
 from maas.supervisor import run_supervisor_once
 
 
 class SupervisorApiTest(unittest.TestCase):
-    def _enable_timeout_auto_retry(self, connection, max_retries=1, cooldown_seconds=60):
+    def _update_recovery_config(self, connection, **updates):
         project = connection.execute(
             "SELECT project_id, config_json FROM projects LIMIT 1"
         ).fetchone()
         config = json.loads(project["config_json"] or "{}")
-        config["recovery"] = {
+        recovery = {
             "auto_retry_timeout_sessions": True,
-            "max_timed_out_retries": max_retries,
-            "timed_out_retry_cooldown_seconds": cooldown_seconds,
+            "auto_retry_failed_sessions": False,
+            "auto_recover_blocked_tasks": False,
+            "max_timed_out_retries": 1,
+            "max_failed_session_retries": 1,
+            "timed_out_retry_cooldown_seconds": 60,
+            "failed_session_retry_cooldown_seconds": 120,
             "recover_and_requeue_cooldown_seconds": 30,
             "retry_backoff_multiplier": 2,
             "retry_backoff_max_seconds": 900,
         }
+        recovery.update(updates)
+        config["recovery"] = recovery
         connection.execute(
             "UPDATE projects SET config_json = ? WHERE project_id = ?",
             (json.dumps(config), project["project_id"]),
+        )
+
+    def _enable_timeout_auto_retry(self, connection, max_retries=1, cooldown_seconds=60):
+        self._update_recovery_config(
+            connection,
+            auto_retry_timeout_sessions=True,
+            max_timed_out_retries=max_retries,
+            timed_out_retry_cooldown_seconds=cooldown_seconds,
+        )
+
+    def _enable_blocked_task_auto_recovery(self, connection, cooldown_seconds=30):
+        self._update_recovery_config(
+            connection,
+            auto_retry_timeout_sessions=False,
+            auto_recover_blocked_tasks=True,
+            recover_and_requeue_cooldown_seconds=cooldown_seconds,
         )
 
     def test_supervisor_refreshes_ready_tasks_and_allocates_idle_agents(self):
@@ -335,6 +357,157 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["review_state"], "stale_session")
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "session_timed_out")
+
+    def test_supervisor_auto_recovers_safe_blocked_failed_task_when_policy_allows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Recover Blocked Test",
+                description="Auto recover blocked task",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._enable_blocked_task_auto_recovery(connection, cooldown_seconds=0)
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                ).fetchone()["session_id"]
+                blocker_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE task_id = ?", (blocker_task_id,))
+                connection.commit()
+                end_session(connection, session_id, "failed", "Auto recover candidate", project_paths=None)
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                failure_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed' AND description LIKE ?
+                    """,
+                    (f"Task {task_id} failed in session %",),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(supervisor_result["auto_recovered_tasks"]), 1)
+            self.assertEqual(supervisor_result["auto_recovered_tasks"][0]["task_id"], task_id)
+            self.assertEqual(task["status"], "ready")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "blocked_task_auto_recovered")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(failure_alert["status"], "resolved")
+
+    def test_supervisor_does_not_auto_recover_blocked_task_with_open_quarantine(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Recover Quarantine Test",
+                description="Blocked task with quarantine should stay blocked",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._enable_blocked_task_auto_recovery(connection, cooldown_seconds=0)
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (task_id,),
+                ).fetchone()["session_id"]
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "supervisor-auto-recover.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("keep quarantined")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=artifact_path,
+                )
+                connection.commit()
+                end_session(connection, session_id, "failed", "Blocked by quarantine", project_paths=result["paths"])
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(supervisor_result["auto_recovered_tasks"], [])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+
+    def test_supervisor_auto_recover_stops_once_blocked_task_retry_budget_is_consumed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Recover Budget Test",
+                description="Blocked task auto recovery should respect retry budget",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_timeout_sessions=False,
+                    auto_recover_blocked_tasks=True,
+                    max_failed_session_retries=1,
+                    recover_and_requeue_cooldown_seconds=0,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'session_failed',
+                        retry_count = 1,
+                        last_retry_reason = 'blocked_task_auto_recovered'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(supervisor_result["auto_recovered_tasks"], [])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "blocked_task_auto_recovered")
 
     def test_recover_action_can_requeue_stale_session_task_without_resetting_agent_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

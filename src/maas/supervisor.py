@@ -6,6 +6,7 @@ import json
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
 from maas.services.recovery_policy import (
+    fetch_auto_recovery_candidate_tasks,
     fetch_project_recovery_policy,
     retry_deadline,
     task_timed_out_retry_limit,
@@ -14,6 +15,7 @@ from maas.services.recovery_policy import (
 from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 from maas.services.security import revoke_task_capabilities
+from maas.services.steering import _recover_and_requeue_task
 
 
 def _audit_auto_retry(connection, project_id, task_id, actor_id, detail):
@@ -292,11 +294,51 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
     return findings
 
 
+def _auto_recover_blocked_tasks(connection):
+    project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+    if project is None:
+        return []
+
+    policy = fetch_project_recovery_policy(connection, project["project_id"])
+    if not policy["auto_recover_blocked_tasks"]:
+        return []
+
+    findings = []
+    for candidate in fetch_auto_recovery_candidate_tasks(connection, project_id=project["project_id"], limit=None):
+        task = connection.execute(
+            """
+            SELECT task_id, project_id, assigned_agent_id, status, review_state
+            FROM tasks
+            WHERE task_id = ?
+            """,
+            (candidate["task_id"],),
+        ).fetchone()
+        if task is None:
+            continue
+        refreshed_task = _recover_and_requeue_task(
+            connection,
+            task,
+            actor_id="agent_allocator",
+            consume_retry_reason="blocked_task_auto_recovered",
+        )
+        findings.append(
+            {
+                "task_id": task["task_id"],
+                "status": refreshed_task["status"],
+                "review_state": refreshed_task["review_state"],
+                "next_retry_at": refreshed_task["next_retry_at"],
+                "next_retry_reason": refreshed_task["next_retry_reason"],
+            }
+        )
+    return findings
+
+
 def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS, allocate_limit=None, project_paths=None):
     ready_changes = refresh_ready_tasks(connection)
     allocation_result = allocate_ready_tasks(connection, actor_id="system_supervisor", limit=allocate_limit)
     stale_sessions = _handle_stale_sessions(connection, stale_after_seconds, project_paths=project_paths)
-    if any(item.get("auto_retried") for item in stale_sessions):
+    auto_recovered_tasks = _auto_recover_blocked_tasks(connection)
+    if any(item.get("auto_retried") for item in stale_sessions) or auto_recovered_tasks:
         ready_changes.extend(refresh_ready_tasks(connection))
         remaining_limit = None
         if allocate_limit is not None:
@@ -312,4 +354,5 @@ def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS,
         "allocations": allocation_result["allocations"],
         "assigned_count": allocation_result["assigned_count"],
         "stale_sessions": stale_sessions,
+        "auto_recovered_tasks": auto_recovered_tasks,
     }

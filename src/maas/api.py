@@ -407,10 +407,10 @@ def create_app(project_root="."):
             connection.close()
         if bundle is None:
             raise HTTPException(status_code=404, detail="artifact export scope not found")
-        return StreamingResponse(
-            iter([bundle["content"]]),
+        return FileResponse(
+            bundle["absolute_path"],
             media_type=bundle["content_type"],
-            headers={"Content-Disposition": 'attachment; filename="{0}"'.format(bundle["file_name"])},
+            filename=bundle["file_name"],
         )
 
     @app.get("/api/artifacts/{artifact_id}")

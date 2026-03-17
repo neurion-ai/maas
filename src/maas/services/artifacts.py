@@ -1,9 +1,9 @@
 """Artifact browser read model for control-room surfaces."""
 
-import io
 import json
 import mimetypes
 import os
+import tempfile
 import zipfile
 from difflib import unified_diff
 
@@ -619,8 +619,11 @@ def build_artifact_export_bundle(connection, project_paths, task_id=None, sessio
         "artifacts": [],
     }
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    temp_file = tempfile.NamedTemporaryFile(prefix="maas-artifact-export-", suffix=".zip", delete=False)
+    temp_file_path = temp_file.name
+    temp_file.close()
+
+    with zipfile.ZipFile(temp_file_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for row, item in zip(rows, items):
             absolute_path = _absolute_path(project_paths, row["path"])
             export_entry = {
@@ -650,9 +653,9 @@ def build_artifact_export_bundle(connection, project_paths, task_id=None, sessio
         archive.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
 
     return {
+        "absolute_path": temp_file_path,
         "file_name": "{0}-{1}-artifacts.zip".format(scope_type, scope_id),
         "content_type": "application/zip",
-        "content": buffer.getvalue(),
     }
 
 

@@ -18,6 +18,8 @@ from maas.services.lifecycle import end_session, heartbeat, log_activity, produc
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import (
     dismiss_quarantine_entry,
+    finish_task_replan,
+    mark_task_for_replan,
     reopen_quarantine_entry,
     recover_agent,
     recover_and_requeue_task,
@@ -112,6 +114,16 @@ def build_parser():
     task_reset_retry_state_parser.add_argument("--project-root", default=".")
     task_reset_retry_state_parser.add_argument("--task-id", required=True)
     task_reset_retry_state_parser.add_argument("--actor-id", required=True)
+
+    task_mark_for_replan_parser = task_subparsers.add_parser("mark-for-replan")
+    task_mark_for_replan_parser.add_argument("--project-root", default=".")
+    task_mark_for_replan_parser.add_argument("--task-id", required=True)
+    task_mark_for_replan_parser.add_argument("--actor-id", required=True)
+
+    task_finish_replan_parser = task_subparsers.add_parser("finish-replan")
+    task_finish_replan_parser.add_argument("--project-root", default=".")
+    task_finish_replan_parser.add_argument("--task-id", required=True)
+    task_finish_replan_parser.add_argument("--actor-id", required=True)
 
     task_allocate_parser = task_subparsers.add_parser("allocate")
     task_allocate_parser.add_argument("--project-root", default=".")
@@ -334,6 +346,10 @@ def command_task(args):
             print(json.dumps(release_task_retry_backoff(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "reset-retry-state":
             print(json.dumps(reset_task_retry_state(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "mark-for-replan":
+            print(json.dumps(mark_task_for_replan(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "finish-replan":
+            print(json.dumps(finish_task_replan(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "allocate":
             if args.agent_id:
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))

@@ -120,6 +120,18 @@ def _recovery_summary(connection, project_id):
         """
         SELECT
             SUM(CASE WHEN review_state = 'retry_backoff' THEN 1 ELSE 0 END) AS retry_backoff_tasks,
+            SUM(CASE WHEN status = 'blocked' AND review_state = 'needs_replan' THEN 1 ELSE 0 END) AS needs_replan_tasks,
+            SUM(
+                CASE
+                    WHEN status NOT IN ('done', 'cancelled', 'in_progress')
+                         AND COALESCE(review_state, '') != 'needs_replan'
+                         AND (
+                             review_state IN ('session_failed', 'stale_session', 'retry_backoff')
+                             OR COALESCE(retry_count, 0) > 0
+                         ) THEN 1
+                    ELSE 0
+                END
+            ) AS replanning_candidates,
             SUM(
                 CASE
                     WHEN status NOT IN ('done', 'cancelled') AND COALESCE(retry_count, 0) > 0 THEN 1
@@ -187,6 +199,8 @@ def _recovery_summary(connection, project_id):
     ).fetchone()[0]
     return {
         "retry_backoff_tasks": tasks_row["retry_backoff_tasks"] or 0,
+        "needs_replan_tasks": tasks_row["needs_replan_tasks"] or 0,
+        "replanning_candidates": tasks_row["replanning_candidates"] or 0,
         "tasks_with_retry_history": tasks_row["tasks_with_retry_history"] or 0,
         "recoverable_blocked_tasks": tasks_row["recoverable_blocked_tasks"] or 0,
         "tasks_with_retry_overrides": tasks_with_retry_overrides or 0,
@@ -322,6 +336,47 @@ def _recovery_repeated_failure_incidents(connection, project_id, limit=8):
     return fetch_repeated_failure_tasks(connection, limit=limit, project_id=project_id, actionable_only=True)
 
 
+def _replan_reason(task):
+    if task.get("review_state") == "retry_backoff":
+        return "Cooling down repeatedly; operator replanning can break the retry loop."
+    if task.get("review_state") in ("session_failed", "stale_session"):
+        return "Failure-blocked and likely needs plan or scope changes."
+    if (task.get("retry_count") or 0) > 0:
+        return "Retry history suggests the current plan is unstable."
+    return "Operator replanning recommended."
+
+
+def _replanning_candidate_tasks(connection, project_id, limit=8):
+    items = _recovery_task_items(
+        connection,
+        project_id,
+        (
+            "tasks.status NOT IN ('done', 'cancelled', 'in_progress') "
+            "AND COALESCE(tasks.review_state, '') != 'needs_replan' "
+            "AND (tasks.review_state IN ('session_failed', 'stale_session', 'retry_backoff') "
+            "OR COALESCE(tasks.retry_count, 0) > 0)"
+        ),
+        [],
+        limit=limit,
+    )
+    for item in items:
+        item["replan_reason"] = _replan_reason(item)
+    return items
+
+
+def _needs_replan_tasks(connection, project_id, limit=8):
+    items = _recovery_task_items(
+        connection,
+        project_id,
+        "tasks.status = 'blocked' AND tasks.review_state = 'needs_replan'",
+        [],
+        limit=limit,
+    )
+    for item in items:
+        item["replan_reason"] = "Marked by an operator for manual replanning before requeue."
+    return items
+
+
 def fetch_project_recovery_overview(connection, project_id=None):
     project_id = _resolve_project_id(connection, project_id)
     policy = fetch_project_recovery_policy(connection, project_id)
@@ -365,6 +420,8 @@ def fetch_project_recovery_overview(connection, project_id=None):
             "tasks.status NOT IN ('done', 'cancelled') AND COALESCE(tasks.retry_count, 0) > 0",
             [],
         ),
+        "replanning_candidates": _replanning_candidate_tasks(connection, project_id),
+        "needs_replan_tasks": _needs_replan_tasks(connection, project_id),
         "active_retry_backoff": _recovery_task_items(
             connection,
             project_id,

@@ -168,6 +168,59 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(backoff_items[backoff_task_id]["review_state"], "retry_backoff")
             self.assertEqual(backoff_items[backoff_task_id]["next_retry_reason"], "session_timed_out")
 
+    def test_recovery_policy_endpoint_includes_replanning_candidates_and_needs_replan_queue(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                candidate_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                needs_replan_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'planned',
+                        review_state = 'retry_backoff',
+                        retry_count = 1,
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (candidate_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'needs_replan',
+                        retry_count = 2
+                    WHERE task_id = ?
+                    """,
+                    (needs_replan_task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["replanning_candidates"], 1)
+            self.assertEqual(payload["summary"]["needs_replan_tasks"], 1)
+
+            candidate_items = {item["task_id"]: item for item in payload["replanning_candidates"]}
+            self.assertIn(candidate_task_id, candidate_items)
+            self.assertEqual(candidate_items[candidate_task_id]["review_state"], "retry_backoff")
+            self.assertIn("replan", candidate_items[candidate_task_id]["replan_reason"].lower())
+
+            needs_replan_items = {item["task_id"]: item for item in payload["needs_replan_tasks"]}
+            self.assertIn(needs_replan_task_id, needs_replan_items)
+            self.assertEqual(needs_replan_items[needs_replan_task_id]["review_state"], "needs_replan")
+            self.assertIn("manual replanning", needs_replan_items[needs_replan_task_id]["replan_reason"].lower())
+
     def test_recovery_policy_endpoint_includes_recoverable_blocked_tasks_and_open_quarantine_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")

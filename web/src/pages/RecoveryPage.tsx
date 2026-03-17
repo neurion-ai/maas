@@ -2,7 +2,9 @@ import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
 import {
   dismissQuarantineEntry,
+  finishTaskReplan,
   fetchRecoveryPolicy,
+  markTaskForReplan,
   recoverAndRequeueTask,
   recoverTask,
   releaseTaskRetryBackoff,
@@ -134,6 +136,7 @@ function RecoveryTaskList({
               {item.retry_count ? ` | ${item.retry_count} retries used` : ""}
               {item.last_retry_reason ? ` | last: ${item.last_retry_reason}` : ""}
             </p>
+            {item.replan_reason ? <p>Replan reason: {item.replan_reason}</p> : null}
             {item.next_retry_at ? (
               <p>
                 Next retry: {new Date(item.next_retry_at).toLocaleString()}
@@ -482,6 +485,34 @@ export function RecoveryPage() {
     }
   }
 
+  async function handleMarkForReplan(taskId: string) {
+    setPendingTaskActionId(taskId);
+    setNotice(null);
+    try {
+      const payload = await markTaskForReplan(taskId);
+      await reload();
+      setNotice(`Marked ${taskId} for replanning; task is now ${payload.review_state}.`);
+    } catch {
+      setNotice("Mark-for-replan failed; keep the task under operator review.");
+    } finally {
+      setPendingTaskActionId(null);
+    }
+  }
+
+  async function handleFinishReplan(taskId: string) {
+    setPendingTaskActionId(taskId);
+    setNotice(null);
+    try {
+      const payload = await finishTaskReplan(taskId);
+      await reload();
+      setNotice(`Finished replanning for ${taskId}; task is now ${payload.status}.`);
+    } catch {
+      setNotice("Finish-replan failed; keep the task under operator review.");
+    } finally {
+      setPendingTaskActionId(null);
+    }
+  }
+
   async function handleRestore(queueId: string) {
     setPendingQueueAction(`restore:${queueId}`);
     setNotice(null);
@@ -572,14 +603,16 @@ export function RecoveryPage() {
       <header className="page-hero">
         <div>
           <span className="eyebrow">Recovery</span>
-          <h1>Retry policy and backoff controls</h1>
-          <p>Inspect retry pressure, adjust timeout and failed-session retry policy, and preview the actual cooldown schedule operators are creating.</p>
+          <h1>Retry policy, replanning, and incident controls</h1>
+          <p>Inspect retry pressure, move thrashing work into a replanning queue, and preview the actual cooldown schedule operators are creating.</p>
         </div>
         {notice ? <p className="filters-panel__notice">{notice}</p> : null}
       </header>
 
       <section className="stats-grid">
         <StatCard label="Backoff tasks" value={recovery?.summary.retry_backoff_tasks ?? 0} tone="warn" />
+        <StatCard label="Needs replan" value={recovery?.summary.needs_replan_tasks ?? 0} tone="warn" />
+        <StatCard label="Replan candidates" value={recovery?.summary.replanning_candidates ?? 0} tone="warn" />
         <StatCard label="Retry overrides" value={recovery?.summary.tasks_with_retry_overrides ?? 0} />
         <StatCard label="Retry history" value={recovery?.summary.tasks_with_retry_history ?? 0} />
         <StatCard label="Recoverable blocked" value={recovery?.summary.recoverable_blocked_tasks ?? 0} tone="warn" />
@@ -780,6 +813,62 @@ export function RecoveryPage() {
                 <div>
                   <strong>No recoverable blocked tasks</strong>
                   <p>No blocked task currently needs manual failure recovery.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Replanning candidates</h2>
+              <p>Tasks with retry churn or failure-blocked state that should move out of the recovery loop and into manual replanning.</p>
+            </div>
+          </header>
+          {(recovery?.replanning_candidates ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.replanning_candidates ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleMarkForReplan(taskId)}
+              primaryActionLabel="Mark for replan"
+              pendingPrimaryActionLabel="Marking..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No replanning candidates</strong>
+                  <p>No active task currently looks stuck enough to move into manual replanning.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Needs replan</h2>
+              <p>Tasks already pulled out of retry/recovery loops and waiting for manual scope or plan changes before they return to the queue.</p>
+            </div>
+          </header>
+          {(recovery?.needs_replan_tasks ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.needs_replan_tasks ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleFinishReplan(taskId)}
+              primaryActionLabel="Finish replan"
+              pendingPrimaryActionLabel="Requeueing..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No tasks waiting on replan</strong>
+                  <p>No task is currently parked in the manual replanning queue.</p>
                 </div>
               </div>
             </div>

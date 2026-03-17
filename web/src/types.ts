@@ -614,6 +614,7 @@ export interface RecoveryTaskItem {
   title: string;
   status: string;
   review_state?: string | null;
+  replan_reason?: string | null;
   priority: number;
   retry_count?: number | null;
   auto_retry_limit?: number | null;
@@ -634,6 +635,8 @@ export interface RecoveryPolicyResponse {
   defaults: RecoveryPolicySettings;
   summary: {
     retry_backoff_tasks: number;
+    needs_replan_tasks: number;
+    replanning_candidates: number;
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
     tasks_with_retry_overrides: number;
@@ -650,6 +653,8 @@ export interface RecoveryPolicyResponse {
   task_retry_overrides: RecoveryTaskItem[];
   recoverable_blocked_tasks: RecoveryTaskItem[];
   task_retry_history: RecoveryTaskItem[];
+  replanning_candidates: RecoveryTaskItem[];
+  needs_replan_tasks: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
   open_quarantine_entries: QuarantineQueueItem[];
   open_failure_alerts: AlertItem[];

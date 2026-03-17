@@ -362,6 +362,94 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(response.status_code, 403)
             self.assertIn("board actions", response.json()["detail"].lower())
 
+    def test_provider_preflight_reports_simulation_ready_for_local_simulation_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/python_script/actions/run-preflight",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "simulation_ready")
+
+            providers = {provider["id"]: provider for provider in client.get("/api/providers").json()["providers"]}
+            self.assertEqual(providers["python_script"]["latest_preflight"]["status"], "simulation_ready")
+
+    def test_provider_preflight_checks_live_runtime_readiness(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._enable_openai_codex_cli(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            os.environ["OPENAI_API_KEY"] = "test-openai-key"
+            try:
+                with mock.patch("maas.services.provider_runtime.shutil.which", return_value="/usr/bin/codex"):
+                    with mock.patch(
+                        "maas.services.provider_runtime.subprocess.run",
+                        return_value=mock.Mock(returncode=0, stdout="codex 1.2.3\n", stderr=""),
+                    ) as run_mock:
+                        response = client.post(
+                            "/api/providers/openai_codex/actions/run-preflight",
+                            json={"actor_id": "agent_allocator"},
+                        )
+            finally:
+                os.environ.pop("OPENAI_API_KEY", None)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "passed")
+            self.assertEqual(run_mock.call_count, 1)
+
+            providers = {provider["id"]: provider for provider in client.get("/api/providers").json()["providers"]}
+            preflight = providers["openai_codex"]["latest_preflight"]
+            self.assertEqual(preflight["status"], "passed")
+            self.assertIn("codex 1.2.3", preflight["summary"])
+            self.assertEqual(preflight["execution_mode"], "codex_cli")
+
+    def test_provider_preflight_fails_when_required_auth_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._enable_claude_code_cli(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            with mock.patch("maas.services.provider_runtime.shutil.which", return_value="/usr/bin/claude"):
+                with mock.patch("maas.services.provider_runtime.subprocess.run") as run_mock:
+                    response = client.post(
+                        "/api/providers/claude_code/actions/run-preflight",
+                        json={"actor_id": "agent_allocator"},
+                    )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "failed")
+            self.assertIn("ANTHROPIC_API_KEY", " ".join(response.json()["issues"]))
+            self.assertFalse(run_mock.called)
+
+            providers = {provider["id"]: provider for provider in client.get("/api/providers").json()["providers"]}
+            self.assertEqual(providers["claude_code"]["latest_preflight"]["status"], "failed")
+
+    def test_provider_preflight_requires_board_action_permission(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/python_script/actions/run-preflight",
+                json={"actor_id": "agent_researcher"},
+            )
+            self.assertEqual(response.status_code, 403)
+
     def test_provider_settings_endpoint_updates_runtime_controls(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")

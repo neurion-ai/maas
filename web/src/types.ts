@@ -611,6 +611,15 @@ export interface ProviderRunItem {
   failure_detail?: string | null;
 }
 
+export interface ProviderPreflightItem {
+  checked_at: string;
+  status: string;
+  summary: string;
+  issues?: string[];
+  execution_mode?: string | null;
+  external_runtime?: string | null;
+}
+
 export interface ProviderRunTarget {
   project_id: string;
   task_id: string;
@@ -644,6 +653,7 @@ export interface ProviderStatusItem {
   is_runnable?: boolean;
   run_summary?: ProviderRunSummary;
   recent_runs?: ProviderRunItem[];
+  latest_preflight?: ProviderPreflightItem | null;
   notes: string;
 }
 

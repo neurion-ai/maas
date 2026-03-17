@@ -1,6 +1,7 @@
 """Provider adapter execution helpers."""
 
 import os
+import shutil
 import subprocess
 import tempfile
 
@@ -12,6 +13,7 @@ from maas.providers import (
     update_provider_settings,
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.security import ensure_board_action_allowed
 
 
 class ProviderRuntimeFailure(RuntimeError):
@@ -51,6 +53,11 @@ SAFE_RUNTIME_ENV_KEYS = (
 PROVIDER_RUNTIME_ENV_KEYS = {
     "claude_code": ("ANTHROPIC_API_KEY",),
     "openai_codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORGANIZATION", "OPENAI_PROJECT_ID"),
+}
+
+PROVIDER_REQUIRED_ENV_KEYS = {
+    "claude_code": ("ANTHROPIC_API_KEY",),
+    "openai_codex": ("OPENAI_API_KEY",),
 }
 
 
@@ -147,6 +154,220 @@ def _runtime_env(project_paths, provider):
     env["TMP"] = runtime_tmp_dir
     env["TEMP"] = runtime_tmp_dir
     return env
+
+
+def _provider_preflight_command(provider_id, provider_settings):
+    cli_command = (provider_settings.get("cli_command") or provider_id).strip()
+    if provider_id == "claude_code":
+        return [cli_command, "--version"]
+    if provider_id == "openai_codex":
+        return [cli_command, "--version"]
+    return []
+
+
+def _record_provider_preflight(
+    connection,
+    project_id,
+    actor_id,
+    provider,
+    description,
+    preflight_status,
+    issues=None,
+    execution_mode=None,
+    external_runtime=None,
+):
+    log_activity(
+        connection,
+        project_id=project_id,
+        agent_id=actor_id,
+        task_id=None,
+        action="provider_preflight_checked",
+        category="runtime",
+        description=description,
+        severity="info" if preflight_status in ("passed", "simulation_ready") else "warning",
+        details=_provider_activity_details(
+            provider,
+            "preflight_checked",
+            preflight_status=preflight_status,
+            issues=issues or [],
+            execution_mode=execution_mode,
+            external_runtime=external_runtime,
+        ),
+    )
+
+
+def run_provider_preflight(connection, project_paths, provider_id, actor_id, project_id=None):
+    scoped_project_id = project_id
+    if scoped_project_id is None:
+        row = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
+        if row is None:
+            raise ValueError("Project not found")
+        scoped_project_id = row["project_id"]
+    ensure_board_action_allowed(connection, actor_id, scoped_project_id, "check_provider_runtime", "provider", provider_id)
+    providers = list_provider_status(connection=connection, project_id=scoped_project_id)
+    provider = next((item for item in providers if item["id"] == provider_id), None)
+    if provider is None:
+        raise ValueError("Unsupported provider type: {0}".format(provider_id))
+
+    provider, provider_settings = get_provider_runtime_settings(
+        provider_id,
+        connection=connection,
+        project_id=scoped_project_id,
+    )
+    if provider["configured_execution_mode"] == "local_simulation":
+        description = "{0} preflight passed in local simulation mode.".format(provider["name"])
+        _record_provider_preflight(
+            connection,
+            scoped_project_id,
+            actor_id,
+            provider,
+            description,
+            preflight_status="simulation_ready",
+            execution_mode="local_simulation",
+        )
+        connection.commit()
+        return {
+            "provider_id": provider_id,
+            "status": "simulation_ready",
+            "summary": description,
+            "issues": [],
+        }
+
+    if not provider["is_runnable"]:
+        issues = list(provider.get("config_warnings") or [])
+        description = "{0} preflight failed: {1}".format(
+            provider["name"],
+            issues[0] if issues else "provider configuration is invalid",
+        )
+        _record_provider_preflight(
+            connection,
+            scoped_project_id,
+            actor_id,
+            provider,
+            description,
+            preflight_status="failed",
+            issues=issues,
+            execution_mode=provider.get("effective_execution_mode"),
+            external_runtime=provider.get("effective_execution_mode"),
+        )
+        connection.commit()
+        return {
+            "provider_id": provider_id,
+            "status": "failed",
+            "summary": description,
+            "issues": issues,
+        }
+
+    runtime_env = _runtime_env(project_paths, {"id": provider_id})
+    missing_env = [key for key in PROVIDER_REQUIRED_ENV_KEYS.get(provider_id, ()) if not runtime_env.get(key)]
+    command = _provider_preflight_command(provider_id, provider_settings)
+    issues = []
+
+    if command:
+        executable = shutil.which(command[0], path=runtime_env.get("PATH"))
+        if executable is None:
+            issues.append("Executable '{0}' is not available on PATH.".format(command[0]))
+    if missing_env:
+        issues.extend("Missing required environment variable: {0}.".format(key) for key in missing_env)
+
+    if issues:
+        description = "{0} preflight failed: {1}".format(provider["name"], issues[0])
+        _record_provider_preflight(
+            connection,
+            scoped_project_id,
+            actor_id,
+            provider,
+            description,
+            preflight_status="failed",
+            issues=issues,
+            execution_mode=provider.get("effective_execution_mode"),
+            external_runtime=provider.get("effective_execution_mode"),
+        )
+        connection.commit()
+        return {
+            "provider_id": provider_id,
+            "status": "failed",
+            "summary": description,
+            "issues": issues,
+        }
+
+    timeout_seconds = min(int(provider_settings.get("timeout_seconds") or 30), 10)
+    try:
+        result = subprocess.run(
+            command,
+            cwd=project_paths.root,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+            env=runtime_env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        issues = ["Preflight timed out after {0}s.".format(timeout_seconds)]
+        description = "{0} preflight failed: {1}".format(provider["name"], issues[0])
+        _record_provider_preflight(
+            connection,
+            scoped_project_id,
+            actor_id,
+            provider,
+            description,
+            preflight_status="failed",
+            issues=issues,
+            execution_mode=provider.get("effective_execution_mode"),
+            external_runtime=provider.get("effective_execution_mode"),
+        )
+        connection.commit()
+        return {
+            "provider_id": provider_id,
+            "status": "failed",
+            "summary": description,
+            "issues": issues,
+            "timeout_seconds": timeout_seconds,
+        }
+
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip() or (result.stdout or "").strip() or "unknown error"
+        issues = ["Preflight command exited with status {0}: {1}".format(result.returncode, stderr)]
+        description = "{0} preflight failed: {1}".format(provider["name"], issues[0])
+        _record_provider_preflight(
+            connection,
+            scoped_project_id,
+            actor_id,
+            provider,
+            description,
+            preflight_status="failed",
+            issues=issues,
+            execution_mode=provider.get("effective_execution_mode"),
+            external_runtime=provider.get("effective_execution_mode"),
+        )
+        connection.commit()
+        return {
+            "provider_id": provider_id,
+            "status": "failed",
+            "summary": description,
+            "issues": issues,
+        }
+
+    summary_line = ((result.stdout or "").strip() or (result.stderr or "").strip() or "preflight passed").splitlines()[0]
+    description = "{0} preflight passed: {1}".format(provider["name"], summary_line)
+    _record_provider_preflight(
+        connection,
+        scoped_project_id,
+        actor_id,
+        provider,
+        description,
+        preflight_status="passed",
+        issues=[],
+        execution_mode=provider.get("effective_execution_mode"),
+        external_runtime=provider.get("effective_execution_mode"),
+    )
+    connection.commit()
+    return {
+        "provider_id": provider_id,
+        "status": "passed",
+        "summary": description,
+        "issues": [],
+    }
 
 
 def _log_provider_phase(connection, project_id, agent_id, task_id, provider, action, phase, description, **details):

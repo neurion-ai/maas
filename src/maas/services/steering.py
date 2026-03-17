@@ -224,7 +224,7 @@ def review_task(connection, task_id, actor_id, decision):
         connection.execute(
             """
             UPDATE tasks
-            SET status = 'review',
+            SET status = 'planned',
                 review_state = 'changes_requested',
                 updated_at = CURRENT_TIMESTAMP
             WHERE task_id = ?
@@ -238,7 +238,7 @@ def review_task(connection, task_id, actor_id, decision):
             "changes_requested",
             task_id=task_id,
         )
-        description = "Brownfield onboarding rejected; imported work remains gated pending changes."
+        description = "Brownfield onboarding rejected; imported work remains gated while requested changes are reworked."
         audit_detail["brownfield_onboarding"] = True
     else:
         connection.execute(

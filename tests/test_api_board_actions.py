@@ -191,7 +191,7 @@ class BoardApiActionsTest(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(updated_review_task["status"], "review")
+            self.assertEqual(updated_review_task["status"], "planned")
             self.assertEqual(updated_review_task["review_state"], "changes_requested")
             self.assertEqual(config["onboarding"]["review_status"], "changes_requested")
             self.assertEqual(gated_tasks, 4)

@@ -198,7 +198,9 @@ export function OverviewPage() {
                 </div>
               ) : null}
             </div>
-            {overview.onboarding.review_required && overview.onboarding.review_task_id ? (
+            {overview.onboarding.review_required &&
+            overview.onboarding.review_task_id &&
+            overview.onboarding.review_task_status === "review" ? (
               <div className="task-card__actions">
                 <button
                   type="button"

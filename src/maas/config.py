@@ -90,6 +90,8 @@ def build_default_project_config(name, description, project_type, onboarding_mod
         "recovery": {
             "auto_retry_timeout_sessions": False,
             "auto_retry_failed_sessions": False,
+            "auto_recover_blocked_tasks": False,
+            "auto_dlq_retry_exhausted_tasks": False,
             "max_timed_out_retries": 1,
             "max_failed_session_retries": 1,
             "timed_out_retry_cooldown_seconds": 60,

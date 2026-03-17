@@ -25,10 +25,12 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertFalse(payload["policy"]["auto_retry_timeout_sessions"])
             self.assertFalse(payload["policy"]["auto_retry_failed_sessions"])
             self.assertFalse(payload["policy"]["auto_recover_blocked_tasks"])
+            self.assertFalse(payload["policy"]["auto_dlq_retry_exhausted_tasks"])
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 1)
             self.assertEqual(payload["policy"]["retry_backoff_multiplier"], 2)
             self.assertEqual(payload["summary"]["retry_backoff_tasks"], 0)
             self.assertEqual(payload["summary"]["auto_recovery_candidates"], 0)
+            self.assertEqual(payload["summary"]["open_dead_letter_entries"], 0)
             self.assertEqual(payload["summary"]["open_quarantine_entries"], 0)
             self.assertEqual(
                 payload["backoff_preview"]["timed_out_retry_delays"],
@@ -74,6 +76,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                         "auto_retry_timeout_sessions": True,
                         "auto_retry_failed_sessions": True,
                         "auto_recover_blocked_tasks": True,
+                        "auto_dlq_retry_exhausted_tasks": True,
                         "max_timed_out_retries": 3,
                         "max_failed_session_retries": 2,
                         "timed_out_retry_cooldown_seconds": 30,
@@ -89,6 +92,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertTrue(payload["policy"]["auto_retry_timeout_sessions"])
             self.assertTrue(payload["policy"]["auto_retry_failed_sessions"])
             self.assertTrue(payload["policy"]["auto_recover_blocked_tasks"])
+            self.assertTrue(payload["policy"]["auto_dlq_retry_exhausted_tasks"])
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 3)
             self.assertEqual(payload["policy"]["retry_backoff_max_seconds"], 120)
             self.assertEqual(
@@ -118,6 +122,69 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(config["providers"]["openai_codex"]["model"], "gpt-5-codex")
             self.assertEqual(config["recovery"]["retry_backoff_multiplier"], 3)
             self.assertTrue(config["recovery"]["auto_recover_blocked_tasks"])
+            self.assertTrue(config["recovery"]["auto_dlq_retry_exhausted_tasks"])
+
+    def test_recovery_policy_endpoint_includes_dead_letter_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project = connection.execute(
+                    "SELECT project_id, config_json FROM projects LIMIT 1"
+                ).fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                recovery = dict(config.get("recovery") or {})
+                recovery.update(
+                    {
+                        "auto_retry_failed_sessions": True,
+                        "auto_dlq_retry_exhausted_tasks": True,
+                        "max_failed_session_retries": 1,
+                    }
+                )
+                config["recovery"] = recovery
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project["project_id"],
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting DLQ recovery policy test",
+                )
+                end_session(connection, session_id, "failed", "Retry budget exhausted for DLQ test")
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["open_dead_letter_entries"], 1)
+            self.assertEqual(len(payload["dead_letter_entries"]), 1)
+            entry = payload["dead_letter_entries"][0]
+            self.assertEqual(entry["task_id"], task_id)
+            self.assertEqual(entry["reason"], "retry_budget_exhausted")
+            self.assertEqual(entry["task_status"], "blocked")
+            self.assertEqual(entry["review_state"], "needs_replan")
+            self.assertEqual(entry["detail"]["failure_type"], "session_failed")
+            self.assertEqual(entry["detail"]["retry_limit"], 1)
+            self.assertEqual(entry["detail"]["retry_count"], 1)
 
     def test_recovery_policy_endpoint_includes_task_overrides_retry_history_and_active_backoff_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:

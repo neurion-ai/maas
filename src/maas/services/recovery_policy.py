@@ -9,6 +9,7 @@ from maas.services.alerts import (
     REPEATED_TASK_FAILURE_PATTERN,
     infer_operator_action,
 )
+from maas.services.dead_letter import fetch_dead_letter_queue
 from maas.services.failure_memory import fetch_repeated_failure_tasks
 from maas.services.scheduler import adaptive_replan_feedback
 from maas.services.security import ensure_board_action_allowed
@@ -18,6 +19,7 @@ DEFAULT_RECOVERY_POLICY = {
     "auto_retry_timeout_sessions": False,
     "auto_retry_failed_sessions": False,
     "auto_recover_blocked_tasks": False,
+    "auto_dlq_retry_exhausted_tasks": False,
     "max_timed_out_retries": 1,
     "max_failed_session_retries": 1,
     "timed_out_retry_cooldown_seconds": 60,
@@ -32,6 +34,7 @@ RECOVERY_POLICY_FIELD_RULES = {
     "auto_retry_timeout_sessions": {"type": "bool"},
     "auto_retry_failed_sessions": {"type": "bool"},
     "auto_recover_blocked_tasks": {"type": "bool"},
+    "auto_dlq_retry_exhausted_tasks": {"type": "bool"},
     "max_timed_out_retries": {"type": "int", "minimum": 0},
     "max_failed_session_retries": {"type": "int", "minimum": 0},
     "timed_out_retry_cooldown_seconds": {"type": "int", "minimum": 0},
@@ -124,6 +127,14 @@ def _retry_delay_preview(base_seconds, attempt_limit, project_policy):
 
 def _recovery_summary(connection, project_id):
     auto_recovery_candidates = fetch_auto_recovery_candidate_tasks(connection, project_id=project_id, limit=None)
+    open_dead_letter_entries = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM dead_letter_queue
+        WHERE project_id = ? AND status = 'open'
+        """,
+        (project_id,),
+    ).fetchone()[0]
     tasks_row = connection.execute(
         """
         SELECT
@@ -213,6 +224,7 @@ def _recovery_summary(connection, project_id):
         "tasks_with_retry_history": tasks_row["tasks_with_retry_history"] or 0,
         "recoverable_blocked_tasks": tasks_row["recoverable_blocked_tasks"] or 0,
         "auto_recovery_candidates": len(auto_recovery_candidates),
+        "open_dead_letter_entries": open_dead_letter_entries or 0,
         "tasks_with_retry_overrides": tasks_with_retry_overrides or 0,
         "open_quarantine_entries": open_quarantine_entries or 0,
         "open_failure_alerts": open_failure_alerts or 0,
@@ -528,6 +540,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
             ),
             [],
         ),
+        "dead_letter_entries": fetch_dead_letter_queue(connection, project_id),
         "open_quarantine_entries": _recovery_quarantine_entries(connection, project_id),
         "open_failure_alerts": _recovery_open_failure_alerts(connection, project_id),
         "open_stale_agent_alerts": _recovery_stale_agent_alerts(connection, project_id),
@@ -630,6 +643,10 @@ def fetch_project_recovery_policy(connection, project_id):
         "auto_recover_blocked_tasks": _parse_bool(
             recovery.get("auto_recover_blocked_tasks"),
             DEFAULT_RECOVERY_POLICY["auto_recover_blocked_tasks"],
+        ),
+        "auto_dlq_retry_exhausted_tasks": _parse_bool(
+            recovery.get("auto_dlq_retry_exhausted_tasks"),
+            DEFAULT_RECOVERY_POLICY["auto_dlq_retry_exhausted_tasks"],
         ),
         "max_timed_out_retries": _parse_int(
             recovery.get("max_timed_out_retries"),

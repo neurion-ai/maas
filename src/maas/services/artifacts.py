@@ -519,6 +519,70 @@ def _artifact_lineage_summary(connection, focus_item):
     }
 
 
+def _dependency_artifact_links(connection, project_paths, focus_item, direction, limit=3):
+    task_id = focus_item.get("task_id")
+    if not task_id:
+        return []
+
+    if direction == "upstream":
+        rows = connection.execute(
+            """
+            SELECT td.source_task_id AS linked_task_id, tasks.title AS linked_task_title, td.dependency_type
+            FROM task_dependencies td
+            JOIN tasks ON tasks.task_id = td.source_task_id
+            WHERE td.target_task_id = ?
+            ORDER BY
+                CASE td.dependency_type
+                    WHEN 'blocks' THEN 0
+                    WHEN 'informs' THEN 1
+                    ELSE 2
+                END,
+                tasks.created_at ASC
+            """,
+            (task_id,),
+        ).fetchall()
+    else:
+        rows = connection.execute(
+            """
+            SELECT td.target_task_id AS linked_task_id, tasks.title AS linked_task_title, td.dependency_type
+            FROM task_dependencies td
+            JOIN tasks ON tasks.task_id = td.target_task_id
+            WHERE td.source_task_id = ?
+            ORDER BY
+                CASE td.dependency_type
+                    WHEN 'blocks' THEN 0
+                    WHEN 'informs' THEN 1
+                    ELSE 2
+                END,
+                tasks.created_at ASC
+            """,
+            (task_id,),
+        ).fetchall()
+
+    links = []
+    for row in rows:
+        artifact_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM artifacts WHERE task_id = ?",
+            (row["linked_task_id"],),
+        ).fetchone()["count"]
+        artifact_rows = connection.execute(
+            _artifact_row_query("WHERE artifacts.task_id = ?")
+            + "\nORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC LIMIT ?",
+            (row["linked_task_id"], limit),
+        ).fetchall()
+        items = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, artifact_row) for artifact_row in artifact_rows])
+        links.append(
+            {
+                "task_id": row["linked_task_id"],
+                "task_title": row["linked_task_title"],
+                "dependency_type": row["dependency_type"],
+                "artifact_count": artifact_count,
+                "recent_artifacts": [_artifact_related_summary(item) for item in items],
+            }
+        )
+    return links
+
+
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
     where, params = _artifact_where_clause(project_paths, filters)
     base_from = _artifact_base_from()
@@ -606,6 +670,8 @@ def fetch_artifact_detail(connection, project_paths, artifact_id):
         "quarantine_entry": quarantine_entry,
         "lineage_summary": _artifact_lineage_summary(connection, enriched_item),
         "session_artifacts": _session_artifact_items(connection, project_paths, enriched_item),
+        "upstream_task_artifacts": _dependency_artifact_links(connection, project_paths, enriched_item, "upstream"),
+        "downstream_task_artifacts": _dependency_artifact_links(connection, project_paths, enriched_item, "downstream"),
         "related_artifacts": _related_artifact_items(connection, project_paths, enriched_item),
     }
 

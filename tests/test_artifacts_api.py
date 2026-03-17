@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from maas.api import create_app
 from maas.db import connect, project_paths
+from maas.ids import generate_id
 from maas.services.artifacts import ARTIFACT_PREVIEW_MAX_BYTES
 from maas.services.bootstrap import bootstrap_project
 from maas.services.failure_memory import restore_quarantined_session_artifacts
@@ -1006,6 +1007,172 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertEqual(len(payload["session_artifacts"]), 1)
             self.assertEqual(payload["session_artifacts"][0]["artifact_id"], second_artifact_id)
             self.assertEqual(payload["session_artifacts"][0]["session_id"], session_id)
+
+    def test_artifact_detail_api_exposes_dependency_linked_task_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Dependency Lineage Test",
+                description="Artifacts dependency lineage test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_dependency_lineage", project_id, "Artifact Dependency Lineage Agent"),
+                )
+                for task_id, title in (
+                    ("task_artifact_upstream", "Artifact upstream task"),
+                    ("task_artifact_focus", "Artifact focus task"),
+                    ("task_artifact_downstream", "Artifact downstream task"),
+                ):
+                    connection.execute(
+                        """
+                        INSERT INTO tasks (
+                            task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                        ) VALUES (?, ?, ?, '', 'ready', 60, '[]')
+                        """,
+                        (task_id, project_id, title),
+                    )
+                    grant_task_capabilities(
+                        connection,
+                        project_id,
+                        task_id,
+                        "agent_artifact_dependency_lineage",
+                        TASK_EXECUTION_CAPABILITIES,
+                        granted_by="test_setup",
+                    )
+
+                connection.execute(
+                    """
+                    INSERT INTO task_dependencies (
+                        dependency_id, project_id, source_task_id, target_task_id, dependency_type
+                    ) VALUES (?, ?, 'task_artifact_upstream', 'task_artifact_focus', 'blocks')
+                    """,
+                    (generate_id("dep"), project_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO task_dependencies (
+                        dependency_id, project_id, source_task_id, target_task_id, dependency_type
+                    ) VALUES (?, ?, 'task_artifact_focus', 'task_artifact_downstream', 'informs')
+                    """,
+                    (generate_id("dep"), project_id),
+                )
+                connection.commit()
+
+                upstream_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_dependency_lineage",
+                    task_id="task_artifact_upstream",
+                    provider_type="python_script",
+                    status_message="Starting upstream artifact",
+                )
+                upstream_path = os.path.join(result["paths"].artifacts_dir, "dependency-upstream.txt")
+                with open(upstream_path, "w", encoding="utf-8") as handle:
+                    handle.write("upstream\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=upstream_session_id,
+                    task_id="task_artifact_upstream",
+                    artifact_type="note",
+                    path=upstream_path,
+                )
+                end_session(connection, upstream_session_id, "completed", "Completed upstream artifact")
+                connection.execute(
+                    "UPDATE tasks SET status = 'ready', review_state = NULL WHERE task_id = 'task_artifact_focus'"
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_focus",
+                    "agent_artifact_dependency_lineage",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+
+                focus_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_dependency_lineage",
+                    task_id="task_artifact_focus",
+                    provider_type="python_script",
+                    status_message="Starting focus artifact",
+                )
+                focus_path = os.path.join(result["paths"].artifacts_dir, "dependency-focus.txt")
+                with open(focus_path, "w", encoding="utf-8") as handle:
+                    handle.write("focus\n")
+                focus_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=focus_session_id,
+                    task_id="task_artifact_focus",
+                    artifact_type="provider_report",
+                    path=focus_path,
+                )
+                end_session(connection, focus_session_id, "completed", "Completed focus artifact")
+                connection.execute(
+                    "UPDATE tasks SET status = 'ready', review_state = NULL WHERE task_id = 'task_artifact_downstream'"
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_downstream",
+                    "agent_artifact_dependency_lineage",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+
+                downstream_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_dependency_lineage",
+                    task_id="task_artifact_downstream",
+                    provider_type="python_script",
+                    status_message="Starting downstream artifact",
+                )
+                downstream_path = os.path.join(result["paths"].artifacts_dir, "dependency-downstream.txt")
+                with open(downstream_path, "w", encoding="utf-8") as handle:
+                    handle.write("downstream\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=downstream_session_id,
+                    task_id="task_artifact_downstream",
+                    artifact_type="note",
+                    path=downstream_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get(f"/api/artifacts/{focus_artifact_id}").json()
+
+            self.assertEqual(len(payload["upstream_task_artifacts"]), 1)
+            self.assertEqual(payload["upstream_task_artifacts"][0]["task_id"], "task_artifact_upstream")
+            self.assertEqual(payload["upstream_task_artifacts"][0]["dependency_type"], "blocks")
+            self.assertEqual(payload["upstream_task_artifacts"][0]["artifact_count"], 1)
+            self.assertEqual(
+                payload["upstream_task_artifacts"][0]["recent_artifacts"][0]["file_name"],
+                "dependency-upstream.txt",
+            )
+
+            self.assertEqual(len(payload["downstream_task_artifacts"]), 1)
+            self.assertEqual(payload["downstream_task_artifacts"][0]["task_id"], "task_artifact_downstream")
+            self.assertEqual(payload["downstream_task_artifacts"][0]["dependency_type"], "informs")
+            self.assertEqual(payload["downstream_task_artifacts"][0]["artifact_count"], 1)
+            self.assertEqual(
+                payload["downstream_task_artifacts"][0]["recent_artifacts"][0]["file_name"],
+                "dependency-downstream.txt",
+            )
 
     def test_artifact_compare_api_returns_unified_diff_for_text_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

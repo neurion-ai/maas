@@ -38,6 +38,12 @@ IGNORED_MODE_NAMES = {
     "LICENSE.md",
 }
 
+KNOWN_BROWNFIELD_HIDDEN_PATHS = {
+    ".github",
+    ".claude",
+    ".vscode",
+}
+
 LANGUAGE_EXTENSIONS = {
     ".py": "python",
     ".ts": "typescript",
@@ -86,7 +92,8 @@ def detect_bootstrap_mode(project_root):
     meaningful = [
         name
         for name in names
-        if name not in IGNORED_MODE_NAMES and not name.startswith(".")
+        if name not in IGNORED_MODE_NAMES
+        and (not name.startswith(".") or name in KNOWN_BROWNFIELD_HIDDEN_PATHS)
     ]
     return "brownfield" if meaningful else "greenfield"
 
@@ -266,15 +273,23 @@ def discover_brownfield_project(project_root):
     if readme_path:
         discovery["readme_excerpt"] = _read_text_excerpt(readme_path)
 
-    discovery["top_level_dirs"] = [
-        {
-            "name": name,
-            "file_count": count,
-            "primary_language": max(top_level_languages.get(name, {"mixed": 0}).items(), key=lambda item: item[1])[0],
-        }
-        for name, count in _top_entries(top_level_counts)
-        if os.path.isdir(os.path.join(project_root, name))
-    ]
+    top_level_dirs = []
+    for name, count in sorted(top_level_counts.items(), key=lambda item: (-item[1], item[0])):
+        if not os.path.isdir(os.path.join(project_root, name)):
+            continue
+        top_level_dirs.append(
+            {
+                "name": name,
+                "file_count": count,
+                "primary_language": max(
+                    top_level_languages.get(name, {"mixed": 0}).items(),
+                    key=lambda item: item[1],
+                )[0],
+            }
+        )
+        if len(top_level_dirs) >= 4:
+            break
+    discovery["top_level_dirs"] = top_level_dirs
 
     seen_signals = set()
     unique_signals = []

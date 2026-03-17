@@ -86,6 +86,55 @@ lint = "example:main"
             self.assertEqual(session_count, 0)
             self.assertIn("Review imported project understanding", task_titles)
 
+    def test_bootstrap_auto_detects_brownfield_from_hidden_repo_signals(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".github", "workflows"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, ".github", "workflows", "ci.yml"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("name: ci\n")
+
+            result = bootstrap_project(
+                tmpdir,
+                name="Hidden Signal Repo",
+                description="Hidden signal brownfield test",
+                project_type="custom",
+            )
+
+            self.assertEqual(result["mode"], "brownfield")
+            self.assertTrue(os.path.exists(result["paths"].discovery_path))
+
+            with open(result["paths"].discovery_path, "r", encoding="utf-8") as handle:
+                discovery = json.load(handle)
+            self.assertTrue(
+                any(item["path"] == ".github/workflows" for item in discovery["notable_files"])
+            )
+
+    def test_bootstrap_keeps_top_level_directories_when_root_files_dominate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Root-heavy repo\n")
+            for index in range(5):
+                with open(os.path.join(tmpdir, "file{0}.txt".format(index)), "w", encoding="utf-8") as handle:
+                    handle.write("root file {0}\n".format(index))
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+
+            result = bootstrap_project(
+                tmpdir,
+                name="Root Heavy Repo",
+                description="Top-level directory ranking test",
+                project_type="custom",
+            )
+
+            with open(result["paths"].discovery_path, "r", encoding="utf-8") as handle:
+                discovery = json.load(handle)
+
+            self.assertTrue(any(item["name"] == "src" for item in discovery["top_level_dirs"]))
+
     def test_migration_backfills_capabilities_for_existing_active_sessions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             paths = ProjectPaths(tmpdir)

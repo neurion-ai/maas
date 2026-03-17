@@ -2,6 +2,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+import json
 
 from maas.db import connect, ensure_meta_tables, migration_dir, run_migrations
 from maas.paths import ProjectPaths
@@ -16,6 +17,7 @@ class BootstrapProjectTest(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(tmpdir, "project.yaml")))
             self.assertTrue(os.path.exists(os.path.join(tmpdir, ".maas", "state.db")))
             self.assertTrue(os.path.exists(result["paths"].understanding_path))
+            self.assertEqual(result["mode"], "greenfield")
 
             connection = sqlite3.connect(result["paths"].db_path)
             project_count = connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]
@@ -24,6 +26,65 @@ class BootstrapProjectTest(unittest.TestCase):
 
             self.assertEqual(project_count, 1)
             self.assertGreaterEqual(task_count, 6)
+
+    def test_bootstrap_auto_detects_brownfield_and_imports_repo_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "tests"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "docs"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Example Project\n\nThis is an existing repo.\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "example-project"
+requires-python = ">=3.11"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "Makefile"), "w", encoding="utf-8") as handle:
+                handle.write("test:\n\tpytest\n")
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            with open(os.path.join(tmpdir, "tests", "test_app.py"), "w", encoding="utf-8") as handle:
+                handle.write("def test_ok():\n    assert True\n")
+
+            result = bootstrap_project(tmpdir, name="Imported Repo", description="Brownfield test", project_type="custom")
+
+            self.assertEqual(result["mode"], "brownfield")
+            self.assertTrue(os.path.exists(result["paths"].discovery_path))
+
+            with open(result["paths"].discovery_path, "r", encoding="utf-8") as handle:
+                discovery = json.load(handle)
+            self.assertEqual(discovery["primary_language"], "python")
+            self.assertIn("pyproject.toml", discovery["package_managers"])
+            self.assertTrue(any(signal["name"] == "lint" for signal in discovery["workflow_signals"]))
+
+            with open(result["paths"].understanding_path, "r", encoding="utf-8") as handle:
+                understanding = handle.read()
+            self.assertIn("Onboarding Mode: brownfield", understanding)
+            self.assertIn("Example Project", understanding)
+
+            connection = sqlite3.connect(result["paths"].db_path)
+            try:
+                task_titles = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT title FROM tasks ORDER BY priority DESC, title"
+                    ).fetchall()
+                ]
+                session_count = connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+                config_json = connection.execute("SELECT config_json FROM projects").fetchone()[0]
+            finally:
+                connection.close()
+
+            config = json.loads(config_json)
+            self.assertEqual(config["onboarding"]["mode"], "brownfield")
+            self.assertEqual(session_count, 0)
+            self.assertIn("Review imported project understanding", task_titles)
 
     def test_migration_backfills_capabilities_for_existing_active_sessions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

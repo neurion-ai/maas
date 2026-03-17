@@ -14,6 +14,7 @@ class ProjectPaths(object):
         self.quarantine_dir = os.path.join(self.workspace, "quarantine")
         self.runtime_dir = os.path.join(self.workspace, "runtime")
         self.understanding_path = os.path.join(self.workspace, "project-understanding.md")
+        self.discovery_path = os.path.join(self.workspace, "project-discovery.json")
 
     def ensure_directories(self):
         for path in (
@@ -24,4 +25,3 @@ class ProjectPaths(object):
             self.runtime_dir,
         ):
             os.makedirs(path, exist_ok=True)
-

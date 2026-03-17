@@ -44,6 +44,7 @@ def build_parser():
     init_parser.add_argument("--name")
     init_parser.add_argument("--description")
     init_parser.add_argument("--type", default="custom")
+    init_parser.add_argument("--mode", choices=("auto", "greenfield", "brownfield"), default="auto")
 
     db_parser = subparsers.add_parser("db")
     db_subparsers = db_parser.add_subparsers(dest="db_command", required=True)
@@ -267,14 +268,17 @@ def command_init(args):
         name=args.name,
         description=args.description,
         project_type=args.type,
+        mode=args.mode,
     )
     print(
         json.dumps(
             {
                 "project_id": result["project_id"],
+                "mode": result["mode"],
                 "project_yaml": result["paths"].project_config,
                 "db_path": result["paths"].db_path,
                 "understanding_path": result["paths"].understanding_path,
+                "discovery_path": result["paths"].discovery_path if result["discovery"] else None,
             },
             indent=2,
         )

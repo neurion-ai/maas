@@ -27,12 +27,16 @@ DEFAULT_PROVIDER_SETTINGS = {
 }
 
 
-def build_default_project_config(name, description, project_type):
+def build_default_project_config(name, description, project_type, onboarding_mode="greenfield", discovery_summary=None):
     return {
         "project": {
             "name": name,
             "description": description,
             "type": project_type or DEFAULT_PROJECT_TYPE,
+        },
+        "onboarding": {
+            "mode": onboarding_mode or "greenfield",
+            "discovery_summary": discovery_summary or {},
         },
         "agent_roles": [
             {

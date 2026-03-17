@@ -213,6 +213,8 @@ def _discover_github_actions_workflows(project_root):
                 payload = yaml.safe_load(handle) or {}
         except (OSError, yaml.YAMLError):
             payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
 
         workflow_name = payload.get("name") or os.path.splitext(filename)[0]
         trigger_value = payload.get("on")

@@ -186,7 +186,8 @@ export function OverviewPage() {
                     <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
                   </div>
                 </div>
-                {(overview.onboarding.discovery_summary.workflow_details?.length ?? 0) > 0 ? (
+                {(overview.onboarding.discovery_summary.workflow_details?.length ?? 0) > 0 ||
+                (overview.onboarding.discovery_summary.workflow_labels?.length ?? 0) > 0 ? (
                   <div className="data-list__item">
                     <div>
                       <strong>Imported workflows</strong>

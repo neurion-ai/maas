@@ -60,8 +60,17 @@ Legend:
 - [ ] Broader automated restart, retry, backoff, and DLQ workflows
 - [ ] Broader external provider coverage beyond the current local CLI paths
 - [ ] Higher-level artifact retention policy automation beyond the current browser, provenance, and export flows
-- [ ] Brownfield onboarding and multi-project support
+- [ ] Deeper brownfield onboarding and multi-project support
 - [ ] Stronger sandboxing and isolation guarantees
+
+### Next high-value PR sequence
+
+- [ ] `#75` Brownfield codebase map and repo-derived planning
+- [ ] `#76` Multi-project foundation
+- [ ] `#77` Runtime sandbox and isolation hardening
+- [ ] `#78` Adaptive replanning and scheduler feedback
+- [ ] `#79` Policy-driven self-healing and DLQ automation
+- [ ] `#80` Broader provider/runtime coverage
 
 ## Quick Start
 

@@ -145,6 +145,32 @@ lint = "example:main"
                 connection.close()
             self.assertIn("Validate imported workflow: ci", task_titles)
 
+    def test_bootstrap_ignores_non_mapping_github_workflow_yaml(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, ".github", "workflows"), exist_ok=True)
+            with open(
+                os.path.join(tmpdir, ".github", "workflows", "invalid.yml"),
+                "w",
+                encoding="utf-8",
+            ) as handle:
+                handle.write("- just\n- a\n- list\n")
+
+            result = bootstrap_project(
+                tmpdir,
+                name="Non Mapping Workflow Repo",
+                description="Non mapping workflow test",
+                project_type="custom",
+            )
+
+            self.assertEqual(result["mode"], "brownfield")
+            self.assertTrue(os.path.exists(result["paths"].discovery_path))
+
+            with open(result["paths"].discovery_path, "r", encoding="utf-8") as handle:
+                discovery = json.load(handle)
+            self.assertTrue(
+                any(signal.get("path") == ".github/workflows/invalid.yml" for signal in discovery["workflow_signals"])
+            )
+
     def test_bootstrap_keeps_top_level_directories_when_root_files_dominate(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)

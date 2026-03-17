@@ -18,6 +18,37 @@ ROLE_KEYWORDS = {
 }
 
 MAX_RETRY_PRESSURE_PENALTY = 45
+MAX_FAILURE_PRESSURE_PENALTY = 45
+
+
+def _task_failure_rollup(connection, task_ids):
+    task_ids = [task_id for task_id in task_ids if task_id]
+    if not task_ids:
+        return {}
+    placeholders = ", ".join(["?"] * len(task_ids))
+    rows = connection.execute(
+        """
+        SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
+        FROM failure_log
+        WHERE task_id IN ({0})
+        GROUP BY task_id
+        """.format(placeholders),
+        tuple(task_ids),
+    ).fetchall()
+    return {row["task_id"]: dict(row) for row in rows}
+
+
+def _brownfield_signal(task_row):
+    title = (task_row.get("title") or "").strip().lower()
+    if title.startswith("map imported source area:") or title.startswith("map imported package:") or title.startswith(
+        "map imported repository area"
+    ):
+        return {"kind": "repo_area_map", "label": "Imported repo area"}
+    if title.startswith("validate imported workflow") or title.startswith("review imported workflow"):
+        return {"kind": "workflow_validation", "label": "Imported workflow"}
+    if "align runtime and provider settings" in title:
+        return {"kind": "runtime_alignment", "label": "Runtime alignment"}
+    return None
 
 
 def _compare(left, operator, right):
@@ -105,14 +136,17 @@ def resolve_ready_tasks(connection):
         ORDER BY priority DESC, created_at ASC
         """
     ).fetchall()
+    failure_rollup = _task_failure_rollup(connection, [row["task_id"] for row in rows])
     agent_rows = _agent_rows(connection)
     ready = []
     for row in rows:
+        item = dict(row)
+        item.update(failure_rollup.get(row["task_id"], {}))
         if _cooldown_active(row["next_retry_at"]):
             continue
         if _task_is_blocked(connection, row["task_id"]) or _task_has_conflict(connection, row["task_id"]):
             continue
-        ready.append(dict(row))
+        ready.append(item)
     decisions = scheduler_decisions_for_tasks(ready, agent_rows)
     ranked_ready = []
     for item in ready:
@@ -131,6 +165,7 @@ def resolve_ready_tasks(connection):
                 "scheduler_rank": decision.get("scheduler_rank"),
                 "scheduler_agent_id": decision.get("scheduler_agent_id"),
                 "scheduler_agent_name": decision.get("scheduler_agent_name"),
+                "failure_count": item.get("failure_count", 0),
             }
         )
     ranked_ready.sort(
@@ -259,8 +294,26 @@ def _retry_pressure_penalty(task_row):
     return min(retry_count * 15, MAX_RETRY_PRESSURE_PENALTY)
 
 
+def _failure_pressure_penalty(task_row):
+    failure_count = task_row.get("failure_count") or 0
+    return min(failure_count * 15, MAX_FAILURE_PRESSURE_PENALTY)
+
+
 def _factor(key, label, value):
     return {"key": key, "label": label, "value": value}
+
+
+def _brownfield_role_bonus(agent_row, task_row):
+    signal = _brownfield_signal(task_row)
+    if signal is None:
+        return None
+    if signal["kind"] == "repo_area_map" and agent_row["role"] == "researcher":
+        return _factor("brownfield_bonus", "Imported repo area fit", 35)
+    if signal["kind"] == "workflow_validation" and agent_row["role"] == "reviewer":
+        return _factor("brownfield_bonus", "Imported workflow fit", 35)
+    if signal["kind"] == "runtime_alignment" and agent_row["role"] in ("builder", "reviewer"):
+        return _factor("brownfield_bonus", "Runtime alignment fit", 25)
+    return None
 
 
 def score_task_for_agent(agent_row, task_row):
@@ -281,8 +334,55 @@ def score_task_for_agent(agent_row, task_row):
     if retry_penalty:
         factors.append(_factor("retry_penalty", "Retry pressure", -retry_penalty))
 
+    failure_penalty = _failure_pressure_penalty(task_row)
+    if failure_penalty:
+        factors.append(_factor("failure_penalty", "Failure pressure", -failure_penalty))
+
+    brownfield_bonus = _brownfield_role_bonus(agent_row, task_row)
+    if brownfield_bonus:
+        factors.append(brownfield_bonus)
+
     total_score = sum(factor["value"] for factor in factors)
     return {"total_score": total_score, "factors": factors}
+
+
+def adaptive_replan_feedback(task_row):
+    signal = _brownfield_signal(task_row)
+    retry_count = task_row.get("retry_count") or 0
+    failure_count = task_row.get("failure_count") or 0
+    review_state = task_row.get("review_state")
+
+    if signal and signal["kind"] == "repo_area_map":
+        return {
+            "replan_strategy": "split_by_repo_area",
+            "replan_summary": "Break this imported repo-area task into smaller ownership slices before retrying it.",
+        }
+    if signal and signal["kind"] == "workflow_validation":
+        return {
+            "replan_strategy": "validate_imported_workflow",
+            "replan_summary": "Validate the imported workflow entrypoint and acceptance path before resuming automation.",
+        }
+    if signal and signal["kind"] == "runtime_alignment":
+        return {
+            "replan_strategy": "fix_runtime_alignment",
+            "replan_summary": "Review runtime and provider alignment before retrying this imported execution path.",
+        }
+    if failure_count >= 3 or retry_count >= 3:
+        return {
+            "replan_strategy": "split_or_simplify_scope",
+            "replan_summary": "Failure pressure is high; split the scope or simplify the task before another run.",
+        }
+    if review_state == "retry_backoff" or task_row.get("next_retry_at"):
+        return {
+            "replan_strategy": "defer_until_retry_window",
+            "replan_summary": "The task is cooling down; defer active work until the retry window opens or replace the retry path.",
+        }
+    if review_state in ("session_failed", "stale_session"):
+        return {
+            "replan_strategy": "investigate_failure_path",
+            "replan_summary": "Investigate the failure path and adjust task shape, runtime, or ownership before requeueing it.",
+        }
+    return None
 
 
 def _scheduler_summary(decision, include_rank=False):
@@ -468,13 +568,16 @@ def _candidate_tasks_for_agent(connection, agent_row):
         ORDER BY priority DESC, created_at ASC
         """
     ).fetchall()
+    failure_rollup = _task_failure_rollup(connection, [row["task_id"] for row in rows])
 
     candidates = []
     for row in rows:
         if row["assigned_agent_id"] and row["assigned_agent_id"] != agent_row["agent_id"]:
             continue
-        scoring = score_task_for_agent(agent_row, row)
-        candidates.append((scoring["total_score"], row, scoring["factors"]))
+        item = dict(row)
+        item.update(failure_rollup.get(row["task_id"], {}))
+        scoring = score_task_for_agent(agent_row, item)
+        candidates.append((scoring["total_score"], item, scoring["factors"]))
     candidates.sort(key=lambda item: (-item[0], item[1]["created_at"], item[1]["title"]))
     return [
         {

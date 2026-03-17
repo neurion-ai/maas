@@ -206,6 +206,15 @@ export function TaskCard({
           <dt>Factors</dt>
           <dd>{formatSchedulerFactors(task)}</dd>
         </div>
+        {task.replan_strategy ? (
+          <div>
+            <dt>Replan</dt>
+            <dd>
+              {task.replan_strategy}
+              {task.replan_summary ? ` | ${task.replan_summary}` : ""}
+            </dd>
+          </div>
+        ) : null}
       </dl>
       {(canReview ||
         canToggleAgent ||

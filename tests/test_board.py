@@ -105,6 +105,77 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertIsNone(card["scheduler_rank"])
             self.assertIn("reserved for assigned agent", card["scheduler_summary"])
 
+    def test_board_cards_include_adaptive_replan_guidance_for_brownfield_workflow_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Brownfield Guidance Test", description="Board brownfield guidance test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Validate imported workflow: ci',
+                        status = 'ready',
+                        assigned_agent_id = NULL,
+                        retry_count = 2,
+                        review_state = 'retry_backoff',
+                        next_retry_at = '2099-01-01 00:00:00',
+                        next_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id
+            )
+            factor_keys = {factor["key"] for factor in card["scheduler_factors"]}
+            self.assertIn("brownfield_bonus", factor_keys)
+            self.assertEqual(card["replan_strategy"], "validate_imported_workflow")
+            self.assertIn("workflow", card["replan_summary"].lower())
+
+    def test_board_cards_match_fallback_brownfield_workflow_titles_without_colon(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Brownfield Workflow Fallback Test", description="Board brownfield workflow fallback test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Validate imported workflow entrypoints',
+                        status = 'ready',
+                        assigned_agent_id = NULL
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id
+            )
+            factor_keys = {factor["key"] for factor in card["scheduler_factors"]}
+            self.assertIn("brownfield_bonus", factor_keys)
+            self.assertEqual(card["replan_strategy"], "validate_imported_workflow")
+
     def test_board_returns_expected_core_columns(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Board Test", description="Board test", project_type="custom")

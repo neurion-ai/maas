@@ -56,7 +56,7 @@ Legend:
 
 ### Still to do on `main`
 
-- [ ] Smarter replanning and scheduling beyond the current ready-refresh plus heuristic allocation path
+- [ ] Adaptive replanning and scheduling feedback beyond the current explicit scorer and manual replan queue
 - [ ] Broader automated restart, retry, backoff, and DLQ workflows
 - [ ] Broader external provider coverage beyond the current local CLI paths
 - [ ] Higher-level artifact retention policy automation beyond the current browser, provenance, and export flows
@@ -65,9 +65,9 @@ Legend:
 
 ### Next high-value PR sequence
 
-- [ ] `#75` Brownfield codebase map and repo-derived planning
-- [ ] `#76` Multi-project foundation
-- [ ] `#77` Runtime sandbox and isolation hardening
+- [x] `#75` Brownfield codebase map and repo-derived planning
+- [x] `#76` Multi-project foundation
+- [x] `#77` Runtime sandbox and isolation hardening
 - [ ] `#78` Adaptive replanning and scheduler feedback
 - [ ] `#79` Policy-driven self-healing and DLQ automation
 - [ ] `#80` Broader provider/runtime coverage

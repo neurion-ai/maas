@@ -140,6 +140,8 @@ function RecoveryTaskList({
               {item.last_retry_reason ? ` | last: ${item.last_retry_reason}` : ""}
             </p>
             {item.replan_reason ? <p>Replan reason: {item.replan_reason}</p> : null}
+            {item.replan_strategy ? <p>Replan strategy: {item.replan_strategy}</p> : null}
+            {item.replan_summary ? <p>{item.replan_summary}</p> : null}
             {item.next_retry_at ? (
               <p>
                 Next retry: {new Date(item.next_retry_at).toLocaleString()}

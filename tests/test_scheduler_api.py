@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from maas.api import create_app
 from maas.db import connect
+from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.lifecycle import end_session
 from maas.services.scheduler import assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -93,6 +94,50 @@ class SchedulerApiTest(unittest.TestCase):
             self.assertIn("reserved for assigned agent", ready_payload[0]["scheduler_summary"])
             self.assertFalse(other_result["assigned"])
             self.assertIsNone(other_result["task_id"])
+
+    def test_failure_pressure_demotes_ready_tasks_in_scheduler_ordering(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Scheduler Failure Pressure Test", description="Scheduler failure pressure test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute("UPDATE tasks SET status = 'done' WHERE status IN ('planned', 'ready', 'assigned', 'blocked')")
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', 'Failure Pressure Builder', 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_scheduler_failure", project_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, retry_count, acceptance_criteria_json
+                    ) VALUES
+                        ('task_scheduler_clean', ?, 'Implement stable scheduling path', '', 'ready', 80, 0, '[]'),
+                        ('task_scheduler_noisy', ?, 'Implement unstable scheduling path', '', 'ready', 95, 0, '[]')
+                    """,
+                    (project_id, project_id),
+                )
+                for index in range(4):
+                    connection.execute(
+                        """
+                        INSERT INTO failure_log (
+                            failure_id, project_id, task_id, failure_type, summary, detail_json
+                        ) VALUES (?, ?, 'task_scheduler_noisy', 'session_failed', ?, '{}')
+                        """,
+                        (generate_id("fail"), project_id, "Historical scheduler failure {0}".format(index)),
+                    )
+                connection.commit()
+
+                ready_payload = resolve_ready_tasks(connection)
+                result_payload = assign_next_task(connection, "agent_scheduler_failure", actor_id="agent_allocator")
+            finally:
+                connection.close()
+
+            self.assertEqual(ready_payload[0]["task_id"], "task_scheduler_clean")
+            self.assertEqual(result_payload["task_id"], "task_scheduler_clean")
 
     def test_refresh_ready_tasks_can_skip_commit_for_atomic_callers(self):
         with tempfile.TemporaryDirectory() as tmpdir:

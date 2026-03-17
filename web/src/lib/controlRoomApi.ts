@@ -367,6 +367,8 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   },
   summary: {
     retry_backoff_tasks: 0,
+    needs_replan_tasks: 0,
+    replanning_candidates: 0,
     tasks_with_retry_history: 0,
     recoverable_blocked_tasks: 0,
     tasks_with_retry_overrides: 0,
@@ -387,6 +389,8 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   task_retry_overrides: [],
   recoverable_blocked_tasks: [],
   task_retry_history: [],
+  replanning_candidates: [],
+  needs_replan_tasks: [],
   active_retry_backoff: [],
   open_quarantine_entries: [],
   open_failure_alerts: [],
@@ -568,6 +572,20 @@ export async function recoverTask(taskId: string) {
 
 export async function recoverAndRequeueTask(taskId: string) {
   const payload = await postJson(`/api/tasks/${taskId}/actions/recover-and-requeue`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
+export async function markTaskForReplan(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/mark-for-replan`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
+export async function finishTaskReplan(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/finish-replan`, {
     actor_id: "agent_allocator"
   });
   return payload;

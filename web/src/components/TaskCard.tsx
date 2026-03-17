@@ -59,6 +59,8 @@ interface TaskCardProps {
   onHalt?: (taskId: string) => void;
   onRecover?: (taskId: string) => void;
   onRecoverAndRequeue?: (taskId: string) => void;
+  onMarkForReplan?: (taskId: string) => void;
+  onFinishReplan?: (taskId: string) => void;
   onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
@@ -73,6 +75,8 @@ export function TaskCard({
   onHalt,
   onRecover,
   onRecoverAndRequeue,
+  onMarkForReplan,
+  onFinishReplan,
   onRetryLimitChange
 }: TaskCardProps) {
   const reviewApproveKey = `review:${task.task_id}:approve`;
@@ -83,6 +87,8 @@ export function TaskCard({
   const haltKey = `halt:${task.task_id}`;
   const recoverKey = `recover:${task.task_id}`;
   const recoverAndRequeueKey = `recover-and-requeue:${task.task_id}`;
+  const markForReplanKey = `mark-for-replan:${task.task_id}`;
+  const finishReplanKey = `finish-replan:${task.task_id}`;
   const retryLimitKey = `retry-limit:${task.task_id}`;
   const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
   const isPendingReviewReject = pendingActionKey === reviewRejectKey;
@@ -92,6 +98,8 @@ export function TaskCard({
   const isPendingHalt = pendingActionKey === haltKey;
   const isPendingRecover = pendingActionKey === recoverKey;
   const isPendingRecoverAndRequeue = pendingActionKey === recoverAndRequeueKey;
+  const isPendingMarkForReplan = pendingActionKey === markForReplanKey;
+  const isPendingFinishReplan = pendingActionKey === finishReplanKey;
   const isPendingRetryLimit = pendingActionKey === retryLimitKey;
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
@@ -103,6 +111,18 @@ export function TaskCard({
     task.status === "blocked" && !!onRecover && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
   const canRecoverAndRequeue =
     task.status === "blocked" && !!onRecoverAndRequeue && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
+  const canMarkForReplan =
+    task.status !== "in_progress" &&
+    task.status !== "done" &&
+    task.status !== "cancelled" &&
+    task.status !== "review" &&
+    task.review_state !== "needs_replan" &&
+    !!onMarkForReplan &&
+    ((task.retry_count ?? 0) > 0 ||
+      !!task.next_retry_at ||
+      task.review_state === "retry_backoff" ||
+      RECOVERABLE_REVIEW_STATES.has(task.review_state ?? ""));
+  const canFinishReplan = task.status === "blocked" && task.review_state === "needs_replan" && !!onFinishReplan;
   const canSetRetryLimit = canSteerTask && !!onRetryLimitChange;
   const retryLimitOptions = Array.from(
     new Set(
@@ -187,7 +207,16 @@ export function TaskCard({
           <dd>{formatSchedulerFactors(task)}</dd>
         </div>
       </dl>
-      {(canReview || canToggleAgent || canReassign || canReprioritize || canHalt || canRecover || canRecoverAndRequeue || canSetRetryLimit) && (
+      {(canReview ||
+        canToggleAgent ||
+        canReassign ||
+        canReprioritize ||
+        canHalt ||
+        canRecover ||
+        canRecoverAndRequeue ||
+        canMarkForReplan ||
+        canFinishReplan ||
+        canSetRetryLimit) && (
         <div className="task-card__actions">
           {canReview && (
             <>
@@ -291,6 +320,26 @@ export function TaskCard({
               onClick={() => onHalt?.(task.task_id)}
             >
               {isPendingHalt ? "Halting..." : "Halt task"}
+            </button>
+          )}
+          {canMarkForReplan && (
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              disabled={isPendingMarkForReplan}
+              onClick={() => onMarkForReplan?.(task.task_id)}
+            >
+              {isPendingMarkForReplan ? "Marking..." : "Mark for replan"}
+            </button>
+          )}
+          {canFinishReplan && (
+            <button
+              type="button"
+              className="task-action task-action--approve"
+              disabled={isPendingFinishReplan}
+              onClick={() => onFinishReplan?.(task.task_id)}
+            >
+              {isPendingFinishReplan ? "Requeueing..." : "Finish replan"}
             </button>
           )}
           {canRecover && (

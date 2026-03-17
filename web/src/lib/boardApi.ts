@@ -321,6 +321,18 @@ export async function recoverAndRequeueTask(taskId: string) {
   });
 }
 
+export async function markTaskForReplan(taskId: string) {
+  await postJson(`/api/tasks/${taskId}/actions/mark-for-replan`, {
+    actor_id: DEFAULT_ACTOR_ID
+  });
+}
+
+export async function finishTaskReplan(taskId: string) {
+  await postJson(`/api/tasks/${taskId}/actions/finish-replan`, {
+    actor_id: DEFAULT_ACTOR_ID
+  });
+}
+
 export async function setTaskRetryLimit(taskId: string, autoRetryLimit: number | null) {
   await postJson(`/api/tasks/${taskId}/actions/set-retry-limit`, {
     actor_id: DEFAULT_ACTOR_ID,

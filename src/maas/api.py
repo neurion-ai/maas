@@ -30,7 +30,9 @@ from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
     dismiss_quarantine_entry,
     recover_and_requeue_task,
+    finish_task_replan,
     halt_task,
+    mark_task_for_replan,
     pause_agent,
     purge_session_artifacts,
     purge_task_artifacts,
@@ -803,6 +805,30 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return recover_and_requeue_task(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/mark-for-replan")
+    def task_mark_for_replan_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return mark_task_for_replan(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/finish-replan")
+    def task_finish_replan_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return finish_task_replan(connection, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

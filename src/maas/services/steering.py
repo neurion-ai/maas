@@ -460,6 +460,180 @@ def reset_task_retry_state(connection, task_id, actor_id):
     }
 
 
+def mark_task_for_replan(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT
+            task_id,
+            project_id,
+            assigned_agent_id,
+            status,
+            review_state,
+            retry_count,
+            next_retry_at,
+            next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "mark_task_for_replan", "task", task_id)
+    if task["status"] in ("done", "cancelled", "in_progress", "review"):
+        raise ValueError("Task cannot be marked for replanning from status {0}".format(task["status"]))
+    if task["review_state"] == "needs_replan":
+        raise ValueError("Task is already marked for replanning")
+    if not (
+        task["review_state"] in ("session_failed", "stale_session", "retry_backoff")
+        or (task["retry_count"] or 0) > 0
+        or task["next_retry_at"] is not None
+    ):
+        raise ValueError("Task does not currently require replanning")
+    active_session = connection.execute(
+        """
+        SELECT session_id
+        FROM sessions
+        WHERE task_id = ? AND status = 'active'
+        LIMIT 1
+        """,
+        (task_id,),
+    ).fetchone()
+    if active_session is not None:
+        raise ValueError("Task cannot be marked for replanning while a session is active")
+
+    if task["assigned_agent_id"]:
+        revoke_task_capabilities(
+            connection,
+            task["project_id"],
+            task_id,
+            agent_id=task["assigned_agent_id"],
+            reason="task_marked_for_replan",
+            revoked_by=actor_id,
+        )
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'blocked',
+            assigned_agent_id = NULL,
+            review_state = 'needs_replan',
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "mark_task_for_replan",
+        "task",
+        task_id,
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "previous_agent_id": task["assigned_agent_id"],
+            "previous_next_retry_at": task["next_retry_at"],
+            "previous_next_retry_reason": task["next_retry_reason"],
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "marked_for_replan",
+        "Task removed from retry/recovery flow and marked for manual replanning.",
+        severity="warning",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        resolution_reason="task_marked_for_replan",
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        reason="task_marked_for_replan",
+    )
+    connection.commit()
+    return {"task_id": task_id, "status": "blocked", "review_state": "needs_replan"}
+
+
+def finish_task_replan(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, review_state
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "finish_task_replan", "task", task_id)
+    if task["status"] != "blocked" or task["review_state"] != "needs_replan":
+        raise ValueError("Task is not currently waiting on replanning")
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'planned',
+            review_state = NULL,
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    refreshed = refresh_ready_tasks(connection, commit=False)
+    task_after = connection.execute(
+        """
+        SELECT status, review_state, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "finish_task_replan",
+        "task",
+        task_id,
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "ready_changes": refreshed,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "replan_finished",
+        "Task replanning marked complete and returned to readiness evaluation.",
+    )
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": task_after["status"],
+        "review_state": task_after["review_state"],
+        "next_retry_at": task_after["next_retry_at"],
+        "next_retry_reason": task_after["next_retry_reason"],
+    }
+
+
 def recover_and_requeue_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
     refreshed_task = _recover_and_requeue_task(connection, task, actor_id)

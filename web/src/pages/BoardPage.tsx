@@ -1,7 +1,9 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import {
   fetchBoard,
+  finishTaskReplan,
   haltTask,
+  markTaskForReplan,
   reassignTask,
   recoverAndRequeueTask,
   recoverTask,
@@ -200,6 +202,36 @@ export function BoardPage() {
     }
   }
 
+  async function handleMarkForReplan(taskId: string) {
+    const actionKey = `mark-for-replan:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await markTaskForReplan(taskId);
+      setNotice(`Task ${taskId} moved into the replanning queue.`);
+      await loadBoard();
+    } catch {
+      setNotice("Mark-for-replan failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleFinishReplan(taskId: string) {
+    const actionKey = `finish-replan:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await finishTaskReplan(taskId);
+      setNotice(`Task ${taskId} returned to readiness evaluation after replanning.`);
+      await loadBoard();
+    } catch {
+      setNotice("Finish-replan failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   async function handleRetryLimitChange(taskId: string, autoRetryLimit: number | null) {
     const actionKey = `retry-limit:${taskId}`;
     setPendingActionKey(actionKey);
@@ -334,12 +366,14 @@ export function BoardPage() {
             onAgentAction={handleAgentAction}
             onPriorityChange={handlePriorityChange}
             onReassign={handleReassign}
-            onHalt={handleHalt}
-            onRecover={handleRecover}
-            onRecoverAndRequeue={handleRecoverAndRequeue}
-            onRetryLimitChange={handleRetryLimitChange}
-          />
-        ))}
+              onHalt={handleHalt}
+              onRecover={handleRecover}
+              onRecoverAndRequeue={handleRecoverAndRequeue}
+              onMarkForReplan={handleMarkForReplan}
+              onFinishReplan={handleFinishReplan}
+              onRetryLimitChange={handleRetryLimitChange}
+            />
+          ))}
       </section>
     </main>
   );

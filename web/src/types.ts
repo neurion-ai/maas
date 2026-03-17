@@ -259,6 +259,15 @@ export interface ArtifactComparisonResponse {
   truncated?: boolean;
 }
 
+export interface ArtifactPurgeResponse {
+  scope_type: "task" | "session";
+  scope_id: string;
+  deleted_artifact_count: number;
+  deleted_file_count: number;
+  missing_file_count: number;
+  preserved_path_count: number;
+}
+
 export interface OverviewResponse {
   project: OverviewProject | null;
   summary: OverviewSummary;

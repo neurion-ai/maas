@@ -5,6 +5,7 @@ import type {
   AlertsResponse,
   ArtifactComparisonResponse,
   ArtifactDetail,
+  ArtifactPurgeResponse,
   ArtifactsResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
@@ -488,6 +489,20 @@ export async function fetchArtifactComparison(leftArtifactId: string, rightArtif
 
 export function artifactDownloadUrl(artifactId: string) {
   return `/api/artifacts/${artifactId}/download`;
+}
+
+export async function purgeTaskArtifacts(taskId: string) {
+  const payload = await postJson<ArtifactPurgeResponse>(`/api/tasks/${taskId}/artifacts/actions/purge`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as ArtifactPurgeResponse;
+}
+
+export async function purgeSessionArtifacts(sessionId: string) {
+  const payload = await postJson<ArtifactPurgeResponse>(`/api/sessions/${sessionId}/artifacts/actions/purge`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as ArtifactPurgeResponse;
 }
 
 export function fetchAlerts() {

@@ -32,6 +32,8 @@ from maas.services.steering import (
     recover_and_requeue_task,
     halt_task,
     pause_agent,
+    purge_session_artifacts,
+    purge_task_artifacts,
     reassign_task,
     recover_agent,
     recover_task,
@@ -412,6 +414,30 @@ def create_app(project_root="."):
             media_type=bundle["content_type"],
             filename=bundle["file_name"],
         )
+
+    @app.post("/api/tasks/{task_id}/artifacts/actions/purge")
+    def task_artifact_purge(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return purge_task_artifacts(connection, paths, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/sessions/{session_id}/artifacts/actions/purge")
+    def session_artifact_purge(session_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return purge_session_artifacts(connection, paths, session_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
 
     @app.get("/api/artifacts/{artifact_id}")
     def artifact_detail(artifact_id: str):

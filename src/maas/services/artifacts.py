@@ -3,6 +3,7 @@
 import json
 import mimetypes
 import os
+import shutil
 import tempfile
 import zipfile
 from difflib import unified_diff
@@ -70,6 +71,17 @@ def _download_content_type(absolute_path):
 
 def _can_download_artifact(project_paths, absolute_path):
     return bool(absolute_path and os.path.isfile(absolute_path) and _path_within(project_paths.root, absolute_path))
+
+
+def _artifact_deletion_mode(project_paths, absolute_path):
+    if not absolute_path or not os.path.exists(absolute_path):
+        return "missing"
+    if _path_within(project_paths.artifacts_dir, absolute_path) or _path_within(project_paths.quarantine_dir, absolute_path):
+        if os.path.isfile(absolute_path):
+            return "file"
+        if os.path.isdir(absolute_path):
+            return "directory"
+    return "preserve"
 
 
 def _metadata_snapshot(metadata):
@@ -605,6 +617,10 @@ def _artifact_export_rows(connection, project_paths, task_id=None, session_id=No
     return rows, items
 
 
+def artifact_scope_rows(connection, project_paths, task_id=None, session_id=None):
+    return _artifact_export_rows(connection, project_paths, task_id=task_id, session_id=session_id)
+
+
 def build_artifact_export_bundle(connection, project_paths, task_id=None, session_id=None):
     rows, items = _artifact_export_rows(connection, project_paths, task_id=task_id, session_id=session_id)
     if not rows:
@@ -656,6 +672,72 @@ def build_artifact_export_bundle(connection, project_paths, task_id=None, sessio
         "absolute_path": temp_file_path,
         "file_name": "{0}-{1}-artifacts.zip".format(scope_type, scope_id),
         "content_type": "application/zip",
+    }
+
+
+def purge_artifact_scope(connection, project_paths, task_id=None, session_id=None):
+    rows, items = artifact_scope_rows(connection, project_paths, task_id=task_id, session_id=session_id)
+    if not rows:
+        return None
+
+    deleted_file_count = 0
+    preserved_path_count = 0
+    missing_file_count = 0
+    removed_directories = set()
+    touched_sessions = set()
+
+    for row in rows:
+        absolute_path = _absolute_path(project_paths, row["path"])
+        deletion_mode = _artifact_deletion_mode(project_paths, absolute_path)
+        if deletion_mode == "file":
+            os.remove(absolute_path)
+            deleted_file_count += 1
+        elif deletion_mode == "directory":
+            normalized_path = os.path.abspath(absolute_path)
+            if normalized_path not in removed_directories:
+                for parent in list(removed_directories):
+                    if _path_within(parent, normalized_path):
+                        normalized_path = None
+                        break
+                if normalized_path is not None:
+                    shutil.rmtree(normalized_path)
+                    removed_directories.add(normalized_path)
+                    deleted_file_count += 1
+        elif deletion_mode == "missing":
+            missing_file_count += 1
+        else:
+            preserved_path_count += 1
+
+        if row["session_id"]:
+            touched_sessions.add(row["session_id"])
+
+    connection.executemany(
+        "DELETE FROM artifacts WHERE artifact_id = ?",
+        [(row["artifact_id"],) for row in rows],
+    )
+    for session_id in touched_sessions:
+        remaining_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM artifacts WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()["count"]
+        connection.execute(
+            """
+            UPDATE quarantine_queue
+            SET artifact_count = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE session_id = ?
+            """,
+            (remaining_count, session_id),
+        )
+
+    scope_type = "task" if task_id else "session"
+    scope_id = task_id or session_id
+    return {
+        "scope_type": scope_type,
+        "scope_id": scope_id,
+        "deleted_artifact_count": len(items),
+        "deleted_file_count": deleted_file_count,
+        "missing_file_count": missing_file_count,
+        "preserved_path_count": preserved_path_count,
     }
 
 

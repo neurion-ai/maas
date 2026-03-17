@@ -359,6 +359,7 @@ def create_app(project_root="."):
         provider_type: str = "all",
         artifact_type: str = "all",
         task_id: str = "",
+        session_id: str = "",
         missing_only: bool = False,
     ):
         parsed_limit = _parse_limit(limit, 100)
@@ -376,6 +377,7 @@ def create_app(project_root="."):
                     "provider_type": provider_type,
                     "artifact_type": artifact_type,
                     "task_id": task_id,
+                    "session_id": session_id,
                     "missing_only": missing_only,
                 },
             )

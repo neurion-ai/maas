@@ -638,6 +638,12 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertFalse(missing_payload["items"][0]["exists"])
             self.assertTrue(missing_payload["selected_filters"]["missing_only"])
 
+            session_id = filtered_payload["items"][0]["session_id"]
+            session_payload = client.get(f"/api/artifacts?session_id={session_id}").json()
+            self.assertEqual(session_payload["filtered_count"], 1)
+            self.assertEqual(session_payload["items"][0]["session_id"], session_id)
+            self.assertEqual(session_payload["selected_filters"]["session_id"], session_id)
+
     def test_artifacts_api_exposes_quarantine_operator_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(
@@ -918,6 +924,88 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertIn(second_artifact_id, related_ids)
             self.assertNotIn(first_artifact_id, related_ids)
             self.assertEqual(len(related_ids), 1)
+            self.assertEqual(payload["lineage_summary"]["task_artifact_count"], 2)
+            self.assertEqual(payload["lineage_summary"]["session_artifact_count"], 1)
+            self.assertEqual(payload["session_artifacts"], [])
+
+    def test_artifact_detail_api_exposes_session_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Session Lineage Test",
+                description="Artifacts session lineage test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_session_lineage", project_id, "Artifact Session Lineage Agent"),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact session lineage task', '', 'ready', 60, '[]')
+                    """,
+                    ("task_artifact_session_lineage", project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_session_lineage",
+                    "agent_artifact_session_lineage",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_session_lineage",
+                    task_id="task_artifact_session_lineage",
+                    provider_type="python_script",
+                    status_message="Starting session lineage artifact",
+                )
+                first_path = os.path.join(result["paths"].artifacts_dir, "session-lineage-first.txt")
+                with open(first_path, "w", encoding="utf-8") as handle:
+                    handle.write("session first\n")
+                first_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id="task_artifact_session_lineage",
+                    artifact_type="note",
+                    path=first_path,
+                )
+                second_path = os.path.join(result["paths"].artifacts_dir, "session-lineage-second.txt")
+                with open(second_path, "w", encoding="utf-8") as handle:
+                    handle.write("session second\n")
+                second_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id="task_artifact_session_lineage",
+                    artifact_type="provider_report",
+                    path=second_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get(f"/api/artifacts/{first_artifact_id}").json()
+
+            self.assertEqual(payload["lineage_summary"]["task_artifact_count"], 2)
+            self.assertEqual(payload["lineage_summary"]["session_artifact_count"], 2)
+            self.assertEqual(len(payload["session_artifacts"]), 1)
+            self.assertEqual(payload["session_artifacts"][0]["artifact_id"], second_artifact_id)
+            self.assertEqual(payload["session_artifacts"][0]["session_id"], session_id)
 
     def test_artifact_compare_api_returns_unified_diff_for_text_artifacts(self):
         with tempfile.TemporaryDirectory() as tmpdir:

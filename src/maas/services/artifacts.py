@@ -219,6 +219,10 @@ def _artifact_where_clause(project_paths, filters):
         where.append("artifacts.task_id = :task_id")
         params["task_id"] = filters["task_id"]
 
+    if filters.get("session_id"):
+        where.append("artifacts.session_id = :session_id")
+        params["session_id"] = filters["session_id"]
+
     if filters.get("state") and filters["state"] != "all":
         where.append("{0} = :state".format(state_sql))
         params["state"] = filters["state"]
@@ -450,6 +454,19 @@ def _attach_quarantine_actions(connection, items):
     return enriched_items
 
 
+def _artifact_related_summary(item):
+    return {
+        "artifact_id": item["artifact_id"],
+        "artifact_type": item["artifact_type"],
+        "file_name": item["file_name"],
+        "display_path": item["display_path"],
+        "artifact_state": item["artifact_state"],
+        "provider_type": item.get("provider_type"),
+        "session_id": item.get("session_id"),
+        "created_at": item["created_at"],
+    }
+
+
 def _related_artifact_items(connection, project_paths, focus_item, limit=6):
     task_id = focus_item.get("task_id")
     if not task_id:
@@ -461,21 +478,45 @@ def _related_artifact_items(connection, project_paths, focus_item, limit=6):
         (task_id, focus_item["artifact_id"], limit),
     ).fetchall()
     items = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, row) for row in rows])
-    related = []
-    for item in items:
-        related.append(
-            {
-                "artifact_id": item["artifact_id"],
-                "artifact_type": item["artifact_type"],
-                "file_name": item["file_name"],
-                "display_path": item["display_path"],
-                "artifact_state": item["artifact_state"],
-                "provider_type": item.get("provider_type"),
-                "session_id": item.get("session_id"),
-                "created_at": item["created_at"],
-            }
-        )
-    return related
+    return [_artifact_related_summary(item) for item in items]
+
+
+def _session_artifact_items(connection, project_paths, focus_item, limit=8):
+    session_id = focus_item.get("session_id")
+    if not session_id:
+        return []
+
+    rows = connection.execute(
+        _artifact_row_query("WHERE artifacts.session_id = ? AND artifacts.artifact_id != ?")
+        + "\nORDER BY artifacts.created_at DESC, artifacts.artifact_id DESC LIMIT ?",
+        (session_id, focus_item["artifact_id"], limit),
+    ).fetchall()
+    items = _attach_quarantine_actions(connection, [_enrich_artifact_row(project_paths, row) for row in rows])
+    return [_artifact_related_summary(item) for item in items]
+
+
+def _artifact_lineage_summary(connection, focus_item):
+    task_id = focus_item.get("task_id")
+    session_id = focus_item.get("session_id")
+    task_artifact_count = 0
+    session_artifact_count = 0
+
+    if task_id:
+        task_artifact_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM artifacts WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()["count"]
+
+    if session_id:
+        session_artifact_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM artifacts WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()["count"]
+
+    return {
+        "task_artifact_count": task_artifact_count,
+        "session_artifact_count": session_artifact_count,
+    }
 
 
 def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None):
@@ -522,6 +563,7 @@ def fetch_artifacts(connection, project_paths, limit=100, offset=0, filters=None
             "provider_type": (filters or {}).get("provider_type") or "all",
             "artifact_type": (filters or {}).get("artifact_type") or "all",
             "task_id": (filters or {}).get("task_id") or "",
+            "session_id": (filters or {}).get("session_id") or "",
             "missing_only": bool((filters or {}).get("missing_only")),
         },
     }
@@ -562,6 +604,8 @@ def fetch_artifact_detail(connection, project_paths, artifact_id):
         "download_content_type": _download_content_type(absolute_path) if can_download else None,
         "preview": _artifact_preview(absolute_path),
         "quarantine_entry": quarantine_entry,
+        "lineage_summary": _artifact_lineage_summary(connection, enriched_item),
+        "session_artifacts": _session_artifact_items(connection, project_paths, enriched_item),
         "related_artifacts": _related_artifact_items(connection, project_paths, enriched_item),
     }
 

@@ -46,7 +46,7 @@
 - [x] Shared lifecycle contract for provider activity and artifact output
 - [x] Real local Claude Code CLI execution path behind explicit provider config
 - [x] Real local OpenAI Codex CLI execution path behind explicit provider config
-- [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
+- [x] Provider status visibility with effective mode, runtime controls, config warnings, preflight readiness, recent run history, manual run controls, mode switching, and editable settings
 - [x] Explicit scheduler scoring, board-visible scheduler rationale, and adaptive replanning guidance
 
 ### Control room and steering
@@ -124,7 +124,7 @@
 
 ## Next High-Value PR Sequence
 
-- [ ] `#80` Provider runtime preflight and readiness checks
+- [x] `#80` Provider runtime preflight and readiness checks
 - [ ] `#81` Multi-project write path and project lifecycle
 - [ ] `#82` Project-aware supervisor and background orchestration
 - [ ] `#83` Brownfield file-backed planning and repo navigation

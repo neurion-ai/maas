@@ -117,6 +117,11 @@ export interface ProjectSummary {
   description: string;
   project_type: string;
   created_at: string;
+  updated_at?: string;
+  state: "active" | "archived";
+  archived_at?: string | null;
+  source_root?: string;
+  onboarding_mode?: string;
   task_count: number;
   agent_count: number;
   open_alert_count: number;
@@ -124,6 +129,30 @@ export interface ProjectSummary {
 
 export interface ProjectsResponse {
   projects: ProjectSummary[];
+}
+
+export interface ProjectCreateRequest {
+  actor_id: string;
+  name: string;
+  description: string;
+  project_type: string;
+  mode: "auto" | "greenfield" | "brownfield";
+  source_root?: string;
+}
+
+export interface ProjectCreateResponse {
+  project: ProjectSummary;
+  mode: string;
+  metadata: {
+    understanding_path: string;
+    discovery_path?: string | null;
+    source_root: string;
+  };
+}
+
+export interface ProjectActionResponse {
+  project_id: string;
+  state: "active" | "archived";
 }
 
 export interface OverviewOnboarding {

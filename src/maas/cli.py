@@ -13,6 +13,7 @@ from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.provider_runtime import run_provider_task
+from maas.services.projects import archive_project, create_project, list_projects, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -63,6 +64,31 @@ def build_parser():
 
     board_parser = subparsers.add_parser("board")
     board_parser.add_argument("--project-root", default=".")
+
+    project_parser = subparsers.add_parser("project")
+    project_subparsers = project_parser.add_subparsers(dest="project_command", required=True)
+
+    project_list_parser = project_subparsers.add_parser("list")
+    project_list_parser.add_argument("--project-root", default=".")
+
+    project_create_parser = project_subparsers.add_parser("create")
+    project_create_parser.add_argument("--project-root", default=".")
+    project_create_parser.add_argument("--actor-id", default="agent_allocator")
+    project_create_parser.add_argument("--name", required=True)
+    project_create_parser.add_argument("--description", default="")
+    project_create_parser.add_argument("--type", default="custom")
+    project_create_parser.add_argument("--mode", choices=("auto", "greenfield", "brownfield"), default="auto")
+    project_create_parser.add_argument("--source-root")
+
+    project_archive_parser = project_subparsers.add_parser("archive")
+    project_archive_parser.add_argument("--project-root", default=".")
+    project_archive_parser.add_argument("--project-id", required=True)
+    project_archive_parser.add_argument("--actor-id", required=True)
+
+    project_restore_parser = project_subparsers.add_parser("restore")
+    project_restore_parser.add_argument("--project-root", default=".")
+    project_restore_parser.add_argument("--project-id", required=True)
+    project_restore_parser.add_argument("--actor-id", required=True)
 
     agent_parser = subparsers.add_parser("agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -319,6 +345,36 @@ def command_board(args):
         connection.close()
 
 
+def command_project(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.project_command == "list":
+            print(json.dumps({"projects": list_projects(connection)}, indent=2))
+        elif args.project_command == "create":
+            print(
+                json.dumps(
+                    create_project(
+                        connection,
+                        paths,
+                        actor_id=args.actor_id,
+                        name=args.name,
+                        description=args.description,
+                        project_type=args.type,
+                        mode=args.mode,
+                        source_root=args.source_root,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "archive":
+            print(json.dumps(archive_project(connection, args.project_id, args.actor_id), indent=2))
+        elif args.project_command == "restore":
+            print(json.dumps(restore_project(connection, args.project_id, args.actor_id), indent=2))
+    finally:
+        connection.close()
+
+
 def command_task(args):
     paths = project_paths(args.project_root)
     connection = connect(paths)
@@ -543,6 +599,8 @@ def main(argv=None):
         command_supervisor(args)
     elif args.command == "board":
         command_board(args)
+    elif args.command == "project":
+        command_project(args)
     elif args.command == "agent":
         command_agent(args)
     elif args.command == "task":

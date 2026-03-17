@@ -30,7 +30,7 @@ from maas.services.provider_runtime import (
     set_provider_mode,
     set_provider_settings,
 )
-from maas.services.projects import list_projects, resolve_project_id
+from maas.services.projects import archive_project, create_project, list_projects, resolve_project_id, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
@@ -185,6 +185,15 @@ class RecoveryPolicyRequest(BaseModel):
     project_id: Optional[str] = None
 
 
+class ProjectCreateRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    name: str
+    description: str = ""
+    project_type: str = "custom"
+    mode: str = "auto"
+    source_root: Optional[str] = None
+
+
 def _parse_limit(value, default):
     if value is None:
         return default
@@ -238,6 +247,45 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return {"projects": list_projects(connection)}
+        finally:
+            connection.close()
+
+    @app.post("/api/projects")
+    def projects_create(payload: ProjectCreateRequest):
+        connection = connect(paths)
+        try:
+            return create_project(
+                connection,
+                paths,
+                actor_id=payload.actor_id,
+                name=payload.name,
+                description=payload.description,
+                project_type=payload.project_type,
+                mode=payload.mode,
+                source_root=payload.source_root,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/archive")
+    def projects_archive(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return archive_project(connection, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/restore")
+    def projects_restore(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return restore_project(connection, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 

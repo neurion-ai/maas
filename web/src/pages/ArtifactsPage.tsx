@@ -46,6 +46,8 @@ export function ArtifactsPage() {
   const [stateFilter, setStateFilter] = useState("all");
   const [providerFilter, setProviderFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [taskFilter, setTaskFilter] = useState("");
+  const [sessionFilter, setSessionFilter] = useState("");
   const [missingOnly, setMissingOnly] = useState(false);
   const [offset, setOffset] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -66,6 +68,8 @@ export function ArtifactsPage() {
           state: stateFilter,
           providerType: providerFilter,
           artifactType: typeFilter,
+          taskId: taskFilter || undefined,
+          sessionId: sessionFilter || undefined,
           missingOnly,
           limit: PAGE_SIZE,
           offset
@@ -95,7 +99,7 @@ export function ArtifactsPage() {
     return () => {
       controller.abort();
     };
-  }, [deferredQuery, missingOnly, offset, providerFilter, stateFilter, typeFilter]);
+  }, [deferredQuery, missingOnly, offset, providerFilter, sessionFilter, stateFilter, taskFilter, typeFilter]);
 
   useEffect(() => {
     if (livePulse === 0) {
@@ -107,11 +111,12 @@ export function ArtifactsPage() {
   useEffect(() => {
     const visibleIds = (artifacts?.items ?? []).map((item) => item.artifact_id);
     if (visibleIds.length === 0) {
-      setSelectedArtifactId(null);
-      setSelectedArtifact(null);
+      if (!selectedArtifactId) {
+        setSelectedArtifact(null);
+      }
       return;
     }
-    if (!selectedArtifactId || !visibleIds.includes(selectedArtifactId)) {
+    if (!selectedArtifactId) {
       setSelectedArtifactId(visibleIds[0]);
     }
   }, [artifacts, selectedArtifactId]);
@@ -217,6 +222,19 @@ export function ArtifactsPage() {
   const hasNextPage = (artifacts?.offset ?? 0) + visibleItems.length < (artifacts?.filtered_count ?? 0);
   const detailArtifact = selectedArtifact;
   const downloadHref = detailArtifact ? artifactDownloadUrl(detailArtifact.artifact_id) : null;
+  const hasLineageFilter = Boolean(taskFilter || sessionFilter);
+
+  function applyTaskFilter(nextTaskId?: string | null) {
+    setOffset(0);
+    setTaskFilter(nextTaskId ?? "");
+    setSessionFilter("");
+  }
+
+  function applySessionFilter(nextSessionId?: string | null) {
+    setOffset(0);
+    setSessionFilter(nextSessionId ?? "");
+    setTaskFilter("");
+  }
 
   return (
     <section className="control-page">
@@ -326,6 +344,23 @@ export function ArtifactsPage() {
             </button>
           </div>
         </div>
+        {hasLineageFilter ? (
+          <div className="task-card__actions">
+            {taskFilter ? <span className="goal-status goal-status--active">Task filter: {taskFilter}</span> : null}
+            {sessionFilter ? <span className="goal-status goal-status--active">Session filter: {sessionFilter}</span> : null}
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              onClick={() => {
+                setOffset(0);
+                setTaskFilter("");
+                setSessionFilter("");
+              }}
+            >
+              Clear lineage filters
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="overview-grid">
@@ -505,6 +540,53 @@ export function ArtifactsPage() {
                 </div>
               </div>
 
+              <div className="artifact-detail__section">
+                <div className="data-panel__header">
+                  <div>
+                    <h3>Lineage</h3>
+                    <p>Pivot the registry by this artifact’s task or runtime session.</p>
+                  </div>
+                  <div className="task-card__actions">
+                    {detailArtifact.task_id ? (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        onClick={() => applyTaskFilter(detailArtifact.task_id)}
+                      >
+                        Show task artifacts
+                      </button>
+                    ) : null}
+                    {detailArtifact.session_id ? (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        onClick={() => applySessionFilter(detailArtifact.session_id)}
+                      >
+                        Show session artifacts
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="artifact-detail__grid">
+                  <div>
+                    <span>Artifacts on task</span>
+                    <strong>{detailArtifact.lineage_summary?.task_artifact_count ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span>Artifacts in session</span>
+                    <strong>{detailArtifact.lineage_summary?.session_artifact_count ?? 0}</strong>
+                  </div>
+                  <div>
+                    <span>Task id</span>
+                    <strong>{detailArtifact.task_id ?? "No task"}</strong>
+                  </div>
+                  <div>
+                    <span>Session id</span>
+                    <strong>{detailArtifact.session_id ?? "No session"}</strong>
+                  </div>
+                </div>
+              </div>
+
               {detailArtifact.quarantine_entry ? (
                 <div className="artifact-detail__section">
                   <h3>Quarantine incident</h3>
@@ -556,8 +638,50 @@ export function ArtifactsPage() {
               <div className="artifact-detail__section">
                 <div className="data-panel__header">
                   <div>
-                    <h3>Compare against related artifacts</h3>
-                    <p>Recent sibling artifacts from the same task for quick text and JSON diffs.</p>
+                    <h3>Other artifacts from this session</h3>
+                    <p>Outputs captured during the same runtime attempt.</p>
+                  </div>
+                </div>
+                <div className="data-list">
+                  {(detailArtifact.session_artifacts ?? []).map((item) => (
+                    <div key={item.artifact_id} className="data-list__item">
+                      <div>
+                        <strong>{item.file_name}</strong>
+                        <p>{item.display_path}</p>
+                        <p>
+                          {item.artifact_type}
+                          {item.provider_type ? ` | ${item.provider_type}` : ""}
+                        </p>
+                      </div>
+                      <div className="data-list__meta">
+                        <span className={`goal-status goal-status--${item.artifact_state}`}>{item.artifact_state}</span>
+                        <span>{new Date(item.created_at).toLocaleString()}</span>
+                        <button
+                          type="button"
+                          className="task-action task-action--secondary"
+                          onClick={() => setSelectedArtifactId(item.artifact_id)}
+                        >
+                          Inspect
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(detailArtifact.session_artifacts ?? []).length === 0 ? (
+                    <div className="data-list__item">
+                      <div>
+                        <strong>No sibling session artifacts.</strong>
+                        <p>This runtime session only recorded the currently selected artifact.</p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="artifact-detail__section">
+                <div className="data-panel__header">
+                  <div>
+                    <h3>Recent artifacts from this task</h3>
+                    <p>Task-level artifact history for comparison and provenance review.</p>
                   </div>
                   <div className="status-chip">
                     <span className={`status-chip__dot ${isComparisonRefreshing ? "is-live" : ""}`} />

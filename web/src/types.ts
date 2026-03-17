@@ -190,6 +190,7 @@ export interface ArtifactsResponse {
     provider_type: string;
     artifact_type: string;
     task_id: string;
+    session_id: string;
     missing_only: boolean;
   };
   items: ArtifactItem[];
@@ -220,6 +221,10 @@ export interface ArtifactDetail extends ArtifactItem {
   download_url?: string | null;
   download_content_type?: string | null;
   preview: ArtifactPreview;
+  lineage_summary?: {
+    task_artifact_count: number;
+    session_artifact_count: number;
+  };
   quarantine_entry?: {
     queue_id: string;
     status: "open" | "restored" | "dismissed";
@@ -229,6 +234,7 @@ export interface ArtifactDetail extends ArtifactItem {
     updated_at?: string | null;
     resolved_at?: string | null;
   } | null;
+  session_artifacts?: ArtifactRelatedItem[];
   related_artifacts?: ArtifactRelatedItem[];
 }
 

@@ -146,6 +146,7 @@ const ARTIFACTS_FALLBACK: ArtifactsResponse = {
     provider_type: "all",
     artifact_type: "all",
     task_id: "",
+    session_id: "",
     missing_only: false
   },
   items: []
@@ -441,6 +442,7 @@ export function fetchArtifacts(
     providerType?: string;
     artifactType?: string;
     taskId?: string;
+    sessionId?: string;
     missingOnly?: boolean;
     limit?: number;
     offset?: number;
@@ -454,6 +456,7 @@ export function fetchArtifacts(
   if (params?.providerType) query.set("provider_type", params.providerType);
   if (params?.artifactType) query.set("artifact_type", params.artifactType);
   if (params?.taskId) query.set("task_id", params.taskId);
+  if (params?.sessionId) query.set("session_id", params.sessionId);
   if (params?.missingOnly) query.set("missing_only", "true");
   if (params?.limit != null) query.set("limit", String(params.limit));
   if (params?.offset != null) query.set("offset", String(params.offset));

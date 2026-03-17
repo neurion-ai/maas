@@ -163,8 +163,8 @@ export function OverviewPage() {
               <h2>Brownfield onboarding</h2>
               <p>Imported repo understanding must be explicitly reviewed before the seeded work is released.</p>
             </header>
-            <div className="data-list">
-              <div className="data-list__item">
+              <div className="data-list">
+                <div className="data-list__item">
                 <div>
                   <strong>Status</strong>
                   <p>{overview.onboarding.review_status.replaceAll("_", " ")}</p>
@@ -174,19 +174,41 @@ export function OverviewPage() {
                   <span>{overview.onboarding.discovery_summary.total_files ?? 0} files scanned</span>
                 </div>
               </div>
-              <div className="data-list__item">
-                <div>
-                  <strong>Discovery summary</strong>
-                  <p>
-                    {overview.onboarding.discovery_summary.package_managers?.join(", ") || "no package manager detected"}
+                <div className="data-list__item">
+                  <div>
+                    <strong>Discovery summary</strong>
+                    <p>
+                      {overview.onboarding.discovery_summary.package_managers?.join(", ") || "no package manager detected"}
                   </p>
                 </div>
-                <div className="data-list__meta">
-                  <span>{overview.onboarding.pending_gated_tasks} gated tasks</span>
-                  <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
+                  <div className="data-list__meta">
+                    <span>{overview.onboarding.pending_gated_tasks} gated tasks</span>
+                    <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
+                  </div>
                 </div>
-              </div>
-              {overview.onboarding.reviewed_at ? (
+                {(overview.onboarding.discovery_summary.workflow_labels?.length ?? 0) > 0 ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Imported workflows</strong>
+                      <p>{overview.onboarding.discovery_summary.workflow_labels?.join(", ")}</p>
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.discovery_summary.workflow_labels?.length ?? 0} signals</span>
+                    </div>
+                  </div>
+                ) : null}
+                {(overview.onboarding.discovery_summary.repo_areas?.length ?? 0) > 0 ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Imported repo areas</strong>
+                      <p>{overview.onboarding.discovery_summary.repo_areas?.join(", ")}</p>
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.discovery_summary.repo_areas?.length ?? 0} areas</span>
+                    </div>
+                  </div>
+                ) : null}
+                {overview.onboarding.reviewed_at ? (
                 <div className="data-list__item">
                   <div>
                     <strong>Last decision</strong>

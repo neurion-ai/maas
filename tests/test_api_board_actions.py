@@ -15,10 +15,25 @@ class BoardApiActionsTest(unittest.TestCase):
         import os
 
         os.makedirs(os.path.join(project_root, "src"), exist_ok=True)
+        os.makedirs(os.path.join(project_root, "tests"), exist_ok=True)
         with open(os.path.join(project_root, "README.md"), "w", encoding="utf-8") as handle:
             handle.write("# Imported Project\n")
+        with open(os.path.join(project_root, "pyproject.toml"), "w", encoding="utf-8") as handle:
+            handle.write(
+                """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+            )
+        with open(os.path.join(project_root, "Makefile"), "w", encoding="utf-8") as handle:
+            handle.write("test:\n\tpytest\n")
         with open(os.path.join(project_root, "src", "app.py"), "w", encoding="utf-8") as handle:
             handle.write("print('hello')\n")
+        with open(os.path.join(project_root, "tests", "test_app.py"), "w", encoding="utf-8") as handle:
+            handle.write("def test_ok():\n    assert True\n")
 
     def _update_recovery_config(self, project_root, **recovery_updates):
         connection = connect(project_paths(project_root))
@@ -147,7 +162,7 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(config["onboarding"]["review_status"], "approved")
             self.assertEqual(released_tasks, 0)
             self.assertEqual(open_alerts, 0)
-            self.assertEqual(ready_or_planned, 4)
+            self.assertEqual(ready_or_planned, 6)
 
     def test_rejecting_brownfield_review_keeps_imported_tasks_gated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -194,7 +209,7 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(updated_review_task["status"], "planned")
             self.assertEqual(updated_review_task["review_state"], "changes_requested")
             self.assertEqual(config["onboarding"]["review_status"], "changes_requested")
-            self.assertEqual(gated_tasks, 4)
+            self.assertEqual(gated_tasks, 6)
 
     def test_pause_resume_and_reprioritize_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

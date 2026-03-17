@@ -82,6 +82,13 @@ NOTABLE_PATHS = {
     ".github/workflows": "github_actions",
 }
 
+WORKFLOW_SIGNAL_LABELS = {
+    "python_script": "python script",
+    "npm_script": "npm script",
+    "make_target": "make target",
+    "github_actions": "GitHub Actions workflow",
+}
+
 
 def default_project_name(project_root):
     return os.path.basename(os.path.abspath(project_root)) or "maas-project"
@@ -261,6 +268,8 @@ def discover_brownfield_project(project_root):
         discovery["package_managers"].append("go.mod")
     if os.path.exists(os.path.join(project_root, "requirements.txt")):
         discovery["package_managers"].append("requirements.txt")
+    if os.path.exists(os.path.join(project_root, ".github", "workflows")):
+        discovery["workflow_signals"].append({"kind": "github_actions", "name": "ci"})
 
     makefile_path = os.path.join(project_root, "Makefile")
     if os.path.exists(makefile_path):
@@ -406,6 +415,21 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
     )
 
 
+def build_discovery_summary(discovery):
+    if not discovery:
+        return {}
+    return {
+        "primary_language": discovery["primary_language"],
+        "total_files": discovery["total_files"],
+        "package_managers": discovery["package_managers"],
+        "workflow_labels": [
+            "{kind}:{name}".format(kind=item["kind"], name=item["name"])
+            for item in discovery["workflow_signals"][:5]
+        ],
+        "repo_areas": [item["name"] for item in discovery["top_level_dirs"][:4]],
+    }
+
+
 def build_greenfield_task_specs():
     return [
         ("planned", "Define project workspace contracts", "agent_researcher", 80, "Design the stable `project.yaml` and `.maas/` workspace contracts.", None, 0),
@@ -417,13 +441,26 @@ def build_greenfield_task_specs():
     ]
 
 
+def _operator_workflow_signals(discovery):
+    operator_signals = []
+    seen = set()
+    for item in discovery.get("workflow_signals", []):
+        if item["kind"] not in WORKFLOW_SIGNAL_LABELS:
+            continue
+        key = (item["kind"], item["name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        operator_signals.append(item)
+    return operator_signals[:3]
+
+
 def build_brownfield_task_specs(discovery):
-    workflow_text = ", ".join(discovery["scripts"]) or "manual repo command review"
     top_dirs = ", ".join(item["name"] for item in discovery["top_level_dirs"]) or "the repository root"
     docs = ", ".join(discovery["docs_roots"]) or "README and inline project docs"
     tests = ", ".join(discovery["test_roots"]) or "discovered validation entrypoints"
     primary_language = discovery["primary_language"]
-    return [
+    task_specs = [
         (
             "review",
             BROWNFIELD_REVIEW_TASK_TITLE,
@@ -433,24 +470,59 @@ def build_brownfield_task_specs(discovery):
             "awaiting_review",
             0,
         ),
-        (
-            "blocked",
-            "Validate discovered workflow entrypoints",
-            "agent_researcher",
-            92,
-            "Confirm the discovered commands and automation paths: {workflow_text}.".format(workflow_text=workflow_text),
-            BROWNFIELD_PENDING_REVIEW_STATE,
-            0,
-        ),
-        (
-            "blocked",
-            "Map high-signal repository areas into MAAS ownership",
-            "agent_allocator",
-            88,
-            "Turn the highest-signal directories into operator-visible work areas: {top_dirs}.".format(top_dirs=top_dirs),
-            BROWNFIELD_PENDING_REVIEW_STATE,
-            0,
-        ),
+    ]
+    workflow_priority = 94
+    for signal in _operator_workflow_signals(discovery):
+        task_specs.append(
+            (
+                "blocked",
+                "Validate imported workflow: {name}".format(name=signal["name"]),
+                "agent_researcher",
+                workflow_priority,
+                "Confirm the imported {kind} `{name}` matches the existing repo workflow and acceptance path.".format(
+                    kind=WORKFLOW_SIGNAL_LABELS[signal["kind"]],
+                    name=signal["name"],
+                ),
+                BROWNFIELD_PENDING_REVIEW_STATE,
+                0,
+            )
+        )
+        workflow_priority -= 2
+
+    repo_area_priority = 88
+    for item in discovery.get("top_level_dirs", [])[:2]:
+        task_specs.append(
+            (
+                "blocked",
+                "Map imported repo area: {name}".format(name=item["name"]),
+                "agent_allocator",
+                repo_area_priority,
+                "Turn the imported repo area `{name}` into an operator-visible ownership/workflow area.".format(
+                    name=item["name"]
+                ),
+                BROWNFIELD_PENDING_REVIEW_STATE,
+                0,
+            )
+        )
+        repo_area_priority -= 2
+
+    if discovery.get("docs_roots") or discovery.get("test_roots"):
+        task_specs.append(
+            (
+                "blocked",
+                "Import discovered documentation and test conventions",
+                "agent_researcher",
+                82,
+                "Translate the discovered docs ({docs}) and tests ({tests}) into explicit operator-reviewed workflows.".format(
+                    docs=docs,
+                    tests=tests,
+                ),
+                BROWNFIELD_PENDING_REVIEW_STATE,
+                0,
+            )
+        )
+
+    task_specs.append(
         (
             "blocked",
             "Align runtime and provider settings with existing tooling",
@@ -461,20 +533,35 @@ def build_brownfield_task_specs(discovery):
             ),
             BROWNFIELD_PENDING_REVIEW_STATE,
             0,
-        ),
-        (
-            "blocked",
-            "Import documentation and test conventions into the working backlog",
-            "agent_researcher",
-            80,
-            "Translate the discovered docs ({docs}) and tests ({tests}) into explicit operator-reviewed workflows.".format(
-                docs=docs,
-                tests=tests,
-            ),
-            BROWNFIELD_PENDING_REVIEW_STATE,
-            0,
-        ),
-    ]
+        )
+    )
+
+    if len(task_specs) == 1:
+        task_specs.extend(
+            [
+                (
+                    "blocked",
+                    "Validate imported workflow entrypoints",
+                    "agent_researcher",
+                    92,
+                    "Confirm the imported repo workflow surfaces before wider automation starts.",
+                    BROWNFIELD_PENDING_REVIEW_STATE,
+                    0,
+                ),
+                (
+                    "blocked",
+                    "Map imported repository areas",
+                    "agent_allocator",
+                    88,
+                    "Turn the imported repository structure ({top_dirs}) into operator-visible work areas.".format(
+                        top_dirs=top_dirs
+                    ),
+                    BROWNFIELD_PENDING_REVIEW_STATE,
+                    0,
+                ),
+            ]
+        )
+    return task_specs
 
 
 def seed_project(connection, config, mode="greenfield", discovery=None):
@@ -682,13 +769,7 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
         description=description or "Board-first MAAS workspace",
         project_type=project_type or "custom",
         onboarding_mode=resolved_mode,
-        discovery_summary={
-            "primary_language": discovery["primary_language"],
-            "total_files": discovery["total_files"],
-            "package_managers": discovery["package_managers"],
-        }
-        if discovery
-        else None,
+        discovery_summary=build_discovery_summary(discovery),
     )
     save_project_config(paths.project_config, config)
     with open(paths.understanding_path, "w", encoding="utf-8") as handle:

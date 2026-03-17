@@ -117,6 +117,8 @@ export interface OverviewOnboarding {
     primary_language?: string;
     total_files?: number;
     package_managers?: string[];
+    workflow_labels?: string[];
+    repo_areas?: string[];
   };
   review_task_id?: string | null;
   review_task_status?: string | null;

@@ -37,7 +37,10 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     mode: "greenfield",
     review_status: "not_applicable",
     review_required: false,
-    discovery_summary: {},
+    discovery_summary: {
+      workflow_labels: [],
+      repo_areas: []
+    },
     review_task_id: null,
     review_task_status: null,
     review_task_review_state: null,

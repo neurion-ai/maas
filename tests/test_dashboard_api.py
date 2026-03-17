@@ -71,10 +71,14 @@ class DashboardApiTest(unittest.TestCase):
             self.assertEqual(overview_payload["onboarding"]["mode"], "brownfield")
             self.assertEqual(overview_payload["onboarding"]["review_status"], "review_pending")
             self.assertTrue(overview_payload["onboarding"]["review_required"])
-            self.assertEqual(overview_payload["onboarding"]["pending_gated_tasks"], 4)
+            self.assertEqual(overview_payload["onboarding"]["pending_gated_tasks"], 1)
             self.assertEqual(
                 overview_payload["onboarding"]["discovery_summary"]["primary_language"],
                 "python",
+            )
+            self.assertIn(
+                "src",
+                overview_payload["onboarding"]["discovery_summary"]["repo_areas"],
             )
 
     def test_overview_repeated_failure_summary_is_not_capped_to_top_five(self):

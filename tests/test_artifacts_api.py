@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from maas.api import create_app
 from maas.db import connect, project_paths
+from maas.services.artifacts import ARTIFACT_PREVIEW_MAX_BYTES
 from maas.services.bootstrap import bootstrap_project
 from maas.services.failure_memory import restore_quarantined_session_artifacts
 from maas.services.lifecycle import end_session, produce_artifact, start_session
@@ -1122,6 +1123,107 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertEqual(payload["reason"], "preview_unavailable")
             self.assertIsNone(payload["unified_diff"])
             self.assertEqual(payload["right"]["preview"]["reason"], "binary_file")
+
+    def test_artifact_compare_api_marks_preview_truncation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Compare Truncation Test",
+                description="Artifacts compare truncation test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_compare_truncated", project_id, "Artifact Compare Truncated Agent"),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact compare truncation task', '', 'ready', 60, '[]')
+                    """,
+                    ("task_artifact_compare_truncated", project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_compare_truncated",
+                    "agent_artifact_compare_truncated",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                left_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_compare_truncated",
+                    task_id="task_artifact_compare_truncated",
+                    provider_type="python_script",
+                    status_message="Starting left truncated artifact",
+                )
+                prefix = "a" * ARTIFACT_PREVIEW_MAX_BYTES
+                left_path = os.path.join(result["paths"].artifacts_dir, "compare-truncated-left.txt")
+                with open(left_path, "w", encoding="utf-8") as handle:
+                    handle.write(prefix + "left-tail\n")
+                left_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=left_session_id,
+                    task_id="task_artifact_compare_truncated",
+                    artifact_type="note",
+                    path=left_path,
+                )
+                end_session(connection, left_session_id, "completed", "Completed left truncated artifact")
+                connection.execute(
+                    "UPDATE tasks SET status = 'ready', review_state = NULL WHERE task_id = 'task_artifact_compare_truncated'"
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_compare_truncated",
+                    "agent_artifact_compare_truncated",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+
+                right_session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_compare_truncated",
+                    task_id="task_artifact_compare_truncated",
+                    provider_type="python_script",
+                    status_message="Starting right truncated artifact",
+                )
+                right_path = os.path.join(result["paths"].artifacts_dir, "compare-truncated-right.txt")
+                with open(right_path, "w", encoding="utf-8") as handle:
+                    handle.write(prefix + "right-tail\n")
+                right_artifact_id = produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=right_session_id,
+                    task_id="task_artifact_compare_truncated",
+                    artifact_type="note",
+                    path=right_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            payload = TestClient(create_app(tmpdir)).get(
+                f"/api/artifacts/{left_artifact_id}/compare/{right_artifact_id}"
+            ).json()
+
+            self.assertTrue(payload["comparable"])
+            self.assertTrue(payload["truncated"])
+            self.assertEqual(payload["unified_diff"], "")
 
     def test_artifacts_api_rejects_invalid_offset(self):
         with tempfile.TemporaryDirectory() as tmpdir:

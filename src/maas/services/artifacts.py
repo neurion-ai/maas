@@ -610,12 +610,12 @@ def fetch_artifact_comparison(connection, project_paths, left_artifact_id, right
         tofile=right_detail["file_name"],
         lineterm="",
     )
-    diff_text, truncated = _truncate_text("\n".join(diff_lines), ARTIFACT_COMPARE_MAX_CHARS)
+    diff_text, diff_truncated = _truncate_text("\n".join(diff_lines), ARTIFACT_COMPARE_MAX_CHARS)
     return {
         "left": left_detail,
         "right": right_detail,
         "comparable": True,
         "reason": None,
         "unified_diff": diff_text,
-        "truncated": truncated,
+        "truncated": bool(left_preview.get("truncated") or right_preview.get("truncated") or diff_truncated),
     }

@@ -226,6 +226,8 @@ export function ArtifactsPage() {
   const hasNextPage = (artifacts?.offset ?? 0) + visibleItems.length < (artifacts?.filtered_count ?? 0);
   const detailArtifact = selectedArtifact;
   const downloadHref = detailArtifact ? artifactDownloadUrl(detailArtifact.artifact_id) : null;
+  const taskExportHref = detailArtifact?.task_export_url ?? null;
+  const sessionExportHref = detailArtifact?.session_export_url ?? null;
   const hasLineageFilter = Boolean(taskFilter || sessionFilter);
 
   function applyTaskFilter(nextTaskId?: string | null) {
@@ -561,6 +563,26 @@ export function ArtifactsPage() {
                       rel="noreferrer"
                     >
                       Download
+                    </a>
+                  ) : null}
+                  {taskExportHref ? (
+                    <a
+                      className="task-action task-action--secondary artifact-download-link"
+                      href={taskExportHref}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Export task bundle
+                    </a>
+                  ) : null}
+                  {sessionExportHref ? (
+                    <a
+                      className="task-action task-action--secondary artifact-download-link"
+                      href={sessionExportHref}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Export session bundle
                     </a>
                   ) : null}
                 </div>

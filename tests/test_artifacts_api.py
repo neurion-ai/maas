@@ -1,6 +1,8 @@
+import json
 import os
 import tempfile
 import unittest
+import zipfile
 
 from fastapi.testclient import TestClient
 
@@ -245,6 +247,125 @@ class ArtifactsApiTest(unittest.TestCase):
             download_response = client.get(detail_payload["download_url"])
             self.assertEqual(download_response.status_code, 200)
             self.assertEqual(download_response.text, artifact_body)
+            self.assertEqual(detail_payload["task_export_url"], f"/api/artifacts/export?task_id={task_id}")
+            self.assertEqual(detail_payload["session_export_url"], f"/api/artifacts/export?session_id={session_id}")
+
+    def test_artifact_export_api_returns_task_bundle_with_manifest(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Export Test",
+                description="Artifacts export test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_export", project_id, "Artifact Export Agent"),
+                )
+                task_id = "task_artifact_export"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact export task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_export",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_export",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting artifact export test",
+                )
+                exportable_path = os.path.join(result["paths"].artifacts_dir, "exportable.txt")
+                with open(exportable_path, "w", encoding="utf-8") as handle:
+                    handle.write("export me\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=exportable_path,
+                )
+                missing_path = os.path.join(result["paths"].artifacts_dir, "missing-export.txt")
+                with open(missing_path, "w", encoding="utf-8") as handle:
+                    handle.write("gone\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="provider_report",
+                    path=missing_path,
+                )
+                os.remove(missing_path)
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = TestClient(create_app(tmpdir)).get(f"/api/artifacts/export?task_id={task_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], "application/zip")
+            self.assertIn(f'task-{task_id}-artifacts.zip', response.headers["content-disposition"])
+
+            with tempfile.NamedTemporaryFile(suffix=".zip") as handle:
+                handle.write(response.content)
+                handle.flush()
+                with zipfile.ZipFile(handle.name) as archive:
+                    names = set(archive.namelist())
+                    self.assertIn("manifest.json", names)
+                    exported_artifacts = [name for name in names if name.startswith("artifacts/")]
+                    self.assertEqual(len(exported_artifacts), 1)
+                    manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+
+            self.assertEqual(manifest["scope_type"], "task")
+            self.assertEqual(manifest["scope_id"], task_id)
+            self.assertEqual(manifest["artifact_count"], 2)
+            included_entries = [entry for entry in manifest["artifacts"] if entry["included"]]
+            skipped_entries = [entry for entry in manifest["artifacts"] if not entry["included"]]
+            self.assertEqual(len(included_entries), 1)
+            self.assertEqual(included_entries[0]["file_name"], "exportable.txt")
+            self.assertEqual(len(skipped_entries), 1)
+            self.assertEqual(skipped_entries[0]["reason"], "missing_file")
+
+    def test_artifact_export_api_rejects_invalid_scope(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Artifacts Export Scope Test",
+                description="Artifacts export scope test",
+                project_type="custom",
+            )
+            client = TestClient(create_app(tmpdir))
+
+            response = client.get("/api/artifacts/export")
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "exactly one export scope is required")
+
+            response = client.get("/api/artifacts/export?task_id=t1&session_id=s1")
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "exactly one export scope is required")
 
     def test_artifact_detail_api_marks_missing_preview_unavailable(self):
         with tempfile.TemporaryDirectory() as tmpdir:

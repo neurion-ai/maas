@@ -295,15 +295,17 @@ def reject_escalation(connection, escalation_id, actor_id, resolution_note=""):
     return {"escalation_id": escalation_id, "status": "rejected"}
 
 
-def count_open_escalations(connection):
-    return connection.execute(
-        "SELECT COUNT(*) AS count FROM escalation_queue WHERE status = 'open'"
-    ).fetchone()["count"]
+def count_open_escalations(connection, project_id=None):
+    query = "SELECT COUNT(*) AS count FROM escalation_queue WHERE status = 'open'"
+    params = ()
+    if project_id is not None:
+        query += " AND project_id = ?"
+        params = (project_id,)
+    return connection.execute(query, params).fetchone()["count"]
 
 
-def fetch_escalations(connection):
-    rows = connection.execute(
-        """
+def fetch_escalations(connection, project_id=None):
+    query = """
         SELECT
             escalation_queue.escalation_id,
             escalation_queue.project_id,
@@ -323,11 +325,17 @@ def fetch_escalations(connection):
         FROM escalation_queue
         LEFT JOIN agents requester ON requester.agent_id = escalation_queue.requested_by
         LEFT JOIN agents resolver ON resolver.agent_id = escalation_queue.resolved_by
+    """
+    params = []
+    if project_id is not None:
+        query += "\nWHERE escalation_queue.project_id = ?"
+        params.append(project_id)
+    query += """
         ORDER BY
             CASE escalation_queue.status WHEN 'open' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
             escalation_queue.created_at DESC
-        """
-    ).fetchall()
+    """
+    rows = connection.execute(query, tuple(params)).fetchall()
     grouped = {"open": [], "approved": [], "rejected": []}
     for row in rows:
         escalation = dict(row)
@@ -337,7 +345,7 @@ def fetch_escalations(connection):
         "escalations": [dict(row) for row in rows],
         "grouped": grouped,
         "summary": {
-            "open": count_open_escalations(connection),
+            "open": count_open_escalations(connection, project_id=project_id),
             "approved": len(grouped.get("approved", [])),
             "rejected": len(grouped.get("rejected", [])),
         },

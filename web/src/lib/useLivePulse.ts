@@ -1,4 +1,5 @@
 import { createContext, createElement, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { appendProjectScope, getSelectedProjectId, subscribeProjectScope } from "./projectScope";
 
 type LiveTransport = "websocket" | "sse" | "polling";
 
@@ -10,15 +11,24 @@ interface LivePulseContextValue {
 
 const LivePulseContext = createContext<LivePulseContextValue | null>(null);
 
-function buildLiveWebsocketUrl() {
+function buildLiveWebsocketUrl(projectId: string | null) {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${protocol}://${window.location.host}/api/live/ws`;
+  const baseUrl = `${protocol}://${window.location.host}/api/live/ws`;
+  if (!projectId) {
+    return baseUrl;
+  }
+  const url = new URL(baseUrl);
+  url.searchParams.set("project_id", projectId);
+  return url.toString();
 }
 
 export function LivePulseProvider({ children }: { children: ReactNode }) {
   const [pulse, setPulse] = useState(0);
   const [transport, setTransport] = useState<LiveTransport>("polling");
   const [connected, setConnected] = useState(false);
+  const [projectId, setProjectId] = useState<string | null>(() => getSelectedProjectId());
+
+  useEffect(() => subscribeProjectScope(setProjectId), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,7 +67,7 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
       try {
         setTransport("websocket");
         setConnected(false);
-        socket = new WebSocket(buildLiveWebsocketUrl());
+        socket = new WebSocket(buildLiveWebsocketUrl(projectId));
         socket.onopen = () => {
           if (cancelled) {
             return;
@@ -101,7 +111,7 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
       try {
         setTransport("sse");
         setConnected(false);
-        source = new EventSource("/api/live/stream");
+        source = new EventSource(appendProjectScope("/api/live/stream", projectId));
         source.onopen = () => {
           if (cancelled) {
             return;
@@ -129,7 +139,7 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
       clearSseSource();
       stopPollingFallback();
     };
-  }, []);
+  }, [projectId]);
 
   const value = useMemo(
     () => ({

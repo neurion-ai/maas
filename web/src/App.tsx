@@ -8,9 +8,12 @@ import { EscalationsPage } from "./pages/EscalationsPage";
 import { FailuresPage } from "./pages/FailuresPage";
 import { GoalTreePage } from "./pages/GoalTreePage";
 import { LivePulseProvider, useLiveStatus } from "./lib/useLivePulse";
+import { fetchProjects } from "./lib/controlRoomApi";
+import { getSelectedProjectId, setSelectedProjectId } from "./lib/projectScope";
 import { OverviewPage } from "./pages/OverviewPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { RecoveryPage } from "./pages/RecoveryPage";
+import type { ProjectSummary } from "./types";
 
 type View =
   | "overview"
@@ -46,7 +49,35 @@ function getInitialView(): View {
 
 function AppShell() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedProjectId, setSelectedProjectIdState] = useState<string | null>(getSelectedProjectId);
   const { connected, transport } = useLiveStatus();
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadProjects() {
+      const payload = await fetchProjects();
+      if (!mounted) {
+        return;
+      }
+      setProjects(payload.projects);
+      const existingSelection = getSelectedProjectId();
+      const nextSelection =
+        payload.projects.find((project) => project.project_id === existingSelection)?.project_id ??
+        payload.projects[0]?.project_id ??
+        null;
+      if (nextSelection !== existingSelection) {
+        setSelectedProjectId(nextSelection);
+      }
+      setSelectedProjectIdState(nextSelection);
+    }
+
+    void loadProjects();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     window.location.hash = activeView;
@@ -87,6 +118,26 @@ function AppShell() {
             <span className={`status-chip__dot ${connected ? "is-live" : transport === "polling" ? "is-warn" : ""}`} />
             {liveTransportLabel}
           </div>
+          {projects.length > 0 ? (
+            <label className="status-chip" htmlFor="project-scope-select">
+              <span>Project</span>
+              <select
+                id="project-scope-select"
+                value={selectedProjectId ?? ""}
+                onChange={(event) => {
+                  const nextProjectId = event.target.value || null;
+                  setSelectedProjectId(nextProjectId);
+                  setSelectedProjectIdState(nextProjectId);
+                }}
+              >
+                {projects.map((project) => (
+                  <option key={project.project_id} value={project.project_id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
         </div>
         <nav className="app-nav" aria-label="MAAS views">
           {VIEWS.map((view) => (

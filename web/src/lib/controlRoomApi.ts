@@ -14,6 +14,7 @@ import type {
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  ProjectsResponse,
   ProvidersResponse,
   RecoveryPolicyResponse,
   QuarantineQueueResponse,
@@ -23,6 +24,7 @@ import type {
   RestoreQuarantineEntryResponse,
   SupervisorRunResponse
 } from "../types";
+import { appendProjectScope, getSelectedProjectId } from "./projectScope";
 
 const lastSuccessfulResponses = new Map<string, unknown>();
 
@@ -440,24 +442,29 @@ async function fetchJson<T>(
   signal?: AbortSignal,
   onFallback?: () => void
 ): Promise<T> {
+  const scopedPath = appendProjectScope(path);
   try {
-    const response = await fetch(path, { signal });
+    const response = await fetch(scopedPath, { signal });
     if (!response.ok) {
       throw new Error(`Unexpected status: ${response.status}`);
     }
     const payload = (await response.json()) as T;
-    lastSuccessfulResponses.set(path, payload);
+    lastSuccessfulResponses.set(scopedPath, payload);
     return payload;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw error;
     }
     onFallback?.();
-    if (lastSuccessfulResponses.has(path)) {
-      return lastSuccessfulResponses.get(path) as T;
+    if (lastSuccessfulResponses.has(scopedPath)) {
+      return lastSuccessfulResponses.get(scopedPath) as T;
     }
     return fallback;
   }
+}
+
+export function fetchProjects() {
+  return fetchJson<ProjectsResponse>("/api/projects", { projects: [] });
 }
 
 export function fetchOverview() {
@@ -501,7 +508,7 @@ export function fetchArtifacts(
   if (params?.missingOnly) query.set("missing_only", "true");
   if (params?.limit != null) query.set("limit", String(params.limit));
   if (params?.offset != null) query.set("offset", String(params.offset));
-  const path = query.size > 0 ? `/api/artifacts?${query.toString()}` : "/api/artifacts";
+  const path = appendProjectScope(query.size > 0 ? `/api/artifacts?${query.toString()}` : "/api/artifacts");
   return fetchJson<ArtifactsResponse>(path, ARTIFACTS_FALLBACK, signal, onFallback);
 }
 
@@ -659,7 +666,8 @@ export async function runProviderTask(providerId: string, projectId: string, age
 export async function setProviderMode(providerId: string, mode: string) {
   const payload = await postJson(`/api/providers/${providerId}/actions/set-mode`, {
     actor_id: "agent_allocator",
-    mode
+    mode,
+    project_id: getSelectedProjectId()
   });
   return payload;
 }
@@ -667,7 +675,8 @@ export async function setProviderMode(providerId: string, mode: string) {
 export async function setProviderSettings(providerId: string, settings: Record<string, string | number>) {
   const payload = await postJson(`/api/providers/${providerId}/actions/set-settings`, {
     actor_id: "agent_allocator",
-    settings
+    settings,
+    project_id: getSelectedProjectId()
   });
   return payload;
 }
@@ -677,7 +686,8 @@ export async function setRecoveryPolicy(
 ) {
   const payload = await postJson("/api/recovery-policy/actions/set", {
     actor_id: "agent_allocator",
-    policy
+    policy,
+    project_id: getSelectedProjectId()
   });
   return payload;
 }

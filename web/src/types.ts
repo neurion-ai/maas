@@ -109,6 +109,21 @@ export interface OverviewProject {
   project_type: string;
 }
 
+export interface ProjectSummary {
+  project_id: string;
+  name: string;
+  description: string;
+  project_type: string;
+  created_at: string;
+  task_count: number;
+  agent_count: number;
+  open_alert_count: number;
+}
+
+export interface ProjectsResponse {
+  projects: ProjectSummary[];
+}
+
 export interface OverviewOnboarding {
   mode: string;
   review_status: string;

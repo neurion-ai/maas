@@ -21,6 +21,39 @@ class ProviderRuntimeFailure(RuntimeError):
         self.details = details
 
 
+SAFE_RUNTIME_ENV_KEYS = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "PATH",
+    "SHELL",
+    "SYSTEMROOT",
+    "TERM",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "USER",
+    "WINDIR",
+    "PATHEXT",
+    "COMSPEC",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_DATA_HOME",
+)
+
+PROVIDER_RUNTIME_ENV_KEYS = {
+    "claude_code": ("ANTHROPIC_API_KEY",),
+    "openai_codex": ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORGANIZATION", "OPENAI_PROJECT_ID"),
+}
+
+
 def _task_title(connection, task_id):
     row = connection.execute("SELECT title FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     return row["title"] if row else task_id
@@ -95,6 +128,27 @@ def _provider_activity_details(provider, phase, **extra):
     return details
 
 
+def _runtime_env(project_paths, provider):
+    runtime_tmp_dir = os.path.join(project_paths.runtime_dir, "tmp")
+    os.makedirs(runtime_tmp_dir, exist_ok=True)
+    env = {}
+    for key in SAFE_RUNTIME_ENV_KEYS:
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    for key in PROVIDER_RUNTIME_ENV_KEYS.get(provider["id"], ()):
+        value = os.environ.get(key)
+        if value:
+            env[key] = value
+    env["MAAS_PROJECT_ROOT"] = project_paths.root
+    env["MAAS_RUNTIME_ROOT"] = project_paths.runtime_dir
+    env["MAAS_ARTIFACT_ROOT"] = project_paths.artifacts_dir
+    env["TMPDIR"] = runtime_tmp_dir
+    env["TMP"] = runtime_tmp_dir
+    env["TEMP"] = runtime_tmp_dir
+    return env
+
+
 def _log_provider_phase(connection, project_id, agent_id, task_id, provider, action, phase, description, **details):
     log_activity(
         connection,
@@ -165,6 +219,7 @@ def _codex_cli_activity_details(project_paths, provider_settings, task_prompt):
         "command": command,
         "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
         "external_runtime": "codex_cli",
+        "environment_scope": "sanitized",
     }
 
 
@@ -190,11 +245,13 @@ def _claude_cli_activity_details(project_paths, provider_settings, task_prompt):
         "command": command,
         "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
         "external_runtime": "claude_cli",
+        "environment_scope": "sanitized",
     }
 
 
 def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
+    runtime_env = _runtime_env(project_paths, {"id": "openai_codex"})
     os.makedirs(project_paths.runtime_dir, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         prefix="openai-codex-",
@@ -214,6 +271,7 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
                 text=True,
                 timeout=timeout_seconds,
                 check=False,
+                env=runtime_env,
             )
         except subprocess.TimeoutExpired as exc:
             raise ProviderRuntimeFailure(
@@ -256,6 +314,7 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
 
 def _run_claude_code_cli(project_paths, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
+    runtime_env = _runtime_env(project_paths, {"id": "claude_code"})
     command = _claude_cli_command(project_paths, provider_settings, task_prompt)
     try:
         result = subprocess.run(
@@ -265,6 +324,7 @@ def _run_claude_code_cli(project_paths, provider_settings, task_prompt):
             text=True,
             timeout=timeout_seconds,
             check=False,
+            env=runtime_env,
         )
     except subprocess.TimeoutExpired as exc:
         raise ProviderRuntimeFailure(

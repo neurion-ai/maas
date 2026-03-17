@@ -2,6 +2,8 @@
 
 from copy import deepcopy
 import json
+import os
+import re
 
 from maas.config import DEFAULT_PROVIDER_SETTINGS
 from maas.ids import generate_id
@@ -16,6 +18,10 @@ STANDARD_PROVIDER_LIFECYCLE_PHASES = [
     "artifact_recorded",
     "session_completed",
 ]
+
+SAFE_CLAUDE_PERMISSION_MODES = ("acceptEdits",)
+SAFE_CODEX_SANDBOX_MODES = ("read-only", "workspace-write")
+SAFE_CLI_COMMAND_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 PROVIDER_REGISTRY = {
@@ -156,6 +162,75 @@ def _normalize_string_setting(provider_name, setting_name, value, warnings, requ
     return normalized_value
 
 
+def _normalize_cli_command(provider_name, value, warnings):
+    command = _normalize_string_setting(provider_name, "cli_command", value, warnings, required=True)
+    if not command:
+        return ""
+    if os.path.sep in command or (os.path.altsep and os.path.altsep in command):
+        warnings.append("{0} cli_command must be an executable name, not a path.".format(provider_name))
+        return ""
+    if any(character.isspace() for character in command):
+        warnings.append("{0} cli_command must be a single executable name.".format(provider_name))
+        return ""
+    if not SAFE_CLI_COMMAND_RE.match(command):
+        warnings.append(
+            "{0} cli_command may only contain letters, numbers, dot, dash, and underscore.".format(provider_name)
+        )
+        return ""
+    return command
+
+
+def _normalize_claude_permission_mode(provider_name, value, warnings):
+    permission_mode = _normalize_string_setting(provider_name, "permission_mode", value, warnings)
+    if not permission_mode:
+        return ""
+    if permission_mode not in SAFE_CLAUDE_PERMISSION_MODES:
+        warnings.append(
+            "{0} permission_mode must be one of: {1}.".format(
+                provider_name,
+                ", ".join(SAFE_CLAUDE_PERMISSION_MODES),
+            )
+        )
+        return ""
+    return permission_mode
+
+
+def _normalize_codex_sandbox(provider_name, value, warnings):
+    sandbox = _normalize_string_setting(provider_name, "sandbox", value, warnings)
+    if not sandbox:
+        return ""
+    if sandbox not in SAFE_CODEX_SANDBOX_MODES:
+        warnings.append(
+            "{0} sandbox must be one of: {1}.".format(
+                provider_name,
+                ", ".join(SAFE_CODEX_SANDBOX_MODES),
+            )
+        )
+        return ""
+    return sandbox
+
+
+def _provider_guardrails(provider_id):
+    guardrails = [
+        "CLI commands are restricted to executable names, not arbitrary paths.",
+        "Runtime artifacts stay inside .maas/artifacts and runtime temp files stay inside .maas/runtime.",
+        "Live provider subprocesses run with a sanitized MAAS-managed environment.",
+    ]
+    if provider_id == "claude_code":
+        guardrails.append(
+            "Claude Code live mode only supports the safe permission mode: {0}.".format(
+                ", ".join(SAFE_CLAUDE_PERMISSION_MODES)
+            )
+        )
+    if provider_id == "openai_codex":
+        guardrails.append(
+            "Codex live mode only supports the safe sandboxes: {0}.".format(
+                ", ".join(SAFE_CODEX_SANDBOX_MODES)
+            )
+        )
+    return guardrails
+
+
 def _mark_provider_misconfigured(provider, rules):
     provider["status"] = "misconfigured"
     provider["execution_mode"] = "unavailable"
@@ -182,6 +257,7 @@ def _resolve_provider_status(provider, config):
         for key in rules["runtime_controls"]
     }
     provider["config_warnings"] = warnings
+    provider["guardrails"] = _provider_guardrails(provider["id"])
     provider["is_runnable"] = True
 
     if warnings:
@@ -200,13 +276,7 @@ def _resolve_provider_status(provider, config):
     live_mode = rules["live_mode"]
     if live_mode and configured_mode == live_mode:
         timeout_value = _validate_timeout(provider["name"], merged_settings.get("timeout_seconds"), warnings)
-        cli_command = _normalize_string_setting(
-            provider["name"],
-            "cli_command",
-            merged_settings.get("cli_command"),
-            warnings,
-            required=True,
-        )
+        cli_command = _normalize_cli_command(provider["name"], merged_settings.get("cli_command"), warnings)
         merged_settings["model"] = _normalize_string_setting(
             provider["name"],
             "model",
@@ -214,16 +284,14 @@ def _resolve_provider_status(provider, config):
             warnings,
         )
         if "permission_mode" in rules["runtime_controls"]:
-            merged_settings["permission_mode"] = _normalize_string_setting(
+            merged_settings["permission_mode"] = _normalize_claude_permission_mode(
                 provider["name"],
-                "permission_mode",
                 merged_settings.get("permission_mode"),
                 warnings,
             )
         if "sandbox" in rules["runtime_controls"]:
-            merged_settings["sandbox"] = _normalize_string_setting(
+            merged_settings["sandbox"] = _normalize_codex_sandbox(
                 provider["name"],
-                "sandbox",
                 merged_settings.get("sandbox"),
                 warnings,
             )
@@ -587,6 +655,52 @@ def _normalize_provider_setting_value(provider_name, setting_name, value):
         if timeout_value <= 0:
             raise ValueError("{0} timeout_seconds must be greater than zero.".format(provider_name))
         return timeout_value
+
+    if setting_name == "cli_command":
+        if value is None or not isinstance(value, str):
+            raise ValueError("{0} cli_command must be a string.".format(provider_name))
+        normalized = value.strip()
+        if not normalized:
+            return ""
+        if os.path.sep in normalized or (os.path.altsep and os.path.altsep in normalized):
+            raise ValueError("{0} cli_command must be an executable name, not a path.".format(provider_name))
+        if any(character.isspace() for character in normalized):
+            raise ValueError("{0} cli_command must be a single executable name.".format(provider_name))
+        if not SAFE_CLI_COMMAND_RE.match(normalized):
+            raise ValueError(
+                "{0} cli_command may only contain letters, numbers, dot, dash, and underscore.".format(provider_name)
+            )
+        return normalized
+
+    if setting_name == "permission_mode":
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("{0} permission_mode must be a string.".format(provider_name))
+        normalized = value.strip()
+        if normalized and normalized not in SAFE_CLAUDE_PERMISSION_MODES:
+            raise ValueError(
+                "{0} permission_mode must be one of: {1}.".format(
+                    provider_name,
+                    ", ".join(SAFE_CLAUDE_PERMISSION_MODES),
+                )
+            )
+        return normalized
+
+    if setting_name == "sandbox":
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("{0} sandbox must be a string.".format(provider_name))
+        normalized = value.strip()
+        if normalized and normalized not in SAFE_CODEX_SANDBOX_MODES:
+            raise ValueError(
+                "{0} sandbox must be one of: {1}.".format(
+                    provider_name,
+                    ", ".join(SAFE_CODEX_SANDBOX_MODES),
+                )
+            )
+        return normalized
 
     if value is None:
         return ""

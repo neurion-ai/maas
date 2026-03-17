@@ -261,6 +261,9 @@ export function ProvidersPage() {
                     ) : null}
                     <p>Available modes: {(provider.available_execution_modes ?? []).join(", ") || "local_simulation"}</p>
                     {runtimeControls ? <p>{runtimeControls}</p> : null}
+                    {(provider.guardrails ?? []).map((guardrail) => (
+                      <p key={guardrail}>Guardrail: {guardrail}</p>
+                    ))}
                     {provider.config_warnings?.map((warning) => (
                       <p key={warning}>{warning}</p>
                     ))}

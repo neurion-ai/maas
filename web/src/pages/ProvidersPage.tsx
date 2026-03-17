@@ -53,6 +53,13 @@ function formatRuntimeControls(provider: ProviderStatusItem) {
   return rows.join(" | ");
 }
 
+function formatFailureKind(kind?: string | null) {
+  if (!kind) {
+    return null;
+  }
+  return kind.replace(/_/g, " ");
+}
+
 export function ProvidersPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -236,8 +243,21 @@ export function ProvidersPage() {
                       Runs: {provider.run_summary?.total_runs ?? 0} total | {provider.run_summary?.completed_runs ?? 0} completed |{" "}
                       {provider.run_summary?.failed_runs ?? 0} failed | {provider.run_summary?.timed_out_runs ?? 0} timed out
                     </p>
+                    <p>
+                      Failure breakdown: {provider.run_summary?.timeout_failures ?? 0} timeout |{" "}
+                      {provider.run_summary?.nonzero_exit_failures ?? 0} non-zero exit |{" "}
+                      {provider.run_summary?.runtime_failures ?? 0} runtime
+                    </p>
                     {provider.run_summary?.last_run_at ? (
                       <p>Last run: {new Date(provider.run_summary.last_run_at).toLocaleString()}</p>
+                    ) : null}
+                    {provider.run_summary?.latest_failure_kind ? (
+                      <p>
+                        Latest failure: {formatFailureKind(provider.run_summary.latest_failure_kind)}
+                        {provider.run_summary.latest_failure_at
+                          ? ` | ${new Date(provider.run_summary.latest_failure_at).toLocaleString()}`
+                          : ""}
+                      </p>
                     ) : null}
                     <p>Available modes: {(provider.available_execution_modes ?? []).join(", ") || "local_simulation"}</p>
                     {runtimeControls ? <p>{runtimeControls}</p> : null}
@@ -262,7 +282,10 @@ export function ProvidersPage() {
                       <p key={run.session_id}>
                         Recent run: {run.task_title ?? run.task_id ?? run.session_id} | {run.status}
                         {run.agent_name ? ` | ${run.agent_name}` : ""}
+                        {run.execution_mode ? ` | ${run.execution_mode}` : ""}
+                        {run.failure_kind ? ` | ${formatFailureKind(run.failure_kind)}` : ""}
                         {run.started_at ? ` | ${new Date(run.started_at).toLocaleString()}` : ""}
+                        {run.failure_detail ? ` | ${run.failure_detail}` : ""}
                       </p>
                     ))}
                   </div>

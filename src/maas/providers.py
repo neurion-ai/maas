@@ -286,8 +286,110 @@ def _provider_run_history(connection, project_id):
             "timed_out_runs": row["timed_out_runs"],
             "cancelled_runs": row["cancelled_runs"],
             "last_run_at": row["last_run_at"],
+            "timeout_failures": 0,
+            "nonzero_exit_failures": 0,
+            "runtime_failures": 0,
+            "latest_failure_kind": None,
+            "latest_failure_at": None,
         }
         for row in summary_rows
+    }
+
+    failure_rows = connection.execute(
+        """
+        SELECT
+            sessions.provider_type,
+            activity_log.created_at,
+            json_extract(activity_log.details_json, '$.failure_kind') AS failure_kind
+        FROM activity_log
+        JOIN sessions
+          ON sessions.session_id = json_extract(activity_log.details_json, '$.session_id')
+        WHERE activity_log.project_id = ?
+          AND activity_log.action = 'provider_adapter_failed'
+        ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    for row in failure_rows:
+        summary = summaries.setdefault(
+            row["provider_type"],
+            {
+                "total_runs": 0,
+                "active_runs": 0,
+                "completed_runs": 0,
+                "failed_runs": 0,
+                "timed_out_runs": 0,
+                "cancelled_runs": 0,
+                "last_run_at": None,
+                "timeout_failures": 0,
+                "nonzero_exit_failures": 0,
+                "runtime_failures": 0,
+                "latest_failure_kind": None,
+                "latest_failure_at": None,
+            },
+        )
+        failure_kind = row["failure_kind"] or "runtime_error"
+        if failure_kind == "timeout":
+            summary["timeout_failures"] += 1
+        elif failure_kind == "nonzero_exit":
+            summary["nonzero_exit_failures"] += 1
+        else:
+            summary["runtime_failures"] += 1
+        if summary["latest_failure_at"] is None:
+            summary["latest_failure_at"] = row["created_at"]
+            summary["latest_failure_kind"] = failure_kind
+
+    started_rows = connection.execute(
+        """
+        SELECT
+            json_extract(details_json, '$.session_id') AS session_id,
+            json_extract(details_json, '$.execution_mode') AS execution_mode,
+            json_extract(details_json, '$.external_runtime') AS external_runtime
+        FROM activity_log
+        WHERE project_id = ?
+          AND action = 'provider_adapter_started'
+        """,
+        (project_id,),
+    ).fetchall()
+    started_by_session = {
+        row["session_id"]: {
+            "execution_mode": row["execution_mode"],
+            "external_runtime": row["external_runtime"],
+        }
+        for row in started_rows
+        if row["session_id"]
+    }
+
+    failure_detail_rows = connection.execute(
+        """
+        SELECT
+            ranked.session_id,
+            ranked.failure_kind,
+            ranked.failure_detail
+        FROM (
+            SELECT
+                json_extract(details_json, '$.session_id') AS session_id,
+                json_extract(details_json, '$.failure_kind') AS failure_kind,
+                json_extract(details_json, '$.failure_detail') AS failure_detail,
+                ROW_NUMBER() OVER (
+                    PARTITION BY json_extract(details_json, '$.session_id')
+                    ORDER BY rowid DESC
+                ) AS session_rank
+            FROM activity_log
+            WHERE project_id = ?
+              AND action = 'provider_adapter_failed'
+        ) AS ranked
+        WHERE ranked.session_rank = 1
+        """,
+        (project_id,),
+    ).fetchall()
+    failure_by_session = {
+        row["session_id"]: {
+            "failure_kind": row["failure_kind"] or "runtime_error",
+            "failure_detail": row["failure_detail"],
+        }
+        for row in failure_detail_rows
+        if row["session_id"]
     }
 
     recent_rows = connection.execute(
@@ -335,6 +437,8 @@ def _provider_run_history(connection, project_id):
     recent_runs = {}
     for row in recent_rows:
         entries = recent_runs.setdefault(row["provider_type"], [])
+        started = started_by_session.get(row["session_id"], {})
+        failure = failure_by_session.get(row["session_id"], {})
         entries.append(
             {
                 "session_id": row["session_id"],
@@ -347,6 +451,10 @@ def _provider_run_history(connection, project_id):
                 "status_message": row["status_message"],
                 "started_at": row["started_at"],
                 "ended_at": row["ended_at"],
+                "execution_mode": started.get("execution_mode"),
+                "external_runtime": started.get("external_runtime"),
+                "failure_kind": failure.get("failure_kind"),
+                "failure_detail": failure.get("failure_detail"),
             }
         )
     return {"summaries": summaries, "recent_runs": recent_runs}
@@ -590,6 +698,11 @@ def list_provider_status(connection=None, project_id=None):
                 "timed_out_runs": 0,
                 "cancelled_runs": 0,
                 "last_run_at": None,
+                "timeout_failures": 0,
+                "nonzero_exit_failures": 0,
+                "runtime_failures": 0,
+                "latest_failure_kind": None,
+                "latest_failure_at": None,
             },
         )
         resolved_provider["recent_runs"] = run_history.get("recent_runs", {}).get(provider["id"], [])

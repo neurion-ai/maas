@@ -14,6 +14,13 @@ from maas.providers import (
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 
 
+class ProviderRuntimeFailure(RuntimeError):
+    def __init__(self, kind, message, **details):
+        super().__init__(message)
+        self.kind = kind
+        self.details = details
+
+
 def _task_title(connection, task_id):
     row = connection.execute("SELECT title FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     return row["title"] if row else task_id
@@ -199,20 +206,44 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
 
     command = _codex_cli_command(project_paths, provider_settings, task_prompt, output_path)
     try:
-        result = subprocess.run(
-            command,
-            cwd=project_paths.root,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(
-                "Codex CLI exited with status {0}: {1}".format(result.returncode, (result.stderr or "").strip() or "unknown error")
+        try:
+            result = subprocess.run(
+                command,
+                cwd=project_paths.root,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
             )
-        with open(output_path, "r", encoding="utf-8") as output_handle:
-            final_message = output_handle.read().strip()
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderRuntimeFailure(
+                "timeout",
+                "Codex CLI timed out after {0}s.".format(timeout_seconds),
+                timeout_seconds=timeout_seconds,
+                command=command,
+            ) from exc
+        if result.returncode != 0:
+            raise ProviderRuntimeFailure(
+                "nonzero_exit",
+                "Codex CLI exited with status {0}: {1}".format(
+                    result.returncode,
+                    (result.stderr or "").strip() or "unknown error",
+                ),
+                exit_code=result.returncode,
+                stderr=(result.stderr or "").strip(),
+                stdout=(result.stdout or "").strip(),
+                command=command,
+            )
+        try:
+            with open(output_path, "r", encoding="utf-8") as output_handle:
+                final_message = output_handle.read().strip()
+        except OSError as exc:
+            raise ProviderRuntimeFailure(
+                "output_read_failed",
+                "Codex CLI completed but the runtime output file could not be read: {0}".format(exc),
+                command=command,
+                output_path=output_path,
+            ) from exc
         return {
             "summary_text": final_message or "Codex CLI completed without a final message.",
             "stdout": result.stdout or "",
@@ -226,23 +257,51 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
 def _run_claude_code_cli(project_paths, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
     command = _claude_cli_command(project_paths, provider_settings, task_prompt)
-    result = subprocess.run(
-        command,
-        cwd=project_paths.root,
-        capture_output=True,
-        text=True,
-        timeout=timeout_seconds,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=project_paths.root,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ProviderRuntimeFailure(
+            "timeout",
+            "Claude CLI timed out after {0}s.".format(timeout_seconds),
+            timeout_seconds=timeout_seconds,
+            command=command,
+        ) from exc
     if result.returncode != 0:
-        raise RuntimeError(
-            "Claude CLI exited with status {0}: {1}".format(result.returncode, (result.stderr or "").strip() or "unknown error")
+        raise ProviderRuntimeFailure(
+            "nonzero_exit",
+            "Claude CLI exited with status {0}: {1}".format(
+                result.returncode,
+                (result.stderr or "").strip() or "unknown error",
+            ),
+            exit_code=result.returncode,
+            stderr=(result.stderr or "").strip(),
+            stdout=(result.stdout or "").strip(),
+            command=command,
         )
     return {
         "summary_text": (result.stdout or "").strip() or "Claude CLI completed without a final message.",
         "stdout": result.stdout or "",
         "stderr": result.stderr or "",
     }
+
+
+def _provider_failure_details(exc):
+    if isinstance(exc, ProviderRuntimeFailure):
+        return exc.kind, str(exc), dict(exc.details)
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return (
+            "timeout",
+            "Provider runtime timed out after {0}s.".format(exc.timeout),
+            {"timeout_seconds": exc.timeout, "command": exc.cmd},
+        )
+    return "runtime_error", str(exc), {}
 
 
 def _claude_cli_artifact_payload(provider, task_id, external_result):
@@ -432,9 +491,12 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_existed_before_run=artifact_existed_before_run,
             original_artifact_bytes=original_artifact_bytes,
         )
-        failure_summary = "{0} adapter failed: {1}".format(provider["name"], exc)
+        failure_kind, failure_detail, failure_metadata = _provider_failure_details(exc)
+        failure_summary = "{0} adapter failed ({1}): {2}".format(provider["name"], failure_kind, failure_detail)
         if session_id is not None:
             try:
+                failure_activity_details = dict(extra_activity_details)
+                failure_activity_details.update(failure_metadata)
                 log_activity(
                     connection,
                     project_id=project_id,
@@ -448,9 +510,11 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
                         provider,
                         "session_failed",
                         session_id=session_id,
+                        failure_kind=failure_kind,
+                        failure_detail=failure_detail,
                         error=str(exc),
                         progress_pct=100,
-                        **extra_activity_details
+                        **failure_activity_details
                     ),
                 )
             except Exception:

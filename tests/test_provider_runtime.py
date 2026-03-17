@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -130,7 +131,12 @@ class ProviderRuntimeTest(unittest.TestCase):
                         "completed_runs",
                         "failed_runs",
                         "last_run_at",
+                        "latest_failure_at",
+                        "latest_failure_kind",
+                        "nonzero_exit_failures",
+                        "runtime_failures",
                         "timed_out_runs",
+                        "timeout_failures",
                         "total_runs",
                     ]
                     for provider in payload["providers"]
@@ -1317,6 +1323,94 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertTrue(os.path.exists(artifact_full_path))
             with open(artifact_full_path, "r", encoding="utf-8") as handle:
                 self.assertEqual(handle.read(), "preexisting claude artifact")
+
+    def test_providers_endpoint_classifies_codex_timeout_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Timeout Test", description="Codex timeout test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_openai_codex_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Run timed out Codex CLI adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(Exception):
+                    with mock.patch(
+                        "maas.services.provider_runtime.subprocess.run",
+                        side_effect=subprocess.TimeoutExpired(cmd=["codex", "exec"], timeout=120),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_reviewer",
+                            task_id=task_id,
+                            provider_type="openai_codex",
+                        )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in payload["providers"]}
+            recent_run = providers["openai_codex"]["recent_runs"][0]
+            run_summary = providers["openai_codex"]["run_summary"]
+
+            self.assertEqual(recent_run["status"], "failed")
+            self.assertEqual(recent_run["execution_mode"], "codex_cli")
+            self.assertEqual(recent_run["external_runtime"], "codex_cli")
+            self.assertEqual(recent_run["failure_kind"], "timeout")
+            self.assertIn("timed out", recent_run["failure_detail"])
+            self.assertEqual(run_summary["timeout_failures"], 1)
+            self.assertEqual(run_summary["latest_failure_kind"], "timeout")
+
+    def test_providers_endpoint_classifies_claude_nonzero_exit_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Claude Exit Test", description="Claude exit test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_claude_code_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_researcher", "Run nonzero Claude CLI adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                with self.assertRaises(Exception):
+                    with mock.patch(
+                        "maas.services.provider_runtime.subprocess.run",
+                        return_value=mock.Mock(returncode=7, stdout="", stderr="permission denied"),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=project_paths(tmpdir),
+                            project_id=project_id,
+                            agent_id="agent_researcher",
+                            task_id=task_id,
+                            provider_type="claude_code",
+                        )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            providers = {provider["id"]: provider for provider in payload["providers"]}
+            recent_run = providers["claude_code"]["recent_runs"][0]
+            run_summary = providers["claude_code"]["run_summary"]
+
+            self.assertEqual(recent_run["status"], "failed")
+            self.assertEqual(recent_run["execution_mode"], "claude_cli")
+            self.assertEqual(recent_run["external_runtime"], "claude_cli")
+            self.assertEqual(recent_run["failure_kind"], "nonzero_exit")
+            self.assertIn("status 7", recent_run["failure_detail"])
+            self.assertEqual(run_summary["nonzero_exit_failures"], 1)
+            self.assertEqual(run_summary["latest_failure_kind"], "nonzero_exit")
 
 if __name__ == "__main__":
     unittest.main()

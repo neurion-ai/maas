@@ -537,6 +537,11 @@ export interface ProviderRunSummary {
   timed_out_runs: number;
   cancelled_runs: number;
   last_run_at?: string | null;
+  timeout_failures: number;
+  nonzero_exit_failures: number;
+  runtime_failures: number;
+  latest_failure_kind?: string | null;
+  latest_failure_at?: string | null;
 }
 
 export interface ProviderRunItem {
@@ -550,6 +555,10 @@ export interface ProviderRunItem {
   status_message?: string | null;
   started_at: string;
   ended_at?: string | null;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
+  failure_kind?: string | null;
+  failure_detail?: string | null;
 }
 
 export interface ProviderRunTarget {

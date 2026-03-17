@@ -250,7 +250,12 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         failed_runs: 0,
         timed_out_runs: 0,
         cancelled_runs: 0,
-        last_run_at: null
+        last_run_at: null,
+        timeout_failures: 0,
+        nonzero_exit_failures: 0,
+        runtime_failures: 0,
+        latest_failure_kind: null,
+        latest_failure_at: null
       },
       recent_runs: [],
       notes: "Reference local runtime with normalized runtime phase reporting."
@@ -291,7 +296,12 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         failed_runs: 0,
         timed_out_runs: 0,
         cancelled_runs: 0,
-        last_run_at: null
+        last_run_at: null,
+        timeout_failures: 0,
+        nonzero_exit_failures: 0,
+        runtime_failures: 0,
+        latest_failure_kind: null,
+        latest_failure_at: null
       },
       recent_runs: [],
       notes: "Simulated local adapter with normalized runtime phase reporting."
@@ -332,7 +342,12 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         failed_runs: 0,
         timed_out_runs: 0,
         cancelled_runs: 0,
-        last_run_at: null
+        last_run_at: null,
+        timeout_failures: 0,
+        nonzero_exit_failures: 0,
+        runtime_failures: 0,
+        latest_failure_kind: null,
+        latest_failure_at: null
       },
       recent_runs: [],
       notes: "Simulated API-style adapter with normalized runtime phase reporting."

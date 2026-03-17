@@ -2,14 +2,14 @@
 
 ## Status On `main`
 
-- [ ] Batch 8 has not started on `main`.
+- [ ] Batch 8 is partially started on `main` through brownfield repo detection, onboarding approval gating, imported workflow and repo-area backlog seeding, and Overview visibility.
 
 ## Still To Do On `main`
 
-- [ ] Brownfield discovery pipeline
-- [ ] Reviewed overlay onboarding
+- [ ] Deeper brownfield codebase mapping and repo-derived planning
 - [ ] Multi-project routing
-- [ ] Dashboard and plugin extensions
+- [ ] Dashboard and plugin extensions for cross-project operation
+- [ ] Stronger runtime isolation for imported repos
 
 ## Non-Goals
 
@@ -18,5 +18,5 @@
 
 ## Acceptance Checklist
 
-- [ ] Brownfield fixture produces a reviewable understanding artifact
+- [x] Brownfield fixture produces a reviewable understanding artifact
 - [ ] Multi-project API routing isolates project data correctly

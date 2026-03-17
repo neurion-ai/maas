@@ -93,6 +93,16 @@ lint = "example:main"
                 len(overview_payload["onboarding"]["discovery_summary"]["workflow_details"]),
                 1,
             )
+            self.assertGreaterEqual(
+                len(overview_payload["onboarding"]["discovery_summary"]["codebase_map"]),
+                1,
+            )
+            self.assertTrue(
+                any(
+                    item["name"] == "src"
+                    for item in overview_payload["onboarding"]["discovery_summary"]["codebase_map"]
+                )
+            )
             self.assertIn(
                 "src",
                 overview_payload["onboarding"]["discovery_summary"]["repo_areas"],

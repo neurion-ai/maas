@@ -40,7 +40,8 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     discovery_summary: {
       workflow_labels: [],
       workflow_details: [],
-      repo_areas: []
+      repo_areas: [],
+      codebase_map: []
     },
     review_task_id: null,
     review_task_status: null,

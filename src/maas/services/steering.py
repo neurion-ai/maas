@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.artifacts import artifact_scope_rows, purge_artifact_scope
 from maas.services.recovery_policy import (
     fetch_project_recovery_policy,
     recover_and_requeue_cooldown_seconds,
@@ -55,6 +56,39 @@ def _activity(connection, project_id, agent_id, task_id, action, description, se
         """,
         (generate_id("act"), project_id, agent_id, task_id, action, description, severity),
     )
+
+
+def _load_purgeable_artifact_scope(connection, project_paths, actor_id, task_id=None, session_id=None):
+    rows, _ = artifact_scope_rows(connection, project_paths, task_id=task_id, session_id=session_id)
+    if not rows:
+        raise ValueError("Artifact scope not found")
+
+    scope_type = "task" if task_id else "session"
+    scope_id = task_id or session_id
+    project_id = rows[0]["project_id"]
+    ensure_board_action_allowed(connection, actor_id, project_id, "purge_artifacts", scope_type, scope_id)
+
+    session_ids = sorted({row["session_id"] for row in rows if row["session_id"]})
+    if session_ids:
+        placeholders = ", ".join(["?"] * len(session_ids))
+        open_queue = connection.execute(
+            """
+            SELECT queue_id
+            FROM quarantine_queue
+            WHERE session_id IN ({0}) AND status = 'open'
+            LIMIT 1
+            """.format(placeholders),
+            tuple(session_ids),
+        ).fetchone()
+        if open_queue is not None:
+            raise ValueError("Cannot purge artifacts from an open quarantine incident")
+
+    return {
+        "project_id": project_id,
+        "task_id": rows[0]["task_id"],
+        "scope_type": scope_type,
+        "scope_id": scope_id,
+    }
 
 
 def review_task(connection, task_id, actor_id, decision):
@@ -849,6 +883,62 @@ def reopen_quarantine_entry(connection, queue_id, actor_id):
         "status": "open",
         "artifact_count": reopened_entry["artifact_count"],
     }
+
+
+def purge_task_artifacts(connection, project_paths, task_id, actor_id):
+    scope = _load_purgeable_artifact_scope(connection, project_paths, actor_id, task_id=task_id)
+    result = purge_artifact_scope(connection, project_paths, task_id=task_id)
+    if result is None:
+        raise ValueError("Artifact scope not found")
+
+    _audit(
+        connection,
+        scope["project_id"],
+        actor_id,
+        "purge_artifacts",
+        "task",
+        task_id,
+        result,
+    )
+    _activity(
+        connection,
+        scope["project_id"],
+        actor_id,
+        scope["task_id"],
+        "artifact_scope_purged",
+        "Purged {0} artifact records from task scope.".format(result["deleted_artifact_count"]),
+        severity="warning",
+    )
+    connection.commit()
+    return result
+
+
+def purge_session_artifacts(connection, project_paths, session_id, actor_id):
+    scope = _load_purgeable_artifact_scope(connection, project_paths, actor_id, session_id=session_id)
+    result = purge_artifact_scope(connection, project_paths, session_id=session_id)
+    if result is None:
+        raise ValueError("Artifact scope not found")
+
+    _audit(
+        connection,
+        scope["project_id"],
+        actor_id,
+        "purge_artifacts",
+        "session",
+        session_id,
+        result,
+    )
+    _activity(
+        connection,
+        scope["project_id"],
+        actor_id,
+        scope["task_id"],
+        "artifact_scope_purged",
+        "Purged {0} artifact records from session scope.".format(result["deleted_artifact_count"]),
+        severity="warning",
+    )
+    connection.commit()
+    return result
 
 
 def reprioritize_task(connection, task_id, actor_id, priority):

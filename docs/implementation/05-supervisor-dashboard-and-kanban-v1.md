@@ -19,12 +19,12 @@
 - [x] Overview and Failures views expose direct failure operator actions instead of remaining read-only summaries
 - [x] Current implementation includes a `cancelled` board column so halted work remains visible to operators
 - [x] Live transport now prefers websocket, falls back to SSE, and only then uses polling
-- [x] Artifact browser includes artifact-state visibility, quarantine context, server-side filtering, and row-level quarantine actions
+- [x] Artifact browser includes artifact-state visibility, quarantine context, server-side filtering, preview, guarded download, compare, lineage/provenance pivots, task/session export bundles, and row-level quarantine actions
 
 ## Still To Do On `main`
 
 - [ ] Multi-project board routing
-- [ ] Richer artifact drill-down and file inspection flows
+- [ ] Higher-level artifact retention controls and cleanup workflows beyond the current browser and row-level incident actions
 
 ## Board Contract Checklist
 

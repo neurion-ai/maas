@@ -367,6 +367,414 @@ class ArtifactsApiTest(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.json()["detail"], "exactly one export scope is required")
 
+    def test_artifact_purge_api_removes_scope_rows_and_local_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Purge Test",
+                description="Artifacts purge test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_purge", project_id, "Artifact Purge Agent"),
+                )
+                task_id = "task_artifact_purge"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact purge task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_purge",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_purge",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting artifact purge test",
+                )
+                first_path = os.path.join(result["paths"].artifacts_dir, "purge-first.txt")
+                with open(first_path, "w", encoding="utf-8") as handle:
+                    handle.write("purge first\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=first_path,
+                )
+                missing_path = os.path.join(result["paths"].artifacts_dir, "purge-missing.txt")
+                with open(missing_path, "w", encoding="utf-8") as handle:
+                    handle.write("gone\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="provider_report",
+                    path=missing_path,
+                )
+                os.remove(missing_path)
+                external_path = os.path.join(tmpdir, "external-preserved.txt")
+                with open(external_path, "w", encoding="utf-8") as handle:
+                    handle.write("keep external\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=external_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(f"/api/tasks/{task_id}/artifacts/actions/purge", json={"actor_id": "agent_artifact_purge"})
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["scope_type"], "task")
+            self.assertEqual(payload["scope_id"], task_id)
+            self.assertEqual(payload["deleted_artifact_count"], 3)
+            self.assertEqual(payload["deleted_file_count"], 1)
+            self.assertEqual(payload["missing_file_count"], 1)
+            self.assertEqual(payload["preserved_path_count"], 1)
+            self.assertFalse(os.path.exists(first_path))
+            self.assertTrue(os.path.exists(external_path))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                remaining_count = connection.execute("SELECT COUNT(*) AS count FROM artifacts WHERE task_id = ?", (task_id,)).fetchone()[
+                    "count"
+                ]
+            finally:
+                connection.close()
+            self.assertEqual(remaining_count, 0)
+
+    def test_artifact_purge_api_rejects_open_quarantine_scope(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Purge Quarantine Test",
+                description="Artifacts purge quarantine test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_purge_quarantine", project_id, "Artifact Purge Quarantine Agent"),
+                )
+                task_id = "task_artifact_purge_quarantine"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact purge quarantine task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_purge_quarantine",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_purge_quarantine",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting artifact purge quarantine test",
+                )
+                artifact_path = os.path.join(result["paths"].artifacts_dir, "purge-quarantine.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("quarantine\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="provider_report",
+                    path=artifact_path,
+                )
+                end_session(
+                    connection,
+                    session_id,
+                    "failed",
+                    "Artifact purge quarantine failure",
+                    project_paths=result["paths"],
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/sessions/{session_id}/artifacts/actions/purge",
+                json={"actor_id": "agent_artifact_purge_quarantine"},
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "Cannot purge artifacts from an open quarantine incident")
+
+    def test_artifact_purge_api_handles_nested_and_duplicate_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Purge Nested Test",
+                description="Artifacts purge nested test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                connection.execute(
+                    """
+                    INSERT INTO agents (
+                        agent_id, project_id, role, display_name, status, permissions_json
+                    ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                    """,
+                    ("agent_artifact_purge_nested", project_id, "Artifact Purge Nested Agent"),
+                )
+                task_id = "task_artifact_purge_nested"
+                connection.execute(
+                    """
+                    INSERT INTO tasks (
+                        task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                    ) VALUES (?, ?, 'Artifact purge nested task', '', 'ready', 60, '[]')
+                    """,
+                    (task_id, project_id),
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    task_id,
+                    "agent_artifact_purge_nested",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_purge_nested",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting artifact purge nested test",
+                )
+                artifact_dir_path = os.path.join(result["paths"].artifacts_dir, "purge-bundle")
+                os.makedirs(artifact_dir_path, exist_ok=True)
+                child_path = os.path.join(artifact_dir_path, "result.txt")
+                with open(child_path, "w", encoding="utf-8") as handle:
+                    handle.write("nested\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="bundle",
+                    path=artifact_dir_path,
+                )
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="note",
+                    path=child_path,
+                )
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_id,
+                    task_id=task_id,
+                    artifact_type="provider_report",
+                    path=child_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(f"/api/tasks/{task_id}/artifacts/actions/purge", json={"actor_id": "agent_artifact_purge_nested"})
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["deleted_artifact_count"], 3)
+            self.assertEqual(payload["deleted_file_count"], 1)
+            self.assertEqual(payload["preserved_path_count"], 1)
+            self.assertTrue(os.path.isdir(artifact_dir_path))
+            self.assertFalse(os.path.exists(child_path))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                remaining_count = connection.execute("SELECT COUNT(*) AS count FROM artifacts WHERE task_id = ?", (task_id,)).fetchone()[
+                    "count"
+                ]
+            finally:
+                connection.close()
+            self.assertEqual(remaining_count, 0)
+
+    def test_artifact_purge_api_preserves_shared_directories(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Artifacts Purge Shared Directory Test",
+                description="Artifacts purge shared directory test",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                for agent_id, display_name in (
+                    ("agent_artifact_purge_shared_one", "Artifact Purge Shared One"),
+                    ("agent_artifact_purge_shared_two", "Artifact Purge Shared Two"),
+                ):
+                    connection.execute(
+                        """
+                        INSERT INTO agents (
+                            agent_id, project_id, role, display_name, status, permissions_json
+                        ) VALUES (?, ?, 'builder', ?, 'idle', '{"board_actions": true}')
+                        """,
+                        (agent_id, project_id, display_name),
+                    )
+                for task_id, title in (
+                    ("task_artifact_purge_shared_one", "Artifact purge shared one"),
+                    ("task_artifact_purge_shared_two", "Artifact purge shared two"),
+                ):
+                    connection.execute(
+                        """
+                        INSERT INTO tasks (
+                            task_id, project_id, title, description, status, priority, acceptance_criteria_json
+                        ) VALUES (?, ?, ?, '', 'ready', 60, '[]')
+                        """,
+                        (task_id, project_id, title),
+                    )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_purge_shared_one",
+                    "agent_artifact_purge_shared_one",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                grant_task_capabilities(
+                    connection,
+                    project_id,
+                    "task_artifact_purge_shared_two",
+                    "agent_artifact_purge_shared_two",
+                    TASK_EXECUTION_CAPABILITIES,
+                    granted_by="test_setup",
+                )
+                connection.commit()
+
+                shared_dir_path = os.path.join(result["paths"].artifacts_dir, "shared-directory")
+                os.makedirs(shared_dir_path, exist_ok=True)
+
+                session_one_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_purge_shared_one",
+                    task_id="task_artifact_purge_shared_one",
+                    provider_type="python_script",
+                    status_message="Starting artifact purge shared one test",
+                )
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_one_id,
+                    task_id="task_artifact_purge_shared_one",
+                    artifact_type="bundle",
+                    path=shared_dir_path,
+                )
+
+                session_two_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_artifact_purge_shared_two",
+                    task_id="task_artifact_purge_shared_two",
+                    provider_type="python_script",
+                    status_message="Starting artifact purge shared two test",
+                )
+                unrelated_path = os.path.join(shared_dir_path, "other-scope.txt")
+                with open(unrelated_path, "w", encoding="utf-8") as handle:
+                    handle.write("leave me\n")
+                produce_artifact(
+                    connection,
+                    project_id=project_id,
+                    session_id=session_two_id,
+                    task_id="task_artifact_purge_shared_two",
+                    artifact_type="note",
+                    path=unrelated_path,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/tasks/task_artifact_purge_shared_one/artifacts/actions/purge",
+                json={"actor_id": "agent_artifact_purge_shared_one"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["deleted_artifact_count"], 1)
+            self.assertEqual(payload["deleted_file_count"], 0)
+            self.assertEqual(payload["preserved_path_count"], 1)
+            self.assertTrue(os.path.isdir(shared_dir_path))
+            self.assertTrue(os.path.exists(unrelated_path))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                first_task_remaining = connection.execute(
+                    "SELECT COUNT(*) AS count FROM artifacts WHERE task_id = ?",
+                    ("task_artifact_purge_shared_one",),
+                ).fetchone()["count"]
+                second_task_remaining = connection.execute(
+                    "SELECT COUNT(*) AS count FROM artifacts WHERE task_id = ?",
+                    ("task_artifact_purge_shared_two",),
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+            self.assertEqual(first_task_remaining, 0)
+            self.assertEqual(second_task_remaining, 1)
+
     def test_artifact_detail_api_marks_missing_preview_unavailable(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(

@@ -4,6 +4,8 @@ import {
   fetchArtifactComparison,
   fetchArtifactDetail,
   fetchArtifacts,
+  purgeSessionArtifacts,
+  purgeTaskArtifacts,
   runFailureOperatorAction
 } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -58,6 +60,7 @@ export function ArtifactsPage() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isDetailRefreshing, setIsDetailRefreshing] = useState(false);
   const [isComparisonRefreshing, setIsComparisonRefreshing] = useState(false);
+  const [pendingPurgeScope, setPendingPurgeScope] = useState<string | null>(null);
   const [pendingArtifactAction, setPendingArtifactAction] = useState<string | null>(null);
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const livePulse = useLivePulse();
@@ -218,6 +221,31 @@ export function ArtifactsPage() {
       setNotice("Artifact action failed; keep the quarantine incident under operator review.");
     } finally {
       setPendingArtifactAction(null);
+    }
+  }
+
+  async function handlePurge(scopeType: "task" | "session", scopeId?: string | null) {
+    if (!scopeId) {
+      return;
+    }
+
+    setPendingPurgeScope(`${scopeType}:${scopeId}`);
+    setNotice(null);
+    try {
+      const result =
+        scopeType === "task" ? await purgeTaskArtifacts(scopeId) : await purgeSessionArtifacts(scopeId);
+      setSelectedArtifactId(null);
+      setSelectedArtifact(null);
+      setSelectedCompareArtifactId(null);
+      setArtifactComparison(null);
+      await loadArtifacts();
+      setNotice(
+        `Purged ${result.deleted_artifact_count} ${scopeType} artifact records; removed ${result.deleted_file_count} local files.`
+      );
+    } catch {
+      setNotice(`Artifact ${scopeType} purge failed; keep the current retention state under operator review.`);
+    } finally {
+      setPendingPurgeScope(null);
     }
   }
 
@@ -584,6 +612,26 @@ export function ArtifactsPage() {
                     >
                       Export session bundle
                     </a>
+                  ) : null}
+                  {detailArtifact.task_id ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingPurgeScope === `task:${detailArtifact.task_id}`}
+                      onClick={() => void handlePurge("task", detailArtifact.task_id)}
+                    >
+                      {pendingPurgeScope === `task:${detailArtifact.task_id}` ? "Purging..." : "Purge task artifacts"}
+                    </button>
+                  ) : null}
+                  {detailArtifact.session_id ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingPurgeScope === `session:${detailArtifact.session_id}`}
+                      onClick={() => void handlePurge("session", detailArtifact.session_id)}
+                    >
+                      {pendingPurgeScope === `session:${detailArtifact.session_id}` ? "Purging..." : "Purge session artifacts"}
+                    </button>
                   ) : null}
                 </div>
               </div>

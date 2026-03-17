@@ -77,7 +77,7 @@
 - [x] Repeated-failure alerts for tasks with repeated failures
 - [x] Failure visibility in board, overview, live, and dedicated failures reads
 - [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces
-- [x] Artifact browser visibility includes artifact state, quarantine metadata, missing-file detection, and direct quarantine actions
+- [x] Artifact browser visibility includes artifact state, quarantine metadata, missing-file detection, preview, guarded download, compare, lineage/provenance pivots, export bundles, and direct quarantine actions
 - [x] First-class quarantine queue reads plus restore, dismiss, reopen, and restore+requeue actions
 - [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
 - [x] Overview and Failures surfaces expose direct operator actions for recent failures and repeated-failure tasks
@@ -102,7 +102,8 @@
 
 - [ ] Broader automated restart and retry policies
 - [ ] Broader DLQ and quarantine workflows
-- [ ] Broader failure-specific resolution flows beyond the current repeated-failure and recovery-linked incidents
+- [ ] Broader failure-specific resolution flows beyond the current repeated-failure, recovery-linked, and quarantine incident actions
+- [ ] Higher-level artifact retention and cleanup policy automation beyond the current browser, provenance, export, and incident-handling flows
 - [ ] Broader self-healing and recovery orchestration
 
 ### Platform expansion
@@ -115,7 +116,7 @@
 ## Practical Summary
 
 - [x] If the goal is a single-project local MAAS workspace with a human operator in the loop, the repo now covers most of the required surfaces.
-- [x] The strongest areas today are board operations, recovery handling, failure memory, provider visibility, and control-room tooling.
+- [x] The strongest areas today are board operations, recovery handling, failure memory, provider visibility, artifact inspection, and control-room tooling.
 - [ ] The biggest remaining gaps are autonomous planning quality, broader provider/runtime coverage, stronger self-healing, and platform expansion beyond one greenfield project.
 
 ## Batch View

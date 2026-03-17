@@ -50,6 +50,7 @@ Legend:
 - [x] Real local OpenAI Codex CLI integration behind explicit provider config
 - [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
 - [x] Artifact browser and artifact-state visibility in the control room
+- [x] Artifact browser supports preview, guarded download, compare, lineage/provenance pivots, and task/session export bundles
 - [x] Artifact browser operator actions for restore, restore-and-requeue, dismiss, and reopen on quarantined artifacts
 - [x] Shared live transport with websocket, SSE, and polling fallback status in the control room shell
 
@@ -58,7 +59,7 @@ Legend:
 - [ ] Smarter replanning and scheduling beyond the current ready-refresh plus heuristic allocation path
 - [ ] Broader automated restart, retry, backoff, and DLQ workflows
 - [ ] Broader external provider coverage beyond the current local CLI paths
-- [ ] Richer artifact inspection and drill-down beyond the current browser and row-level actions
+- [ ] Higher-level artifact retention policy automation beyond the current browser, provenance, and export flows
 - [ ] Brownfield onboarding and multi-project support
 - [ ] Stronger sandboxing and isolation guarantees
 
@@ -93,6 +94,7 @@ The project bootstrap creates:
 - `GET /api/escalations`
 - `GET /api/failures`
 - `GET /api/artifacts`
+- `GET /api/artifacts/export`
 - `GET /api/quarantine`
 - `GET /api/live`
 - `WS /api/live/ws`
@@ -163,3 +165,4 @@ These commands expose the current dependency-aware ready queue, allocator flow, 
 - `openai_codex` supports both the simulated adapter and a real local `codex exec` path when enabled in `project.yaml`
 - `/api/providers` and the Providers view expose configured mode, effective mode, config warnings, recent provider runs, safe manual run targets, mode switching, and editable runtime settings
 - `/api/artifacts` and the Artifacts view expose artifact state, missing-file detection, quarantine metadata, and server-side filtering
+- artifact detail now includes preview, guarded single-file download, task/session export bundles, same-task compare, same-session lineage, and dependency-linked provenance pivots

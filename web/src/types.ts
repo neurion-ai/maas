@@ -638,6 +638,7 @@ export interface ProviderStatusItem {
   runtime_controls?: ProviderRuntimeControls;
   configurable_runtime_controls?: ProviderEditableRuntimeControls;
   config_warnings?: string[];
+  guardrails?: string[];
   is_runnable?: boolean;
   run_summary?: ProviderRunSummary;
   recent_runs?: ProviderRunItem[];

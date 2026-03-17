@@ -144,6 +144,7 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertTrue(all(isinstance(provider["recent_runs"], list) for provider in payload["providers"]))
             providers = {provider["id"]: provider for provider in payload["providers"]}
+            self.assertTrue(all(provider["guardrails"] for provider in providers.values()))
             self.assertEqual(providers["claude_code"]["recent_runs"], [])
             self.assertEqual(providers["openai_codex"]["recent_runs"], [])
             self.assertGreaterEqual(len(providers["python_script"]["recent_runs"]), 1)
@@ -212,6 +213,34 @@ class ProviderRuntimeTest(unittest.TestCase):
                     "model": "sonnet",
                 },
             )
+
+    def test_providers_endpoint_marks_claude_cli_without_permission_mode_as_misconfigured(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Claude Provider Config Test", description="Claude provider config test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._set_provider_config(
+                    connection,
+                    "claude_code",
+                    {
+                        "mode": "claude_cli",
+                        "cli_command": "claude",
+                        "timeout_seconds": 120,
+                        "permission_mode": "",
+                        "model": "sonnet",
+                    },
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/providers").json()
+            provider = {item["id"]: item for item in payload["providers"]}["claude_code"]
+
+            self.assertEqual(provider["status"], "misconfigured")
+            self.assertFalse(provider["is_runnable"])
+            self.assertIn("permission_mode must not be empty", " ".join(provider["config_warnings"]))
 
     def test_providers_endpoint_reports_misconfigured_live_provider(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -372,6 +401,52 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("timeout_seconds", response.json()["detail"])
+
+    def test_provider_settings_endpoint_rejects_cli_command_paths(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-settings",
+                json={
+                    "actor_id": "agent_allocator",
+                    "settings": {
+                        "cli_command": "../bin/codex",
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("cli_command must be an executable name", response.json()["detail"])
+
+    def test_provider_settings_endpoint_rejects_unsafe_live_modes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Config Test", description="Provider config test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            codex_response = client.post(
+                "/api/providers/openai_codex/actions/set-settings",
+                json={
+                    "actor_id": "agent_allocator",
+                    "settings": {
+                        "sandbox": "danger-full-access",
+                    },
+                },
+            )
+            self.assertEqual(codex_response.status_code, 400)
+            self.assertIn("sandbox must be one of", codex_response.json()["detail"])
+
+            claude_response = client.post(
+                "/api/providers/claude_code/actions/set-settings",
+                json={
+                    "actor_id": "agent_allocator",
+                    "settings": {
+                        "permission_mode": "bypassPermissions",
+                    },
+                },
+            )
+            self.assertEqual(claude_response.status_code, 400)
+            self.assertIn("permission_mode must be one of", claude_response.json()["detail"])
 
     def test_provider_settings_endpoint_requires_board_action_permission(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -725,6 +800,41 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("cli_command must be a string", response.json()["detail"])
 
+    def test_provider_run_task_rejects_blank_claude_permission_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._set_provider_config(
+                    connection,
+                    "claude_code",
+                    {
+                        "mode": "claude_cli",
+                        "cli_command": "claude",
+                        "timeout_seconds": 120,
+                        "permission_mode": "",
+                        "model": "sonnet",
+                    },
+                )
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_researcher", "Run invalid Claude adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/claude_code/actions/run-task",
+                json={
+                    "project_id": project_id,
+                    "agent_id": "agent_researcher",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("permission_mode must not be empty", response.json()["detail"])
+
     def test_openai_codex_cli_mode_executes_real_command_path_when_enabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex CLI Test", description="Codex CLI test", project_type="custom")
@@ -739,9 +849,16 @@ class ProviderRuntimeTest(unittest.TestCase):
 
             client = TestClient(create_app(tmpdir))
 
-            def write_codex_output(command, cwd, capture_output, text, timeout, check):
+            os.environ["OPENAI_API_KEY"] = "test-openai-key"
+            os.environ["UNRELATED_SECRET"] = "should-not-leak"
+
+            def write_codex_output(command, cwd, capture_output, text, timeout, check, env):
                 self.assertEqual(command[0:2], ["codex", "exec"])
                 self.assertIn("--model", command)
+                self.assertEqual(env["OPENAI_API_KEY"], "test-openai-key")
+                self.assertNotIn("UNRELATED_SECRET", env)
+                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "runtime")))
+                self.assertEqual(env["MAAS_PROJECT_ROOT"], tmpdir)
                 output_file = command[command.index("-o") + 1]
                 with open(output_file, "w", encoding="utf-8") as handle:
                     handle.write("Codex completed the task.")
@@ -751,15 +868,19 @@ class ProviderRuntimeTest(unittest.TestCase):
                 completed.stderr = ""
                 return completed
 
-            with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_codex_output) as run_mock:
-                response = client.post(
-                    "/api/providers/openai_codex/actions/run-task",
-                    json={
-                        "project_id": project_id,
-                        "agent_id": "agent_reviewer",
-                        "task_id": task_id,
-                    },
-                )
+            try:
+                with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_codex_output) as run_mock:
+                    response = client.post(
+                        "/api/providers/openai_codex/actions/run-task",
+                        json={
+                            "project_id": project_id,
+                            "agent_id": "agent_reviewer",
+                            "task_id": task_id,
+                        },
+                    )
+            finally:
+                os.environ.pop("OPENAI_API_KEY", None)
+                os.environ.pop("UNRELATED_SECRET", None)
 
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -822,25 +943,36 @@ class ProviderRuntimeTest(unittest.TestCase):
 
             client = TestClient(create_app(tmpdir))
 
-            def write_claude_output(command, cwd, capture_output, text, timeout, check):
+            os.environ["ANTHROPIC_API_KEY"] = "test-anthropic-key"
+            os.environ["UNRELATED_SECRET"] = "should-not-leak"
+
+            def write_claude_output(command, cwd, capture_output, text, timeout, check, env):
                 self.assertEqual(command[0:2], ["claude", "-p"])
                 self.assertIn("--permission-mode", command)
                 self.assertIn("--add-dir", command)
+                self.assertEqual(env["ANTHROPIC_API_KEY"], "test-anthropic-key")
+                self.assertNotIn("UNRELATED_SECRET", env)
+                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "runtime")))
+                self.assertEqual(env["MAAS_PROJECT_ROOT"], tmpdir)
                 completed = mock.Mock()
                 completed.returncode = 0
                 completed.stdout = "Claude completed the task.\n"
                 completed.stderr = ""
                 return completed
 
-            with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_claude_output) as run_mock:
-                response = client.post(
-                    "/api/providers/claude_code/actions/run-task",
-                    json={
-                        "project_id": project_id,
-                        "agent_id": "agent_researcher",
-                        "task_id": task_id,
-                    },
-                )
+            try:
+                with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_claude_output) as run_mock:
+                    response = client.post(
+                        "/api/providers/claude_code/actions/run-task",
+                        json={
+                            "project_id": project_id,
+                            "agent_id": "agent_researcher",
+                            "task_id": task_id,
+                        },
+                    )
+            finally:
+                os.environ.pop("ANTHROPIC_API_KEY", None)
+                os.environ.pop("UNRELATED_SECRET", None)
 
             self.assertEqual(response.status_code, 200)
             payload = response.json()

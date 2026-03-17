@@ -535,6 +535,52 @@ def _provider_run_history(connection, project_id):
     return {"summaries": summaries, "recent_runs": recent_runs}
 
 
+def _provider_preflight_history(connection, project_id):
+    if connection is None:
+        return {}
+    rows = connection.execute(
+        """
+        SELECT
+            ranked.provider_type,
+            ranked.created_at,
+            ranked.description,
+            ranked.details_json
+        FROM (
+            SELECT
+                json_extract(activity_log.details_json, '$.provider_type') AS provider_type,
+                activity_log.created_at,
+                activity_log.description,
+                activity_log.details_json,
+                ROW_NUMBER() OVER (
+                    PARTITION BY json_extract(activity_log.details_json, '$.provider_type')
+                    ORDER BY activity_log.rowid DESC
+                ) AS provider_rank
+            FROM activity_log
+            WHERE activity_log.project_id = ?
+              AND activity_log.action = 'provider_preflight_checked'
+        ) AS ranked
+        WHERE ranked.provider_rank = 1
+          AND ranked.provider_type IS NOT NULL
+        """,
+        (project_id,),
+    ).fetchall()
+    history = {}
+    for row in rows:
+        try:
+            details = json.loads(row["details_json"] or "{}")
+        except json.JSONDecodeError:
+            details = {}
+        history[row["provider_type"]] = {
+            "checked_at": row["created_at"],
+            "status": details.get("preflight_status") or "unknown",
+            "summary": row["description"],
+            "issues": details.get("issues") or [],
+            "execution_mode": details.get("execution_mode"),
+            "external_runtime": details.get("external_runtime"),
+        }
+    return history
+
+
 def _provider_run_targets(connection, project_id, limit=5):
     if connection is None:
         return []
@@ -806,6 +852,7 @@ def get_provider_runtime_settings(provider_id, connection=None, project_id=None)
 def list_provider_status(connection=None, project_id=None):
     provider_config = _project_provider_config(connection, project_id)
     run_history = _provider_run_history(connection, project_id)
+    preflight_history = _provider_preflight_history(connection, project_id)
     providers = []
     for provider in list_providers():
         resolved_provider, _ = _resolve_provider_status(provider, provider_config.get(provider["id"]) or {})
@@ -827,5 +874,6 @@ def list_provider_status(connection=None, project_id=None):
             },
         )
         resolved_provider["recent_runs"] = run_history.get("recent_runs", {}).get(provider["id"], [])
+        resolved_provider["latest_preflight"] = preflight_history.get(provider["id"])
         providers.append(resolved_provider)
     return providers

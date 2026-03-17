@@ -23,7 +23,13 @@ from maas.services.escalations import approve_escalation, fetch_escalations, rej
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
-from maas.services.provider_runtime import provider_runtime_overview, run_provider_task, set_provider_mode, set_provider_settings
+from maas.services.provider_runtime import (
+    provider_runtime_overview,
+    run_provider_preflight,
+    run_provider_task,
+    set_provider_mode,
+    set_provider_settings,
+)
 from maas.services.projects import list_projects, resolve_project_id
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -165,6 +171,11 @@ class ProviderModeRequest(BaseModel):
 class ProviderSettingsRequest(BaseModel):
     actor_id: str
     settings: dict = {}
+    project_id: Optional[str] = None
+
+
+class ProviderPreflightRequest(BaseModel):
+    actor_id: str
     project_id: Optional[str] = None
 
 
@@ -717,6 +728,24 @@ def create_app(project_root="."):
                 provider_id,
                 payload.actor_id,
                 payload.settings,
+                project_id=_selected_project_id(connection, payload.project_id),
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/providers/{provider_id}/actions/run-preflight")
+    def provider_run_preflight_action(provider_id: str, payload: ProviderPreflightRequest):
+        connection = connect(paths)
+        try:
+            return run_provider_preflight(
+                connection,
+                project_paths=paths,
+                provider_id=provider_id,
+                actor_id=payload.actor_id,
                 project_id=_selected_project_id(connection, payload.project_id),
             )
         except PermissionError as exc:

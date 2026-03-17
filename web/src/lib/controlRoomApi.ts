@@ -277,6 +277,7 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_at: null
       },
       recent_runs: [],
+      latest_preflight: null,
       notes: "Reference local runtime with normalized runtime phase reporting."
     },
     {
@@ -323,6 +324,7 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_at: null
       },
       recent_runs: [],
+      latest_preflight: null,
       notes: "Simulated local adapter with normalized runtime phase reporting."
     },
     {
@@ -369,6 +371,7 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_at: null
       },
       recent_runs: [],
+      latest_preflight: null,
       notes: "Simulated API-style adapter with normalized runtime phase reporting."
     }
   ],
@@ -683,6 +686,19 @@ export async function setProviderSettings(providerId: string, settings: Record<s
     project_id: getSelectedProjectId()
   });
   return payload;
+}
+
+export async function runProviderPreflight(providerId: string) {
+  const payload = await postJson(`/api/providers/${providerId}/actions/run-preflight`, {
+    actor_id: "agent_allocator",
+    project_id: getSelectedProjectId()
+  });
+  return payload as {
+    provider_id: string;
+    status: string;
+    summary: string;
+    issues?: string[];
+  };
 }
 
 export async function setRecoveryPolicy(

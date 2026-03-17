@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchProviders, runProviderTask, setProviderMode, setProviderSettings } from "../lib/controlRoomApi";
+import { fetchProviders, runProviderPreflight, runProviderTask, setProviderMode, setProviderSettings } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { ProviderRunTarget, ProviderStatusItem, ProvidersResponse } from "../types";
 
@@ -66,6 +66,7 @@ export function ProvidersPage() {
   const [pendingRun, setPendingRun] = useState<string | null>(null);
   const [pendingMode, setPendingMode] = useState<string | null>(null);
   const [pendingSettings, setPendingSettings] = useState<string | null>(null);
+  const [pendingPreflight, setPendingPreflight] = useState<string | null>(null);
   const [settingsDrafts, setSettingsDrafts] = useState<Record<string, Record<string, string>>>({});
   const livePulse = useLivePulse();
 
@@ -126,6 +127,20 @@ export function ProvidersPage() {
       setNotice(`Provider mode update failed for ${providerId}; keeping the previous configuration.`);
     } finally {
       setPendingMode(null);
+    }
+  }
+
+  async function handleRunPreflight(provider: ProviderStatusItem) {
+    setPendingPreflight(provider.id);
+    setNotice(null);
+    try {
+      const payload = await runProviderPreflight(provider.id);
+      await reloadProviders();
+      setNotice(payload.summary);
+    } catch {
+      setNotice(`Provider preflight failed for ${provider.name}; keeping the previous readiness state.`);
+    } finally {
+      setPendingPreflight(null);
     }
   }
 
@@ -259,6 +274,15 @@ export function ProvidersPage() {
                           : ""}
                       </p>
                     ) : null}
+                    {provider.latest_preflight ? (
+                      <p>
+                        Preflight: {provider.latest_preflight.status.replace(/_/g, " ")}
+                        {provider.latest_preflight.checked_at
+                          ? ` | ${new Date(provider.latest_preflight.checked_at).toLocaleString()}`
+                          : ""}
+                        {provider.latest_preflight.summary ? ` | ${provider.latest_preflight.summary}` : ""}
+                      </p>
+                    ) : null}
                     <p>Available modes: {(provider.available_execution_modes ?? []).join(", ") || "local_simulation"}</p>
                     {runtimeControls ? <p>{runtimeControls}</p> : null}
                     {(provider.guardrails ?? []).map((guardrail) => (
@@ -266,6 +290,9 @@ export function ProvidersPage() {
                     ))}
                     {provider.config_warnings?.map((warning) => (
                       <p key={warning}>{warning}</p>
+                    ))}
+                    {provider.latest_preflight?.issues?.map((issue) => (
+                      <p key={issue}>{issue}</p>
                     ))}
                     {Object.keys(provider.configurable_runtime_controls ?? {}).length > 0 ? (
                       <div>
@@ -315,6 +342,14 @@ export function ProvidersPage() {
                         </button>
                       );
                     })}
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingPreflight === provider.id || pendingMode !== null || pendingSettings !== null}
+                      onClick={() => void handleRunPreflight(provider)}
+                    >
+                      {pendingPreflight === provider.id ? "Checking..." : "Run preflight"}
+                    </button>
                     {Object.keys(provider.configurable_runtime_controls ?? {}).length > 0 ? (
                       <button
                         type="button"

@@ -522,6 +522,20 @@ def build_brownfield_task_specs(discovery):
             )
         )
 
+    task_specs.append(
+        (
+            "blocked",
+            "Align runtime and provider settings with existing tooling",
+            "agent_builder",
+            84,
+            "Compare MAAS runtime expectations against the discovered {primary_language} stack and project tooling.".format(
+                primary_language=primary_language
+            ),
+            BROWNFIELD_PENDING_REVIEW_STATE,
+            0,
+        )
+    )
+
     if len(task_specs) == 1:
         task_specs.extend(
             [
@@ -541,17 +555,6 @@ def build_brownfield_task_specs(discovery):
                     88,
                     "Turn the imported repository structure ({top_dirs}) into operator-visible work areas.".format(
                         top_dirs=top_dirs
-                    ),
-                    BROWNFIELD_PENDING_REVIEW_STATE,
-                    0,
-                ),
-                (
-                    "blocked",
-                    "Align runtime and provider settings with existing tooling",
-                    "agent_builder",
-                    84,
-                    "Compare MAAS runtime expectations against the discovered {primary_language} stack and project tooling.".format(
-                        primary_language=primary_language
                     ),
                     BROWNFIELD_PENDING_REVIEW_STATE,
                     0,

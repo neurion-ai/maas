@@ -162,7 +162,7 @@ lint = "example:main"
             self.assertEqual(config["onboarding"]["review_status"], "approved")
             self.assertEqual(released_tasks, 0)
             self.assertEqual(open_alerts, 0)
-            self.assertEqual(ready_or_planned, 5)
+            self.assertEqual(ready_or_planned, 6)
 
     def test_rejecting_brownfield_review_keeps_imported_tasks_gated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -209,7 +209,7 @@ lint = "example:main"
             self.assertEqual(updated_review_task["status"], "planned")
             self.assertEqual(updated_review_task["review_state"], "changes_requested")
             self.assertEqual(config["onboarding"]["review_status"], "changes_requested")
-            self.assertEqual(gated_tasks, 5)
+            self.assertEqual(gated_tasks, 6)
 
     def test_pause_resume_and_reprioritize_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

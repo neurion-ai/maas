@@ -92,7 +92,7 @@ lint = "example:main"
             self.assertEqual(config["onboarding"]["mode"], "brownfield")
             self.assertEqual(config["onboarding"]["review_status"], "review_pending")
             self.assertEqual(session_count, 0)
-            self.assertEqual(blocked_gated_count, 5)
+            self.assertEqual(blocked_gated_count, 6)
             self.assertIn("python_script:lint", config["onboarding"]["discovery_summary"]["workflow_labels"])
             self.assertIn("make_target:test", config["onboarding"]["discovery_summary"]["workflow_labels"])
             self.assertIn("src", config["onboarding"]["discovery_summary"]["repo_areas"])
@@ -100,6 +100,7 @@ lint = "example:main"
             self.assertIn("Validate imported workflow: lint", task_titles)
             self.assertIn("Validate imported workflow: test", task_titles)
             self.assertIn("Map imported repo area: src", task_titles)
+            self.assertIn("Align runtime and provider settings with existing tooling", task_titles)
 
     def test_bootstrap_auto_detects_brownfield_from_hidden_repo_signals(self):
         with tempfile.TemporaryDirectory() as tmpdir:

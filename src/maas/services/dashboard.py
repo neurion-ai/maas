@@ -1,9 +1,14 @@
 """Dashboard read models for overview, goal tree, and roster surfaces."""
 
 from datetime import datetime
+import json
 
 from maas.services.escalations import fetch_escalations
 from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_repeated_failure_tasks, repeated_failure_task_count
+
+
+BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
+BROWNFIELD_PENDING_REVIEW_STATE = "awaiting_onboarding_approval"
 
 
 def _parse_timestamp(value):
@@ -22,15 +27,92 @@ def _age_seconds(value):
     return int((datetime.utcnow() - parsed).total_seconds())
 
 
+def _load_project_config(raw_config):
+    try:
+        config = json.loads(raw_config or "{}")
+    except ValueError:
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _derive_onboarding_state(connection, project_row):
+    if project_row is None:
+        return None
+
+    config = _load_project_config(project_row["config_json"])
+    onboarding = dict(config.get("onboarding") or {})
+    mode = onboarding.get("mode") or "greenfield"
+
+    if mode != "brownfield":
+        return {
+            "mode": mode,
+            "review_status": onboarding.get("review_status") or "not_applicable",
+            "review_required": False,
+            "discovery_summary": onboarding.get("discovery_summary") or {},
+            "review_task_id": None,
+            "review_task_status": None,
+            "review_task_review_state": None,
+            "pending_gated_tasks": 0,
+            "reviewed_by": onboarding.get("reviewed_by"),
+            "reviewed_at": onboarding.get("reviewed_at"),
+        }
+
+    review_task = connection.execute(
+        """
+        SELECT task_id, status, review_state
+        FROM tasks
+        WHERE project_id = ? AND title = ?
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (project_row["project_id"], BROWNFIELD_REVIEW_TASK_TITLE),
+    ).fetchone()
+    pending_gated_tasks = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE project_id = ?
+          AND status = 'blocked'
+          AND review_state = ?
+        """,
+        (project_row["project_id"], BROWNFIELD_PENDING_REVIEW_STATE),
+    ).fetchone()["count"]
+
+    review_status = onboarding.get("review_status")
+    if not review_status:
+        if review_task is None:
+            review_status = "review_pending"
+        elif review_task["status"] == "done" or review_task["review_state"] == "approved":
+            review_status = "approved"
+        elif review_task["review_state"] == "changes_requested":
+            review_status = "changes_requested"
+        else:
+            review_status = "review_pending"
+
+    return {
+        "mode": "brownfield",
+        "review_status": review_status,
+        "review_required": review_status != "approved",
+        "discovery_summary": onboarding.get("discovery_summary") or {},
+        "review_task_id": review_task["task_id"] if review_task else onboarding.get("review_task_id"),
+        "review_task_status": review_task["status"] if review_task else None,
+        "review_task_review_state": review_task["review_state"] if review_task else None,
+        "pending_gated_tasks": pending_gated_tasks,
+        "reviewed_by": onboarding.get("reviewed_by"),
+        "reviewed_at": onboarding.get("reviewed_at"),
+    }
+
+
 def fetch_overview(connection):
     project = connection.execute(
         """
-        SELECT project_id, name, description, project_type
+        SELECT project_id, name, description, project_type, config_json
         FROM projects
         ORDER BY created_at ASC
         LIMIT 1
         """
     ).fetchone()
+    onboarding = _derive_onboarding_state(connection, project)
 
     task_counts = {
         row["status"]: row["count"]
@@ -126,7 +208,17 @@ def fetch_overview(connection):
     escalation_summary = fetch_escalations(connection)["summary"]
 
     return {
-        "project": dict(project) if project else None,
+        "project": (
+            {
+                "project_id": project["project_id"],
+                "name": project["name"],
+                "description": project["description"],
+                "project_type": project["project_type"],
+            }
+            if project
+            else None
+        ),
+        "onboarding": onboarding,
         "summary": {
             "tasks_total": sum(task_counts.values()),
             "tasks_in_progress": task_counts.get("in_progress", 0),

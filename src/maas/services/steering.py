@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.bootstrap import BROWNFIELD_PENDING_REVIEW_STATE, BROWNFIELD_REVIEW_TASK_TITLE
 from maas.services.artifacts import artifact_scope_rows, purge_artifact_scope
 from maas.services.recovery_policy import (
     fetch_project_recovery_policy,
@@ -10,7 +11,11 @@ from maas.services.recovery_policy import (
     retry_deadline,
 )
 from maas.services.scheduler import refresh_ready_tasks
-from maas.services.alerts import resolve_stale_heartbeat_alerts, resolve_task_session_failed_alerts
+from maas.services.alerts import (
+    resolve_brownfield_onboarding_alerts,
+    resolve_stale_heartbeat_alerts,
+    resolve_task_session_failed_alerts,
+)
 from maas.services.failure_memory import (
     failure_attempt_count,
     dismiss_quarantine_queue_entry,
@@ -26,6 +31,76 @@ from maas.services.security import (
 )
 
 RECOVERABLE_FAILURE_REVIEW_STATES = ("session_failed", "stale_session")
+
+
+def _load_project_config(connection, project_id):
+    row = connection.execute(
+        "SELECT config_json FROM projects WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        config = json.loads(row["config_json"] or "{}")
+    except ValueError:
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def _save_project_config(connection, project_id, config):
+    connection.execute(
+        "UPDATE projects SET config_json = ? WHERE project_id = ?",
+        (json.dumps(config), project_id),
+    )
+
+
+def _is_brownfield_onboarding_review_task(connection, task):
+    config = _load_project_config(connection, task["project_id"])
+    onboarding = config.get("onboarding") or {}
+    return onboarding.get("mode") == "brownfield" and task["title"] == BROWNFIELD_REVIEW_TASK_TITLE
+
+
+def _set_project_onboarding_review_state(connection, project_id, actor_id, status, task_id=None):
+    config = _load_project_config(connection, project_id)
+    onboarding = dict(config.get("onboarding") or {})
+    reviewed_at = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
+    onboarding["review_status"] = status
+    onboarding["reviewed_by"] = actor_id
+    onboarding["reviewed_at"] = reviewed_at
+    if task_id:
+        onboarding["review_task_id"] = task_id
+    config["onboarding"] = onboarding
+    _save_project_config(connection, project_id, config)
+
+
+def _release_brownfield_onboarding_tasks(connection, project_id):
+    released_rows = connection.execute(
+        """
+        SELECT task_id
+        FROM tasks
+        WHERE project_id = ?
+          AND status = 'blocked'
+          AND review_state = ?
+        """,
+        (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
+    ).fetchall()
+    if not released_rows:
+        return []
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'planned',
+            review_state = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+          AND status = 'blocked'
+          AND review_state = ?
+        """,
+        (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
+    )
+    refresh_ready_tasks(connection, commit=False)
+    return [row["task_id"] for row in released_rows]
 
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
@@ -94,7 +169,7 @@ def _load_purgeable_artifact_scope(connection, project_paths, actor_id, task_id=
 def review_task(connection, task_id, actor_id, decision):
     task = connection.execute(
         """
-        SELECT task_id, project_id, assigned_agent_id, status
+        SELECT task_id, project_id, assigned_agent_id, status, title, review_state
         FROM tasks
         WHERE task_id = ?
         """,
@@ -107,8 +182,35 @@ def review_task(connection, task_id, actor_id, decision):
         raise ValueError("Task is not in review")
     if decision not in ("approve", "reject"):
         raise ValueError("Unsupported review decision")
+    is_brownfield_onboarding_review = _is_brownfield_onboarding_review_task(connection, task)
+    audit_detail = {"decision": decision}
 
-    if decision == "approve":
+    if decision == "approve" and is_brownfield_onboarding_review:
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'done', review_state = 'approved', updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        )
+        released_task_ids = _release_brownfield_onboarding_tasks(connection, task["project_id"])
+        _set_project_onboarding_review_state(connection, task["project_id"], actor_id, "approved", task_id=task_id)
+        resolved_alert_ids = resolve_brownfield_onboarding_alerts(
+            connection,
+            task["project_id"],
+            actor_id,
+            reason="brownfield_onboarding_approved",
+        )
+        description = "Brownfield onboarding approved; imported work released for scheduling."
+        audit_detail.update(
+            {
+                "brownfield_onboarding": True,
+                "released_task_ids": released_task_ids,
+                "resolved_alert_ids": resolved_alert_ids,
+            }
+        )
+    elif decision == "approve":
         connection.execute(
             """
             UPDATE tasks
@@ -118,6 +220,26 @@ def review_task(connection, task_id, actor_id, decision):
             (task_id,),
         )
         description = "Review approved; task marked done."
+    elif is_brownfield_onboarding_review:
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'review',
+                review_state = 'changes_requested',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        )
+        _set_project_onboarding_review_state(
+            connection,
+            task["project_id"],
+            actor_id,
+            "changes_requested",
+            task_id=task_id,
+        )
+        description = "Brownfield onboarding rejected; imported work remains gated pending changes."
+        audit_detail["brownfield_onboarding"] = True
     else:
         connection.execute(
             """
@@ -138,7 +260,7 @@ def review_task(connection, task_id, actor_id, decision):
         "review_task",
         "task",
         task_id,
-        {"decision": decision},
+        audit_detail,
     )
     _activity(connection, task["project_id"], task["assigned_agent_id"], task_id, "review_decision", description)
     connection.commit()

@@ -109,6 +109,23 @@ export interface OverviewProject {
   project_type: string;
 }
 
+export interface OverviewOnboarding {
+  mode: string;
+  review_status: string;
+  review_required: boolean;
+  discovery_summary: {
+    primary_language?: string;
+    total_files?: number;
+    package_managers?: string[];
+  };
+  review_task_id?: string | null;
+  review_task_status?: string | null;
+  review_task_review_state?: string | null;
+  pending_gated_tasks: number;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
+}
+
 export interface OverviewSummary {
   tasks_total: number;
   tasks_in_progress: number;
@@ -282,6 +299,7 @@ export interface ArtifactPurgeResponse {
 
 export interface OverviewResponse {
   project: OverviewProject | null;
+  onboarding?: OverviewOnboarding | null;
   summary: OverviewSummary;
   active_work: OverviewWorkItem[];
   recent_activity: ActivityItem[];

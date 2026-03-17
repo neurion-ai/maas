@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchOverview, runAlertOperatorAction, runFailureOperatorAction, runSupervisorPass } from "../lib/controlRoomApi";
+import { reviewTask } from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OverviewResponse, SupervisorRunResponse } from "../types";
 import { StatCard } from "../components/StatCard";
@@ -11,6 +12,7 @@ export function OverviewPage() {
   const [isRunningSupervisor, setIsRunningSupervisor] = useState(false);
   const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
   const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
+  const [pendingOnboardingReview, setPendingOnboardingReview] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -100,6 +102,29 @@ export function OverviewPage() {
     }
   }
 
+  async function handleOnboardingReview(decision: "approve" | "reject") {
+    const reviewTaskId = overview?.onboarding?.review_task_id;
+    if (!reviewTaskId) {
+      return;
+    }
+
+    setPendingOnboardingReview(decision);
+    setNotice(null);
+    try {
+      await reviewTask(reviewTaskId, decision);
+      setOverview(await fetchOverview());
+      setNotice(
+        decision === "approve"
+          ? "Brownfield onboarding approved; imported work is now eligible for scheduling."
+          : "Brownfield onboarding sent back with changes requested; imported work remains gated."
+      );
+    } catch {
+      setNotice("Brownfield onboarding review action failed; keep the imported work under operator review.");
+    } finally {
+      setPendingOnboardingReview(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -132,6 +157,70 @@ export function OverviewPage() {
       </section>
 
       <section className="overview-grid">
+        {overview?.onboarding?.mode === "brownfield" ? (
+          <article className="data-panel">
+            <header className="data-panel__header">
+              <h2>Brownfield onboarding</h2>
+              <p>Imported repo understanding must be explicitly reviewed before the seeded work is released.</p>
+            </header>
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>Status</strong>
+                  <p>{overview.onboarding.review_status.replaceAll("_", " ")}</p>
+                </div>
+                <div className="data-list__meta">
+                  <span>{overview.onboarding.discovery_summary.primary_language ?? "unknown stack"}</span>
+                  <span>{overview.onboarding.discovery_summary.total_files ?? 0} files scanned</span>
+                </div>
+              </div>
+              <div className="data-list__item">
+                <div>
+                  <strong>Discovery summary</strong>
+                  <p>
+                    {overview.onboarding.discovery_summary.package_managers?.join(", ") || "no package manager detected"}
+                  </p>
+                </div>
+                <div className="data-list__meta">
+                  <span>{overview.onboarding.pending_gated_tasks} gated tasks</span>
+                  <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
+                </div>
+              </div>
+              {overview.onboarding.reviewed_at ? (
+                <div className="data-list__item">
+                  <div>
+                    <strong>Last decision</strong>
+                    <p>{overview.onboarding.reviewed_by ?? "unknown actor"}</p>
+                  </div>
+                  <div className="data-list__meta">
+                    <span>{new Date(overview.onboarding.reviewed_at).toLocaleString()}</span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            {overview.onboarding.review_required && overview.onboarding.review_task_id ? (
+              <div className="task-card__actions">
+                <button
+                  type="button"
+                  className="task-action task-action--approve"
+                  disabled={pendingOnboardingReview === "approve" || pendingOnboardingReview === "reject"}
+                  onClick={() => void handleOnboardingReview("approve")}
+                >
+                  {pendingOnboardingReview === "approve" ? "Approving..." : "Approve imported understanding"}
+                </button>
+                <button
+                  type="button"
+                  className="task-action task-action--reject"
+                  disabled={pendingOnboardingReview === "approve" || pendingOnboardingReview === "reject"}
+                  onClick={() => void handleOnboardingReview("reject")}
+                >
+                  {pendingOnboardingReview === "reject" ? "Rejecting..." : "Request changes"}
+                </button>
+              </div>
+            ) : null}
+          </article>
+        ) : null}
+
         <article className="data-panel">
           <header className="data-panel__header">
             <h2>Supervisor pass</h2>

@@ -55,6 +55,28 @@ class DashboardApiTest(unittest.TestCase):
             self.assertGreaterEqual(len(goal_tree_payload["roots"]), 1)
             self.assertIn("children", goal_tree_payload["roots"][0])
 
+    def test_overview_exposes_brownfield_onboarding_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+
+            bootstrap_project(tmpdir, name="Brownfield Dashboard Test", description="dashboard brownfield", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            overview_payload = client.get("/api/overview").json()
+
+            self.assertEqual(overview_payload["onboarding"]["mode"], "brownfield")
+            self.assertEqual(overview_payload["onboarding"]["review_status"], "review_pending")
+            self.assertTrue(overview_payload["onboarding"]["review_required"])
+            self.assertEqual(overview_payload["onboarding"]["pending_gated_tasks"], 4)
+            self.assertEqual(
+                overview_payload["onboarding"]["discovery_summary"]["primary_language"],
+                "python",
+            )
+
     def test_overview_repeated_failure_summary_is_not_capped_to_top_five(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Dashboard Failure Count Test", description="Dashboard failure count test", project_type="custom")

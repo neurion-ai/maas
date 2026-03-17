@@ -215,6 +215,26 @@ def resolve_stale_heartbeat_alerts(connection, project_id, agent_id, actor_id, r
     )
 
 
+def resolve_brownfield_onboarding_alerts(connection, project_id, actor_id, reason):
+    return _resolve_alerts_by_query(
+        connection,
+        """
+        SELECT alert_id
+        FROM alerts
+        WHERE project_id = ?
+          AND status IN ('open', 'acknowledged')
+          AND title = 'Brownfield onboarding review pending'
+        """,
+        (project_id,),
+        project_id,
+        actor_id,
+        reason,
+        None,
+        "brownfield_onboarding_alert_resolved",
+        "Brownfield onboarding review alerts resolved after project approval.",
+    )
+
+
 def fetch_alerts(connection):
     rows = connection.execute(
         """

@@ -11,6 +11,15 @@ from maas.services.lifecycle import end_session, start_session
 
 
 class BoardApiActionsTest(unittest.TestCase):
+    def _seed_brownfield_repo(self, project_root):
+        import os
+
+        os.makedirs(os.path.join(project_root, "src"), exist_ok=True)
+        with open(os.path.join(project_root, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write("# Imported Project\n")
+        with open(os.path.join(project_root, "src", "app.py"), "w", encoding="utf-8") as handle:
+            handle.write("print('hello')\n")
+
     def _update_recovery_config(self, project_root, **recovery_updates):
         connection = connect(project_paths(project_root))
         try:
@@ -86,6 +95,106 @@ class BoardApiActionsTest(unittest.TestCase):
             self.assertEqual(len(matching_cards), 1)
             self.assertEqual(matching_cards[0]["status"], "planned")
             self.assertEqual(matching_cards[0]["review_state"], "changes_requested")
+
+    def test_approving_brownfield_review_releases_gated_tasks_and_resolves_alert(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._seed_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Approval Test", description="brownfield review", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            review_payload = client.get("/api/board", params={"search": "Review imported project understanding"}).json()
+            review_task = [
+                task
+                for column in review_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Review imported project understanding"
+            ][0]
+
+            response = client.post(
+                f"/api/tasks/{review_task['task_id']}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                config = json.loads(connection.execute("SELECT config_json FROM projects LIMIT 1").fetchone()["config_json"])
+                released_tasks = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM tasks
+                    WHERE review_state = 'awaiting_onboarding_approval'
+                    """
+                ).fetchone()["count"]
+                open_alerts = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM alerts
+                    WHERE title = 'Brownfield onboarding review pending' AND status != 'resolved'
+                    """
+                ).fetchone()["count"]
+                ready_or_planned = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM tasks
+                    WHERE title != 'Review imported project understanding'
+                      AND status IN ('ready', 'planned', 'blocked')
+                    """
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+
+            self.assertEqual(config["onboarding"]["review_status"], "approved")
+            self.assertEqual(released_tasks, 0)
+            self.assertEqual(open_alerts, 0)
+            self.assertEqual(ready_or_planned, 4)
+
+    def test_rejecting_brownfield_review_keeps_imported_tasks_gated(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._seed_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Reject Test", description="brownfield reject", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            review_payload = client.get("/api/board", params={"search": "Review imported project understanding"}).json()
+            review_task = [
+                task
+                for column in review_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Review imported project understanding"
+            ][0]
+
+            response = client.post(
+                f"/api/tasks/{review_task['task_id']}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "reject"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            board_payload = client.get("/api/board", params={"search": "Review imported project understanding"}).json()
+            updated_review_task = [
+                task
+                for column in board_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Review imported project understanding"
+            ][0]
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                config = json.loads(connection.execute("SELECT config_json FROM projects LIMIT 1").fetchone()["config_json"])
+                gated_tasks = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM tasks
+                    WHERE review_state = 'awaiting_onboarding_approval'
+                      AND status = 'blocked'
+                    """
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_review_task["status"], "review")
+            self.assertEqual(updated_review_task["review_state"], "changes_requested")
+            self.assertEqual(config["onboarding"]["review_status"], "changes_requested")
+            self.assertEqual(gated_tasks, 4)
 
     def test_pause_resume_and_reprioritize_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

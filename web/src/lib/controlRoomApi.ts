@@ -33,6 +33,18 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     description: "Fallback overview while the API is unavailable.",
     project_type: "custom"
   },
+  onboarding: {
+    mode: "greenfield",
+    review_status: "not_applicable",
+    review_required: false,
+    discovery_summary: {},
+    review_task_id: null,
+    review_task_status: null,
+    review_task_review_state: null,
+    pending_gated_tasks: 0,
+    reviewed_by: null,
+    reviewed_at: null
+  },
   summary: {
     tasks_total: 8,
     tasks_in_progress: 2,

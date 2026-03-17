@@ -214,25 +214,6 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         connection=connection,
         project_id=scoped_project_id,
     )
-    if provider["configured_execution_mode"] == "local_simulation":
-        description = "{0} preflight passed in local simulation mode.".format(provider["name"])
-        _record_provider_preflight(
-            connection,
-            scoped_project_id,
-            actor_id,
-            provider,
-            description,
-            preflight_status="simulation_ready",
-            execution_mode="local_simulation",
-        )
-        connection.commit()
-        return {
-            "provider_id": provider_id,
-            "status": "simulation_ready",
-            "summary": description,
-            "issues": [],
-        }
-
     if not provider["is_runnable"]:
         issues = list(provider.get("config_warnings") or [])
         description = "{0} preflight failed: {1}".format(
@@ -256,6 +237,25 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
             "status": "failed",
             "summary": description,
             "issues": issues,
+        }
+
+    if provider["configured_execution_mode"] == "local_simulation":
+        description = "{0} preflight passed in local simulation mode.".format(provider["name"])
+        _record_provider_preflight(
+            connection,
+            scoped_project_id,
+            actor_id,
+            provider,
+            description,
+            preflight_status="simulation_ready",
+            execution_mode="local_simulation",
+        )
+        connection.commit()
+        return {
+            "provider_id": provider_id,
+            "status": "simulation_ready",
+            "summary": description,
+            "issues": [],
         }
 
     runtime_env = _runtime_env(project_paths, {"id": provider_id})

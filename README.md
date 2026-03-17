@@ -44,6 +44,8 @@ Legend:
 - [x] Failure-memory logging, quarantine visibility, repeated-failure alerts, incident-specific alert actions, and task recovery for failure-blocked work
 - [x] Manual recover-and-requeue for failure-blocked tasks
 - [x] Timed-out and failed-session auto-retry with tracked retry state
+- [x] Explicit scheduler scoring, board-visible scheduler rationale, and adaptive replan guidance
+- [x] Manual replanning queue plus dead-letter routing for retry-exhausted work
 - [x] Quarantine queue workflow with restore, dismiss, reopen, and restore+requeue actions
 - [x] Recovery for agents left in `error`
 - [x] Real local Claude Code CLI integration behind explicit provider config
@@ -56,21 +58,22 @@ Legend:
 
 ### Still to do on `main`
 
-- [ ] Adaptive replanning and scheduling feedback beyond the current explicit scorer and manual replan queue
-- [ ] Broader automated restart, retry, backoff, and DLQ workflows
+- [ ] Broader automated restart, retry, backoff, and self-healing workflows beyond the current DLQ path
 - [ ] Broader external provider coverage beyond the current local CLI paths
 - [ ] Higher-level artifact retention policy automation beyond the current browser, provenance, and export flows
-- [ ] Deeper brownfield onboarding and multi-project support
+- [ ] Deeper brownfield onboarding and multi-project execution support
 - [ ] Stronger sandboxing and isolation guarantees
+- [ ] Project-aware background orchestration beyond the current multi-project read scope
 
 ### Next high-value PR sequence
 
-- [x] `#75` Brownfield codebase map and repo-derived planning
-- [x] `#76` Multi-project foundation
-- [x] `#77` Runtime sandbox and isolation hardening
-- [ ] `#78` Adaptive replanning and scheduler feedback
-- [ ] `#79` Policy-driven self-healing and DLQ automation
-- [ ] `#80` Broader provider/runtime coverage
+- [ ] `#80` Provider runtime preflight and readiness checks
+- [ ] `#81` Multi-project write path and project lifecycle
+- [ ] `#82` Project-aware supervisor and background orchestration
+- [ ] `#83` Brownfield file-backed planning and repo navigation
+- [ ] `#84` Policy-driven self-healing and circuit breakers
+- [ ] `#85` Sandboxed provider runners per project
+- [ ] `#86` Remote or queued provider execution beyond local CLI paths
 
 ## Quick Start
 

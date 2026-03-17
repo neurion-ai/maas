@@ -13,6 +13,7 @@
 - [x] Local live-provider operation exists for Claude Code and OpenAI Codex behind explicit project configuration.
 - [x] Operators can now work incidents from multiple surfaces: Alerts, Failures, Recovery, Overview, and the Artifact browser.
 - [x] Brownfield codebase mapping, multi-project read scoping, and first-pass live-provider isolation hardening are now on `main`.
+- [x] Adaptive scheduling feedback, manual replanning, and retry-exhaustion DLQ routing are now on `main`.
 - [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
@@ -46,6 +47,7 @@
 - [x] Real local Claude Code CLI execution path behind explicit provider config
 - [x] Real local OpenAI Codex CLI execution path behind explicit provider config
 - [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
+- [x] Explicit scheduler scoring, board-visible scheduler rationale, and adaptive replanning guidance
 
 ### Control room and steering
 
@@ -80,6 +82,7 @@
 - [x] Quarantine details are visible in recent failure reads and the control-room failure surfaces
 - [x] Artifact browser visibility includes artifact state, quarantine metadata, missing-file detection, preview, guarded download, compare, lineage/provenance pivots, export bundles, and direct quarantine actions
 - [x] First-class quarantine queue reads plus restore, dismiss, reopen, and restore+requeue actions
+- [x] Dead-letter queue routing for retry-exhausted tasks plus Recovery visibility and finish-replan resolution
 - [x] Failure-specific operator actions for repeated-failure incidents and recovery-linked alerts
 - [x] Overview and Failures surfaces expose direct operator actions for recent failures and repeated-failure tasks
 - [x] Operator recovery for failure-blocked tasks
@@ -90,9 +93,8 @@
 
 ### Scheduling and planning
 
-- [ ] Adaptive replanning loop beyond the current manual replan queue
-- [ ] Smarter allocator and scheduling feedback beyond the current explicit scorer
 - [ ] Broader scheduler-driven recovery and requeue policies
+- [ ] More autonomous replanning beyond the current explicit scorer and manual replan queue
 
 ### Providers
 
@@ -102,7 +104,7 @@
 ### Resilience and recovery
 
 - [ ] Broader automated restart and retry policies
-- [ ] Broader DLQ and quarantine workflows
+- [ ] Broader DLQ and quarantine workflows beyond the current retry-exhaustion dead-letter path
 - [ ] Broader failure-specific resolution flows beyond the current repeated-failure, recovery-linked, and quarantine incident actions
 - [ ] Higher-level artifact retention and cleanup policy automation beyond the current browser, provenance, export, and incident-handling flows
 - [ ] Broader self-healing and recovery orchestration
@@ -119,6 +121,16 @@
 - [x] If the goal is a single-project local MAAS workspace with a human operator in the loop, the repo now covers most of the required surfaces.
 - [x] The strongest areas today are board operations, recovery handling, failure memory, provider visibility, artifact inspection, and control-room tooling.
 - [ ] The biggest remaining gaps are autonomous planning quality, broader provider/runtime coverage, stronger self-healing, and platform expansion beyond one greenfield project.
+
+## Next High-Value PR Sequence
+
+- [ ] `#80` Provider runtime preflight and readiness checks
+- [ ] `#81` Multi-project write path and project lifecycle
+- [ ] `#82` Project-aware supervisor and background orchestration
+- [ ] `#83` Brownfield file-backed planning and repo navigation
+- [ ] `#84` Policy-driven self-healing and circuit breakers
+- [ ] `#85` Sandboxed provider runners per project
+- [ ] `#86` Remote or queued provider execution beyond local CLI paths
 
 ## Batch View
 

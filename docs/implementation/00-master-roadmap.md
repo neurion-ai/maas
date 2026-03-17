@@ -21,8 +21,8 @@ Legend for the checklist column:
 | 4. Greenfield onboarding | `[x]` | `maas init`, generated workspace, seeded backlog, project-understanding artifact |
 | 5. Supervisor, dashboard, and Kanban V1 | `[ ]` | Board API, board UI, control-room views, supervisor loop, ready refresh, idle-agent allocation, overview/roster operator controls, board/overview/goal tree/failure/provider/artifact reads, artifact browser with preview/download/compare/provenance/export flows, artifact-row operator actions, live websocket transport, and overview/failure/recovery action controls |
 | 6. Security and human steering | `[ ]` | Review, reprioritize, reassign, pause/resume, halt actions with audit logging, board controls, role-baseline gating, task-scoped execution grants, and escalation queue approvals |
-| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out and failed-session auto-retry, quarantine queue restore/dismiss/reopen workflows, repeated-failure alerts, failure-action read-model visibility across Failures/Overview/Recovery/Artifacts, and task plus agent recovery exist; broader recovery is still pending |
-| 8. Brownfield and multi-project | `[ ]` | Brownfield onboarding, codebase mapping, multi-project read scoping, and first-pass runtime isolation have started on `main`; deeper import, broader project architecture, and stronger isolation are still pending |
+| 7. Resilience and failure memory | `[ ]` | Stale-session detection, failure logging for failed/timed-out sessions, timed-out and failed-session auto-retry, explicit scheduler feedback, manual replanning, retry-exhaustion DLQ routing, quarantine queue restore/dismiss/reopen workflows, repeated-failure alerts, failure-action read-model visibility across Failures/Overview/Recovery/Artifacts, and task plus agent recovery exist; broader recovery is still pending |
+| 8. Brownfield and multi-project | `[ ]` | Brownfield onboarding, codebase mapping, multi-project read scoping, and first-pass runtime isolation have started on `main`; deeper import, project lifecycle, background orchestration, broader project architecture, and stronger isolation are still pending |
 
 ## Progress Summary
 
@@ -30,22 +30,24 @@ Legend for the checklist column:
 - [x] Brownfield onboarding has started on `main` with repo detection, approval gating, imported workflow/repo-area backlog seeding, and overview visibility.
 - [x] The current implementation is roughly `85-90%` complete for that prototype target.
 - [ ] The repository is still much earlier against the broader long-horizon roadmap.
-- [ ] The biggest remaining roadmap buckets are adaptive planning quality, stronger recovery automation, deeper brownfield execution, broader multi-project architecture, stronger isolation, and broader provider/runtime coverage.
+- [ ] The biggest remaining roadmap buckets are project lifecycle/orchestration, deeper brownfield execution, stronger recovery automation, stronger isolation, and broader provider/runtime coverage.
 
 ## Next Recommended PR Sequence
 
-- [x] `#75` Brownfield codebase map and repo-derived planning:
-  extend brownfield import from summary signals into a real codebase map with detected services, tests, packages, and runnable workflows that seed more concrete reviewable task graphs.
-- [x] `#76` Multi-project foundation:
-  introduce first-class project scoping for read models, provider config, artifact roots, recovery policy, and operator surfaces so one MAAS workspace can manage more than one project safely.
-- [x] `#77` Runtime sandbox and isolation hardening:
-  add stricter provider execution boundaries, artifact-path isolation, and command/runtime guardrails so live-provider and brownfield execution surfaces are safer.
-- [ ] `#78` Adaptive replanning and scheduler feedback:
-  expand the explicit scheduler into a feedback loop that can demote, split, or defer stuck work based on retry pressure, failures, and brownfield repo signals.
-- [ ] `#79` Policy-driven self-healing and DLQ automation:
-  turn the current recovery workbench into a stronger automation layer with circuit breakers, quarantine policies, and guarded automatic recovery/escalation decisions.
-- [ ] `#80` Broader provider/runtime coverage:
-  add the next live execution modes beyond local CLI paths once scheduling, isolation, and recovery policy are strong enough to support them.
+- [ ] `#80` Provider runtime preflight and readiness checks:
+  let operators verify live runtime readiness before task execution by checking CLI availability, required auth env, and persisted readiness state in the Providers surface.
+- [ ] `#81` Multi-project write path and project lifecycle:
+  move beyond read scoping by adding create/import/archive flows, project-scoped write operations, and explicit lifecycle management for multiple repos.
+- [ ] `#82` Project-aware supervisor and background orchestration:
+  make the scheduler, supervisor, live transport, and recovery automation operate cleanly per project instead of assuming a single active workspace loop.
+- [ ] `#83` Brownfield file-backed planning and repo navigation:
+  turn brownfield discovery into file-linked task graphs, code-area navigation, and reviewable imported workflow execution plans that operators can actually steer.
+- [ ] `#84` Policy-driven self-healing and circuit breakers:
+  expand the current recovery workbench into guarded automation for recover/requeue/quarantine/escalate decisions with explicit stop conditions.
+- [ ] `#85` Sandboxed provider runners per project:
+  strengthen runtime isolation by moving from sanitized subprocess envs to clearer per-project runtime boundaries and safer execution sandboxes.
+- [ ] `#86` Remote or queued provider execution beyond local CLI paths:
+  add the next meaningful execution mode after local CLI paths, such as a queued or remote runner, once readiness and isolation are strong enough.
 
 ## Delivery Order
 

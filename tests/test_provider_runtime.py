@@ -378,6 +378,39 @@ class ProviderRuntimeTest(unittest.TestCase):
             providers = {provider["id"]: provider for provider in client.get("/api/providers").json()["providers"]}
             self.assertEqual(providers["python_script"]["latest_preflight"]["status"], "simulation_ready")
 
+    def test_provider_preflight_does_not_mark_misconfigured_simulation_provider_as_ready(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                self._set_provider_config(
+                    connection,
+                    "claude_code",
+                    {
+                        "mode": 1,
+                        "cli_command": "claude",
+                        "timeout_seconds": 120,
+                        "permission_mode": "acceptEdits",
+                        "model": "sonnet",
+                    },
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/claude_code/actions/run-preflight",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "failed")
+            self.assertIn("mode must be a string", response.json()["summary"])
+
+            providers = {provider["id"]: provider for provider in client.get("/api/providers").json()["providers"]}
+            self.assertEqual(providers["claude_code"]["latest_preflight"]["status"], "failed")
+
     def test_provider_preflight_checks_live_runtime_readiness(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")

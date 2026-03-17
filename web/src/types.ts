@@ -661,6 +661,7 @@ export interface RecoveryPolicySettings {
   auto_retry_timeout_sessions: boolean;
   auto_retry_failed_sessions: boolean;
   auto_recover_blocked_tasks: boolean;
+  auto_dlq_retry_exhausted_tasks: boolean;
   max_timed_out_retries: number;
   max_failed_session_retries: number;
   timed_out_retry_cooldown_seconds: number;
@@ -692,6 +693,36 @@ export interface RecoveryTaskItem {
   replan_summary?: string | null;
 }
 
+export interface DeadLetterQueueItem {
+  dlq_id: string;
+  project_id: string;
+  task_id: string;
+  failure_id?: string | null;
+  reason: string;
+  status: string;
+  resolution_note?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+  resolved_at?: string | null;
+  title: string;
+  task_status: string;
+  review_state?: string | null;
+  priority: number;
+  retry_count?: number | null;
+  auto_retry_limit?: number | null;
+  last_retry_reason?: string | null;
+  next_retry_at?: string | null;
+  next_retry_reason?: string | null;
+  goal_title?: string | null;
+  agent_name?: string | null;
+  detail?: {
+    failure_type?: string;
+    retry_count?: number;
+    retry_limit?: number;
+    source?: string;
+  };
+}
+
 export interface RecoveryPolicyResponse {
   project_id: string;
   policy: RecoveryPolicySettings;
@@ -703,6 +734,7 @@ export interface RecoveryPolicyResponse {
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
     auto_recovery_candidates: number;
+    open_dead_letter_entries: number;
     tasks_with_retry_overrides: number;
     open_quarantine_entries: number;
     open_failure_alerts: number;
@@ -721,6 +753,7 @@ export interface RecoveryPolicyResponse {
   replanning_candidates: RecoveryTaskItem[];
   needs_replan_tasks: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
+  dead_letter_entries: DeadLetterQueueItem[];
   open_quarantine_entries: QuarantineQueueItem[];
   open_failure_alerts: AlertItem[];
   open_stale_agent_alerts: AlertItem[];

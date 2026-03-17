@@ -558,6 +558,7 @@ lint = "example:main"
 
             connection = connect(project_paths(tmpdir))
             try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
                 task_after_mark = connection.execute(
                     """
                     SELECT status, review_state, assigned_agent_id, next_retry_at, next_retry_reason
@@ -566,6 +567,15 @@ lint = "example:main"
                     """,
                     (task_id,),
                 ).fetchone()
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_finish_replan', ?, ?, 'retry_budget_exhausted', '{"failure_type":"session_failed"}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
             finally:
                 connection.close()
             self.assertEqual(task_after_mark["status"], "blocked")
@@ -588,10 +598,15 @@ lint = "example:main"
                     "SELECT status, review_state FROM tasks WHERE task_id = ?",
                     (task_id,),
                 ).fetchone()
+                dead_letter = connection.execute(
+                    "SELECT status, resolution_note FROM dead_letter_queue WHERE dlq_id = 'dlq_finish_replan'"
+                ).fetchone()
             finally:
                 connection.close()
             self.assertEqual(task_after_finish["status"], "ready")
             self.assertIsNone(task_after_finish["review_state"])
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "replan_finished")
 
     def test_mark_for_replan_allows_tasks_waiting_only_on_next_retry_deadline(self):
         with tempfile.TemporaryDirectory() as tmpdir:

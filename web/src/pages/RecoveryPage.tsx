@@ -18,6 +18,7 @@ import {
 import { useLivePulse } from "../lib/useLivePulse";
 import type {
   AlertItem,
+  DeadLetterQueueItem,
   QuarantineQueueItem,
   RecoveryPolicyResponse,
   RecoveryPolicySettings,
@@ -30,7 +31,8 @@ type RecoveryDraft = Record<keyof RecoveryPolicySettings, string>;
 const BOOLEAN_FIELDS: (keyof RecoveryPolicySettings)[] = [
   "auto_retry_timeout_sessions",
   "auto_retry_failed_sessions",
-  "auto_recover_blocked_tasks"
+  "auto_recover_blocked_tasks",
+  "auto_dlq_retry_exhausted_tasks"
 ];
 
 const NUMBER_FIELDS: (keyof RecoveryPolicySettings)[] = [
@@ -54,6 +56,7 @@ function buildDraft(
     auto_retry_timeout_sessions: payload.policy.auto_retry_timeout_sessions ? "true" : "false",
     auto_retry_failed_sessions: payload.policy.auto_retry_failed_sessions ? "true" : "false",
     auto_recover_blocked_tasks: payload.policy.auto_recover_blocked_tasks ? "true" : "false",
+    auto_dlq_retry_exhausted_tasks: payload.policy.auto_dlq_retry_exhausted_tasks ? "true" : "false",
     max_timed_out_retries: String(payload.policy.max_timed_out_retries),
     max_failed_session_retries: String(payload.policy.max_failed_session_retries),
     timed_out_retry_cooldown_seconds: String(payload.policy.timed_out_retry_cooldown_seconds),
@@ -77,6 +80,7 @@ function buildDefaultsDraft(defaults: RecoveryPolicySettings): RecoveryDraft {
     auto_retry_timeout_sessions: defaults.auto_retry_timeout_sessions ? "true" : "false",
     auto_retry_failed_sessions: defaults.auto_retry_failed_sessions ? "true" : "false",
     auto_recover_blocked_tasks: defaults.auto_recover_blocked_tasks ? "true" : "false",
+    auto_dlq_retry_exhausted_tasks: defaults.auto_dlq_retry_exhausted_tasks ? "true" : "false",
     max_timed_out_retries: String(defaults.max_timed_out_retries),
     max_failed_session_retries: String(defaults.max_failed_session_retries),
     timed_out_retry_cooldown_seconds: String(defaults.timed_out_retry_cooldown_seconds),
@@ -260,6 +264,57 @@ function RecoveryQuarantineList({
               >
                 {pendingActionKey === `dismiss:${entry.queue_id}` ? "Dismissing..." : "Dismiss"}
               </button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RecoveryDeadLetterList({
+  entries,
+  pendingTaskId,
+  onFinishReplan
+}: {
+  entries: DeadLetterQueueItem[];
+  pendingTaskId: string | null;
+  onFinishReplan: (taskId: string) => void;
+}) {
+  return (
+    <div className="data-list">
+      {entries.map((entry) => {
+        const canFinishReplan = entry.task_status === "blocked" && entry.review_state === "needs_replan";
+        return (
+          <div key={entry.dlq_id} className="data-list__item">
+            <div>
+              <strong>{entry.title}</strong>
+              <p>
+                Dead-lettered after {entry.detail?.failure_type?.replaceAll("_", " ") ?? entry.reason.replaceAll("_", " ")}.
+              </p>
+              <p>
+                Retry budget: {entry.detail?.retry_count ?? entry.retry_count ?? 0} / {entry.detail?.retry_limit ?? entry.auto_retry_limit ?? "project"}
+                {entry.detail?.source ? ` | ${entry.detail.source.replaceAll("_", " ")}` : ""}
+              </p>
+              <p>
+                Task state: {entry.task_status}
+                {entry.review_state ? ` | ${entry.review_state}` : ""}
+                {entry.agent_name ? ` | ${entry.agent_name}` : ""}
+              </p>
+            </div>
+            <div className="data-list__meta">
+              <span>P{entry.priority}</span>
+              <span>{new Date(entry.created_at).toLocaleString()}</span>
+              {canFinishReplan ? (
+                <button
+                  type="button"
+                  className="task-action task-action--approve"
+                  disabled={pendingTaskId === entry.task_id}
+                  onClick={() => onFinishReplan(entry.task_id)}
+                >
+                  {pendingTaskId === entry.task_id ? "Requeueing..." : "Finish replan"}
+                </button>
+              ) : null}
             </div>
           </div>
         );
@@ -621,6 +676,7 @@ export function RecoveryPage() {
         <StatCard label="Auto-recover candidates" value={recovery?.summary.auto_recovery_candidates ?? 0} tone="warn" />
         <StatCard label="Retry overrides" value={recovery?.summary.tasks_with_retry_overrides ?? 0} />
         <StatCard label="Retry history" value={recovery?.summary.tasks_with_retry_history ?? 0} />
+        <StatCard label="DLQ open" value={recovery?.summary.open_dead_letter_entries ?? 0} tone="warn" />
         <StatCard label="Recoverable blocked" value={recovery?.summary.recoverable_blocked_tasks ?? 0} tone="warn" />
         <StatCard label="Open failure alerts" value={recovery?.summary.open_failure_alerts ?? 0} tone="warn" />
         <StatCard label="Repeated incidents" value={recovery?.summary.open_repeated_failure_alerts ?? 0} tone="warn" />
@@ -682,6 +738,16 @@ export function RecoveryPage() {
                   <select
                     value={currentDraft.auto_recover_blocked_tasks}
                     onChange={(event) => updateDraft("auto_recover_blocked_tasks", event.target.value)}
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Route retry-exhausted tasks to DLQ</span>
+                  <select
+                    value={currentDraft.auto_dlq_retry_exhausted_tasks}
+                    onChange={(event) => updateDraft("auto_dlq_retry_exhausted_tasks", event.target.value)}
                   >
                     <option value="false">Disabled</option>
                     <option value="true">Enabled</option>
@@ -941,6 +1007,31 @@ export function RecoveryPage() {
                 <div>
                   <strong>No retry history</strong>
                   <p>No active tasks currently carry consumed retry budget.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Dead-letter queue</h2>
+              <p>Retry-exhausted tasks routed out of the automatic loop. Finish replanning to resolve the DLQ entry and return the task to readiness evaluation.</p>
+            </div>
+          </header>
+          {(recovery?.dead_letter_entries ?? []).length ? (
+            <RecoveryDeadLetterList
+              entries={recovery?.dead_letter_entries ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onFinishReplan={(taskId) => void handleFinishReplan(taskId)}
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No dead-lettered tasks</strong>
+                  <p>No task is currently parked in the dead-letter queue.</p>
                 </div>
               </div>
             </div>

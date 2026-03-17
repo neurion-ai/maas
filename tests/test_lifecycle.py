@@ -503,6 +503,88 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertIsNone(task["next_retry_reason"])
             self.assertEqual(alert["status"], "open")
 
+    def test_failed_session_routes_to_dead_letter_queue_when_retry_budget_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle DLQ Test",
+                description="Lifecycle DLQ test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_failed_sessions=True,
+                    auto_dlq_retry_exhausted_tasks=True,
+                    max_failed_session_retries=1,
+                    failed_session_retry_cooldown_seconds=45,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle DLQ test",
+                )
+
+                end_session(connection, session_id, "failed", "No retry budget remaining; send to DLQ")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT reason, status, detail_json
+                    FROM dead_letter_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "needs_replan")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_failed")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(dead_letter["reason"], "retry_budget_exhausted")
+            self.assertEqual(dead_letter["status"], "open")
+            self.assertEqual(json.loads(dead_letter["detail_json"])["failure_type"], "session_failed")
+            self.assertEqual(alert["status"], "resolved")
+
     def test_reset_retry_state_restores_failed_session_auto_retry_budget(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

@@ -358,6 +358,78 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "session_timed_out")
 
+    def test_supervisor_routes_timed_out_task_to_dead_letter_queue_when_retry_budget_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor DLQ Test",
+                description="Supervisor DLQ test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_timeout_sessions=True,
+                    auto_dlq_retry_exhausted_tasks=True,
+                    max_timed_out_retries=1,
+                    timed_out_retry_cooldown_seconds=60,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT reason, status, detail_json
+                    FROM dead_letter_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertFalse(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertTrue(supervisor_result["stale_sessions"][0]["dead_lettered"])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "needs_replan")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_timed_out")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(dead_letter["reason"], "retry_budget_exhausted")
+            self.assertEqual(dead_letter["status"], "open")
+            self.assertEqual(json.loads(dead_letter["detail_json"])["failure_type"], "session_timed_out")
+
     def test_supervisor_auto_recovers_safe_blocked_failed_task_when_policy_allows(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

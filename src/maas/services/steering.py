@@ -5,6 +5,7 @@ import json
 from maas.ids import generate_id
 from maas.services.bootstrap import BROWNFIELD_PENDING_REVIEW_STATE, BROWNFIELD_REVIEW_TASK_TITLE
 from maas.services.artifacts import artifact_scope_rows, purge_artifact_scope
+from maas.services.dead_letter import resolve_dead_letter_entries_for_task
 from maas.services.recovery_policy import (
     fetch_project_recovery_policy,
     recover_and_requeue_cooldown_seconds,
@@ -735,6 +736,12 @@ def finish_task_replan(connection, task_id, actor_id):
         {
             "previous_status": task["status"],
             "previous_review_state": task["review_state"],
+            "resolved_dead_letter_entries": resolve_dead_letter_entries_for_task(
+                connection,
+                task["project_id"],
+                task_id,
+                "replan_finished",
+            ),
             "ready_changes": refreshed,
         },
     )

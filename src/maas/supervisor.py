@@ -5,6 +5,13 @@ import json
 
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
+from maas.services.dead_letter import upsert_dead_letter_entry
+from maas.services.failure_memory import (
+    maybe_raise_repeated_failure_alert,
+    quarantine_session_artifacts,
+    record_failure,
+    resolve_repeated_failure_alerts,
+)
 from maas.services.recovery_policy import (
     fetch_auto_recovery_candidate_tasks,
     fetch_project_recovery_policy,
@@ -12,7 +19,6 @@ from maas.services.recovery_policy import (
     task_timed_out_retry_limit,
     timed_out_retry_cooldown_seconds,
 )
-from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 from maas.services.security import revoke_task_capabilities
 from maas.services.steering import _recover_and_requeue_task
@@ -141,6 +147,78 @@ def _maybe_auto_retry_timed_out_task(connection, project_id, task_id, actor_id):
     }
 
 
+def _maybe_route_timed_out_task_to_dlq(connection, project_id, task_id, actor_id, failure_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, retry_count, auto_retry_limit
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None or task["status"] != "in_progress":
+        return None
+
+    recovery_policy = fetch_project_recovery_policy(connection, project_id)
+    if not recovery_policy["auto_dlq_retry_exhausted_tasks"]:
+        return None
+    if not recovery_policy["auto_retry_timeout_sessions"]:
+        return None
+
+    retry_limit = task_timed_out_retry_limit(task, recovery_policy)
+    if retry_limit <= 0 or task["retry_count"] < retry_limit:
+        return None
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'blocked',
+            review_state = 'needs_replan',
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ? AND status = 'in_progress'
+        """,
+        (task_id,),
+    )
+    dlq_id = upsert_dead_letter_entry(
+        connection,
+        project_id,
+        task_id,
+        "retry_budget_exhausted",
+        failure_id=failure_id,
+        detail={
+            "failure_type": "session_timed_out",
+            "retry_count": task["retry_count"],
+            "retry_limit": retry_limit,
+            "source": "timed_out_session_auto_retry",
+        },
+    )
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, 'task_dead_lettered', 'supervisor', ?, ?, 'warning')
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            task["assigned_agent_id"],
+            task_id,
+            "Task routed to the dead-letter queue after timed-out-session retry budget exhaustion.",
+            json.dumps({"dlq_id": dlq_id, "retry_limit": retry_limit, "retry_count": task["retry_count"]}),
+        ),
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        project_id,
+        task_id,
+        actor_id,
+        resolution_reason="task_dead_lettered",
+    )
+    return {"task_id": task_id, "dlq_id": dlq_id, "retry_limit": retry_limit, "retry_count": task["retry_count"]}
+
+
 def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
     stale_before = datetime.utcnow() - timedelta(seconds=stale_after_seconds)
     stale_rows = connection.execute(
@@ -163,6 +241,14 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
             WHERE session_id = ?
             """,
             (row["session_id"],),
+        )
+        revoke_task_capabilities(
+            connection,
+            row["project_id"],
+            row["task_id"],
+            agent_id=row["agent_id"],
+            reason="session_timed_out",
+            revoked_by="system_supervisor",
         )
         has_other_agent_session = connection.execute(
             """
@@ -263,6 +349,7 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
                     json.dumps({"session_id": row["session_id"], "artifacts": quarantined_artifacts}),
                 ),
             )
+        dead_letter = None
         if not has_other_task_session:
             auto_retry = _maybe_auto_retry_timed_out_task(
                 connection,
@@ -271,6 +358,14 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
                 actor_id="system_supervisor",
             )
             if auto_retry is None:
+                dead_letter = _maybe_route_timed_out_task_to_dlq(
+                    connection,
+                    row["project_id"],
+                    row["task_id"],
+                    actor_id="system_supervisor",
+                    failure_id=failure_id,
+                )
+            if auto_retry is None and dead_letter is None:
                 connection.execute(
                     """
                     UPDATE tasks
@@ -286,6 +381,7 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
                 "repeated_failure_alert": repeated_alert,
                 "quarantined_artifacts": quarantined_artifacts,
                 "auto_retried": auto_retry is not None,
+                "dead_lettered": dead_letter is not None,
                 "retry_count": None if auto_retry is None else auto_retry["retry_count"],
                 "next_retry_at": None if auto_retry is None else auto_retry["next_retry_at"],
             }

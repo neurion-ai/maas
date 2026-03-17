@@ -5,13 +5,19 @@ import json
 from maas.ids import generate_id
 from maas.providers import get_provider
 from maas.services.alerts import resolve_task_session_failed_alerts
+from maas.services.dead_letter import upsert_dead_letter_entry
 from maas.services.recovery_policy import (
     failed_session_retry_cooldown_seconds,
     fetch_project_recovery_policy,
     retry_deadline,
     task_failed_session_retry_limit,
 )
-from maas.services.failure_memory import maybe_raise_repeated_failure_alert, quarantine_session_artifacts, record_failure
+from maas.services.failure_memory import (
+    maybe_raise_repeated_failure_alert,
+    quarantine_session_artifacts,
+    record_failure,
+    resolve_repeated_failure_alerts,
+)
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.security import ensure_task_capability_allowed, revoke_task_capabilities
 
@@ -129,6 +135,86 @@ def _maybe_auto_retry_failed_task(connection, project_id, task_id, actor_id):
         "next_retry_at": refreshed_task["next_retry_at"],
         "next_retry_reason": refreshed_task["next_retry_reason"],
     }
+
+
+def _maybe_route_failed_task_to_dlq(connection, project_id, task_id, actor_id, failure_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, retry_count, auto_retry_limit
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None or task["status"] != "in_progress":
+        return None
+
+    recovery_policy = fetch_project_recovery_policy(connection, project_id)
+    if not recovery_policy["auto_dlq_retry_exhausted_tasks"]:
+        return None
+    if not recovery_policy["auto_retry_failed_sessions"]:
+        return None
+
+    retry_limit = task_failed_session_retry_limit(task, recovery_policy)
+    if retry_limit <= 0 or task["retry_count"] < retry_limit:
+        return None
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'blocked',
+            review_state = 'needs_replan',
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ? AND status = 'in_progress'
+        """,
+        (task_id,),
+    )
+    dlq_id = upsert_dead_letter_entry(
+        connection,
+        project_id,
+        task_id,
+        "retry_budget_exhausted",
+        failure_id=failure_id,
+        detail={
+            "failure_type": "session_failed",
+            "retry_count": task["retry_count"],
+            "retry_limit": retry_limit,
+            "source": "failed_session_auto_retry",
+        },
+    )
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, 'task_dead_lettered', 'resilience', ?, ?, 'warning')
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            task["assigned_agent_id"],
+            task_id,
+            "Task routed to the dead-letter queue after failed-session retry budget exhaustion.",
+            json.dumps({"dlq_id": dlq_id, "retry_limit": retry_limit, "retry_count": task["retry_count"]}),
+        ),
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        project_id,
+        task_id,
+        actor_id,
+        reason="task_dead_lettered",
+        activity_description="Task failure alerts resolved after dead-letter routing.",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        project_id,
+        task_id,
+        actor_id,
+        resolution_reason="task_dead_lettered",
+    )
+    return {"task_id": task_id, "dlq_id": dlq_id, "retry_limit": retry_limit, "retry_count": task["retry_count"]}
 
 
 def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
@@ -415,7 +501,16 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
             row["task_id"],
             actor_id=row["agent_id"],
         )
+        dead_letter = None
         if auto_retry is None:
+            dead_letter = _maybe_route_failed_task_to_dlq(
+                connection,
+                row["project_id"],
+                row["task_id"],
+                actor_id=row["agent_id"],
+                failure_id=failure_id,
+            )
+        if auto_retry is None and dead_letter is None:
             connection.execute(
                 """
                 UPDATE tasks

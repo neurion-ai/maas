@@ -10,6 +10,7 @@ from maas.services.alerts import (
     infer_operator_action,
 )
 from maas.services.failure_memory import fetch_repeated_failure_tasks
+from maas.services.scheduler import adaptive_replan_feedback
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -450,6 +451,9 @@ def _replanning_candidate_tasks(connection, project_id, limit=8):
     )
     for item in items:
         item["replan_reason"] = _replan_reason(item)
+        feedback = adaptive_replan_feedback(item)
+        if feedback:
+            item.update(feedback)
     return items
 
 
@@ -463,6 +467,9 @@ def _needs_replan_tasks(connection, project_id, limit=8):
     )
     for item in items:
         item["replan_reason"] = "Marked by an operator for manual replanning before requeue."
+        feedback = adaptive_replan_feedback(item)
+        if feedback:
+            item.update(feedback)
     return items
 
 

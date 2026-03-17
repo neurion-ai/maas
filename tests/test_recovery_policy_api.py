@@ -191,6 +191,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     """
                     UPDATE tasks
                     SET status = 'planned',
+                        title = 'Map imported source area: src',
                         review_state = 'retry_backoff',
                         retry_count = 1,
                         next_retry_at = '2099-01-01 00:00:00',
@@ -203,6 +204,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     """
                     UPDATE tasks
                     SET status = 'blocked',
+                        title = 'Align runtime and provider settings with existing tooling',
                         review_state = 'needs_replan',
                         retry_count = 2
                     WHERE task_id = ?
@@ -236,11 +238,15 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertNotIn(review_task_id, candidate_items)
             self.assertEqual(candidate_items[candidate_task_id]["review_state"], "retry_backoff")
             self.assertIn("replan", candidate_items[candidate_task_id]["replan_reason"].lower())
+            self.assertEqual(candidate_items[candidate_task_id]["replan_strategy"], "split_by_repo_area")
+            self.assertIn("repo-area", candidate_items[candidate_task_id]["replan_summary"].lower())
 
             needs_replan_items = {item["task_id"]: item for item in payload["needs_replan_tasks"]}
             self.assertIn(needs_replan_task_id, needs_replan_items)
             self.assertEqual(needs_replan_items[needs_replan_task_id]["review_state"], "needs_replan")
             self.assertIn("manual replanning", needs_replan_items[needs_replan_task_id]["replan_reason"].lower())
+            self.assertEqual(needs_replan_items[needs_replan_task_id]["replan_strategy"], "fix_runtime_alignment")
+            self.assertIn("runtime", needs_replan_items[needs_replan_task_id]["replan_summary"].lower())
 
     def test_recovery_policy_endpoint_includes_recoverable_blocked_tasks_and_open_quarantine_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:

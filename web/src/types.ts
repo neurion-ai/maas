@@ -50,6 +50,8 @@ export interface BoardTask {
   scheduler_rank?: number | null;
   scheduler_agent?: BoardAgent | null;
   scheduler_factors?: SchedulerFactor[];
+  replan_strategy?: string | null;
+  replan_summary?: string | null;
 }
 
 export interface BoardColumn {
@@ -686,6 +688,8 @@ export interface RecoveryTaskItem {
   agent_name?: string | null;
   failure_count?: number | null;
   latest_failure_at?: string | null;
+  replan_strategy?: string | null;
+  replan_summary?: string | null;
 }
 
 export interface RecoveryPolicyResponse {

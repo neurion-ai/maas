@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from maas.constants import BOARD_COLUMNS
-from maas.services.scheduler import describe_task_scheduler, scheduler_decisions_for_tasks
+from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
 
 
 def _parse_timestamp(value):
@@ -163,15 +163,23 @@ def fetch_board(connection, filters=None, project_id=None):
         task_query,
         tuple(task_params),
     ).fetchall()
+    scheduler_rows = []
+    for row in rows:
+        item = dict(row)
+        failure = failures_by_task.get(row["task_id"], {})
+        item["failure_count"] = failure.get("failure_count", 0)
+        item["latest_failure_at"] = failure.get("latest_failure_at")
+        scheduler_rows.append(item)
 
-    scheduler_decisions = scheduler_decisions_for_tasks(rows, agent_rows)
+    scheduler_decisions = scheduler_decisions_for_tasks(scheduler_rows, agent_rows)
 
     cards_by_status = {}
-    filtered_rows = [row for row in rows if _matches_filters(row, filters or {})]
+    filtered_rows = [row for row in scheduler_rows if _matches_filters(row, filters or {})]
     for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
         column_key = _board_column_key(row["status"])
         scheduler = describe_task_scheduler(row, scheduler_decisions.get(row["task_id"]))
+        replan_feedback = adaptive_replan_feedback(row)
         card = {
             "task_id": row["task_id"],
             "title": row["title"],
@@ -193,8 +201,8 @@ def fetch_board(connection, filters=None, project_id=None):
                 "status": row["agent_status"],
             },
             "capabilities": capabilities_by_task.get(row["task_id"], []),
-            "failure_count": failures_by_task.get(row["task_id"], {}).get("failure_count", 0),
-            "latest_failure_at": failures_by_task.get(row["task_id"], {}).get("latest_failure_at"),
+            "failure_count": row.get("failure_count", 0),
+            "latest_failure_at": row.get("latest_failure_at"),
             "heartbeat_age_seconds": _age_seconds(row["last_heartbeat_at"]),
             "age_hours": round(age_minutes / 60.0, 1) if age_minutes is not None else None,
             "scheduler_status": scheduler.get("scheduler_status"),
@@ -210,6 +218,8 @@ def fetch_board(connection, filters=None, project_id=None):
                 else None
             ),
             "scheduler_factors": scheduler.get("scheduler_factors", []),
+            "replan_strategy": replan_feedback.get("replan_strategy") if replan_feedback else None,
+            "replan_summary": replan_feedback.get("replan_summary") if replan_feedback else None,
         }
         cards_by_status.setdefault(column_key, []).append(card)
 

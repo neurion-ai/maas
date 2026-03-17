@@ -3,7 +3,6 @@
 import json
 import mimetypes
 import os
-import shutil
 import tempfile
 import zipfile
 from difflib import unified_diff
@@ -79,9 +78,13 @@ def _artifact_deletion_mode(project_paths, absolute_path):
     if _path_within(project_paths.artifacts_dir, absolute_path) or _path_within(project_paths.quarantine_dir, absolute_path):
         if os.path.isfile(absolute_path):
             return "file"
-        if os.path.isdir(absolute_path):
-            return "directory"
     return "preserve"
+
+
+def _path_removed_in_scope(absolute_path, removed_files):
+    if not absolute_path:
+        return False
+    return os.path.abspath(absolute_path) in removed_files
 
 
 def _metadata_snapshot(metadata):
@@ -683,26 +686,20 @@ def purge_artifact_scope(connection, project_paths, task_id=None, session_id=Non
     deleted_file_count = 0
     preserved_path_count = 0
     missing_file_count = 0
-    removed_directories = set()
+    removed_files = set()
     touched_sessions = set()
 
     for row in rows:
         absolute_path = _absolute_path(project_paths, row["path"])
+        if _path_removed_in_scope(absolute_path, removed_files):
+            if row["session_id"]:
+                touched_sessions.add(row["session_id"])
+            continue
         deletion_mode = _artifact_deletion_mode(project_paths, absolute_path)
         if deletion_mode == "file":
             os.remove(absolute_path)
+            removed_files.add(os.path.abspath(absolute_path))
             deleted_file_count += 1
-        elif deletion_mode == "directory":
-            normalized_path = os.path.abspath(absolute_path)
-            if normalized_path not in removed_directories:
-                for parent in list(removed_directories):
-                    if _path_within(parent, normalized_path):
-                        normalized_path = None
-                        break
-                if normalized_path is not None:
-                    shutil.rmtree(normalized_path)
-                    removed_directories.add(normalized_path)
-                    deleted_file_count += 1
         elif deletion_mode == "missing":
             missing_file_count += 1
         else:

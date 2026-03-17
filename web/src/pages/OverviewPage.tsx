@@ -186,14 +186,22 @@ export function OverviewPage() {
                     <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
                   </div>
                 </div>
-                {(overview.onboarding.discovery_summary.workflow_labels?.length ?? 0) > 0 ? (
+                {(overview.onboarding.discovery_summary.workflow_details?.length ?? 0) > 0 ||
+                (overview.onboarding.discovery_summary.workflow_labels?.length ?? 0) > 0 ? (
                   <div className="data-list__item">
                     <div>
                       <strong>Imported workflows</strong>
                       <p>{overview.onboarding.discovery_summary.workflow_labels?.join(", ")}</p>
+                      {overview.onboarding.discovery_summary.workflow_details?.map((item) => (
+                        <p key={`${item.label}-${item.path ?? ""}`}>
+                          <strong>{item.label}</strong>
+                          {item.path ? ` · ${item.path}` : ""}
+                          {item.detail ? ` · ${item.detail}` : ""}
+                        </p>
+                      ))}
                     </div>
                     <div className="data-list__meta">
-                      <span>{overview.onboarding.discovery_summary.workflow_labels?.length ?? 0} signals</span>
+                      <span>{overview.onboarding.discovery_summary.workflow_details?.length ?? 0} signals</span>
                     </div>
                   </div>
                 ) : null}

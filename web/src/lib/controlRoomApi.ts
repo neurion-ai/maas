@@ -39,6 +39,7 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     review_required: false,
     discovery_summary: {
       workflow_labels: [],
+      workflow_details: [],
       repo_areas: []
     },
     review_task_id: null,

@@ -14,7 +14,7 @@
 - [x] Operators can now work incidents from multiple surfaces: Alerts, Failures, Recovery, Overview, and the Artifact browser.
 - [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
-- [ ] The broader roadmap still depends on better planning, broader providers, stronger automation, and platform expansion.
+- [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`
 
@@ -108,7 +108,7 @@
 
 ### Platform expansion
 
-- [ ] Brownfield onboarding pipeline
+- [ ] Deeper brownfield onboarding and repo-derived planning
 - [ ] Multi-project support
 - [ ] Plugin and domain extension architecture
 - [ ] Strong sandbox and isolation layers
@@ -128,4 +128,4 @@
 - [ ] Batch 5: Supervisor, dashboard, and Kanban V1 are only partially complete
 - [ ] Batch 6: Security and human steering are only partially complete
 - [ ] Batch 7: Resilience and failure memory are only partially complete
-- [ ] Batch 8: Brownfield and multi-project expansion has not started
+- [ ] Batch 8: Brownfield onboarding has started, but deeper import and multi-project expansion are still early

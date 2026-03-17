@@ -8,6 +8,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - Python 3.11+ in normal runtime.
     tomllib = None
 
+import yaml
+
 from maas.config import build_default_project_config, save_project_config
 from maas.db import connect, run_migrations
 from maas.ids import generate_id
@@ -126,6 +128,15 @@ def _load_package_json(path):
         return {}
 
 
+def _summarize_detail(value, limit=120):
+    if not value:
+        return ""
+    text = " ".join(str(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
 def _load_pyproject(path):
     if tomllib is not None:
         try:
@@ -164,21 +175,74 @@ def _load_pyproject(path):
 
 def _parse_makefile_targets(path):
     targets = []
+    current_target = None
     try:
         with open(path, "r", encoding="utf-8") as handle:
             for line in handle:
+                raw_line = line.rstrip("\n")
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#") or stripped.startswith("."):
+                    continue
+                if raw_line.startswith("\t") and current_target is not None and not current_target.get("detail"):
+                    current_target["detail"] = _summarize_detail(stripped)
                     continue
                 if ":" not in stripped:
                     continue
                 target = stripped.split(":", 1)[0].strip()
                 if not target or " " in target or "=" in target:
                     continue
-                targets.append(target)
+                current_target = {"name": target, "detail": ""}
+                targets.append(current_target)
     except OSError:
         return []
     return targets[:8]
+
+
+def _discover_github_actions_workflows(project_root):
+    workflows_dir = os.path.join(project_root, ".github", "workflows")
+    if not os.path.isdir(workflows_dir):
+        return []
+
+    workflows = []
+    for filename in sorted(os.listdir(workflows_dir)):
+        if not filename.endswith((".yml", ".yaml")):
+            continue
+        path = os.path.join(workflows_dir, filename)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        workflow_name = payload.get("name") or os.path.splitext(filename)[0]
+        trigger_value = payload.get("on")
+        if isinstance(trigger_value, dict):
+            triggers = sorted(trigger_value.keys())
+        elif isinstance(trigger_value, list):
+            triggers = [str(item) for item in trigger_value]
+        elif trigger_value:
+            triggers = [str(trigger_value)]
+        else:
+            triggers = []
+        jobs = sorted((payload.get("jobs") or {}).keys()) if isinstance(payload.get("jobs"), dict) else []
+        detail_parts = []
+        if triggers:
+            detail_parts.append("triggers: {0}".format(", ".join(triggers[:3])))
+        if jobs:
+            detail_parts.append("jobs: {0}".format(", ".join(jobs[:3])))
+        workflows.append(
+            {
+                "kind": "github_actions",
+                "name": workflow_name,
+                "path": os.path.join(".github", "workflows", filename),
+                "detail": "; ".join(detail_parts),
+            }
+        )
+        if len(workflows) >= 4:
+            break
+    return workflows
 
 
 def _top_entries(counts, limit=4):
@@ -247,9 +311,16 @@ def discover_brownfield_project(project_root):
         discovery["package_managers"].append("pyproject.toml")
         pyproject = _load_pyproject(os.path.join(project_root, "pyproject.toml"))
         project_section = pyproject.get("project", {})
-        scripts = sorted((project_section.get("scripts") or {}).keys())[:8]
-        for script in scripts:
-            discovery["workflow_signals"].append({"kind": "python_script", "name": script})
+        scripts = project_section.get("scripts") or {}
+        for script in sorted(scripts.keys())[:8]:
+            discovery["workflow_signals"].append(
+                {
+                    "kind": "python_script",
+                    "name": script,
+                    "path": "pyproject.toml",
+                    "detail": _summarize_detail(scripts.get(script)),
+                }
+            )
         if project_section.get("requires-python"):
             discovery["workflow_signals"].append(
                 {"kind": "python_version", "name": project_section["requires-python"]}
@@ -258,9 +329,16 @@ def discover_brownfield_project(project_root):
     if os.path.exists(os.path.join(project_root, "package.json")):
         discovery["package_managers"].append("package.json")
         package_json = _load_package_json(os.path.join(project_root, "package.json"))
-        scripts = sorted((package_json.get("scripts") or {}).keys())[:8]
-        for script in scripts:
-            discovery["workflow_signals"].append({"kind": "npm_script", "name": script})
+        scripts = package_json.get("scripts") or {}
+        for script in sorted(scripts.keys())[:8]:
+            discovery["workflow_signals"].append(
+                {
+                    "kind": "npm_script",
+                    "name": script,
+                    "path": "package.json",
+                    "detail": _summarize_detail(scripts.get(script)),
+                }
+            )
 
     if os.path.exists(os.path.join(project_root, "Cargo.toml")):
         discovery["package_managers"].append("Cargo.toml")
@@ -268,13 +346,19 @@ def discover_brownfield_project(project_root):
         discovery["package_managers"].append("go.mod")
     if os.path.exists(os.path.join(project_root, "requirements.txt")):
         discovery["package_managers"].append("requirements.txt")
-    if os.path.exists(os.path.join(project_root, ".github", "workflows")):
-        discovery["workflow_signals"].append({"kind": "github_actions", "name": "ci"})
+    discovery["workflow_signals"].extend(_discover_github_actions_workflows(project_root))
 
     makefile_path = os.path.join(project_root, "Makefile")
     if os.path.exists(makefile_path):
         for target in _parse_makefile_targets(makefile_path):
-            discovery["workflow_signals"].append({"kind": "make_target", "name": target})
+            discovery["workflow_signals"].append(
+                {
+                    "kind": "make_target",
+                    "name": target["name"],
+                    "path": "Makefile",
+                    "detail": target.get("detail", ""),
+                }
+            )
 
     readme_path = None
     for candidate in ("README.md", "README.rst"):
@@ -424,6 +508,14 @@ def build_discovery_summary(discovery):
         "package_managers": discovery["package_managers"],
         "workflow_labels": [
             "{kind}:{name}".format(kind=item["kind"], name=item["name"])
+            for item in discovery["workflow_signals"][:5]
+        ],
+        "workflow_details": [
+            {
+                "label": "{kind}:{name}".format(kind=item["kind"], name=item["name"]),
+                "path": item.get("path"),
+                "detail": item.get("detail") or "",
+            }
             for item in discovery["workflow_signals"][:5]
         ],
         "repo_areas": [item["name"] for item in discovery["top_level_dirs"][:4]],

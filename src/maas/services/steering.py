@@ -647,7 +647,7 @@ def recover_and_requeue_task(connection, task_id, actor_id):
     }
 
 
-def _recover_and_requeue_task(connection, task, actor_id):
+def _recover_and_requeue_task(connection, task, actor_id, consume_retry_reason=None):
     recovery_policy = fetch_project_recovery_policy(connection, task["project_id"])
     failure_count = failure_attempt_count(connection, task["task_id"])
     cooldown_seconds = recover_and_requeue_cooldown_seconds(recovery_policy, failure_count)
@@ -662,6 +662,7 @@ def _recover_and_requeue_task(connection, task, actor_id):
         activity_description="Task recovered from failure and returned to readiness evaluation.",
         next_retry_at=next_retry_at,
         next_retry_reason=next_retry_reason,
+        consume_retry_reason=consume_retry_reason,
         extra_audit_detail={
             "failure_count": failure_count,
             "cooldown_seconds": cooldown_seconds,
@@ -706,6 +707,7 @@ def _reset_recoverable_task(
     activity_description,
     next_retry_at=None,
     next_retry_reason=None,
+    consume_retry_reason=None,
     extra_audit_detail=None,
 ):
     if task["assigned_agent_id"]:
@@ -726,18 +728,40 @@ def _reset_recoverable_task(
             progress_pct = 0,
             review_state = NULL,
             last_heartbeat_at = NULL,
+            retry_count = CASE
+                WHEN ? IS NULL THEN retry_count
+                ELSE COALESCE(retry_count, 0) + 1
+            END,
+            last_retry_at = CASE
+                WHEN ? IS NULL THEN last_retry_at
+                ELSE CURRENT_TIMESTAMP
+            END,
+            last_retry_reason = CASE
+                WHEN ? IS NULL THEN last_retry_reason
+                ELSE ?
+            END,
             next_retry_at = ?,
             next_retry_reason = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE task_id = ?
         """,
-        (next_retry_at, next_retry_reason, task["task_id"]),
+        (
+            consume_retry_reason,
+            consume_retry_reason,
+            consume_retry_reason,
+            consume_retry_reason,
+            next_retry_at,
+            next_retry_reason,
+            task["task_id"],
+        ),
     )
     audit_detail = {
         "previous_status": task["status"],
         "previous_review_state": task["review_state"],
         "previous_agent_id": task["assigned_agent_id"],
     }
+    if consume_retry_reason is not None:
+        audit_detail["consumed_retry_reason"] = consume_retry_reason
     if next_retry_at is not None:
         audit_detail["next_retry_at"] = next_retry_at
         audit_detail["next_retry_reason"] = next_retry_reason

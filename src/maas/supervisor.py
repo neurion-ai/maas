@@ -315,7 +315,12 @@ def _auto_recover_blocked_tasks(connection):
         ).fetchone()
         if task is None:
             continue
-        refreshed_task = _recover_and_requeue_task(connection, task, actor_id="agent_allocator")
+        refreshed_task = _recover_and_requeue_task(
+            connection,
+            task,
+            actor_id="agent_allocator",
+            consume_retry_reason="blocked_task_auto_recovered",
+        )
         findings.append(
             {
                 "task_id": task["task_id"],

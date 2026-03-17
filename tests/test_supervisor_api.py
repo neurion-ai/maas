@@ -386,7 +386,7 @@ class SupervisorApiTest(unittest.TestCase):
                 supervisor_result = run_supervisor_once(connection, allocate_limit=0)
                 task = connection.execute(
                     """
-                    SELECT status, review_state, next_retry_at, next_retry_reason
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
                     FROM tasks
                     WHERE task_id = ?
                     """,
@@ -407,6 +407,8 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(supervisor_result["auto_recovered_tasks"][0]["task_id"], task_id)
             self.assertEqual(task["status"], "ready")
             self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "blocked_task_auto_recovered")
             self.assertIsNone(task["next_retry_at"])
             self.assertIsNone(task["next_retry_reason"])
             self.assertEqual(failure_alert["status"], "resolved")
@@ -455,6 +457,57 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(supervisor_result["auto_recovered_tasks"], [])
             self.assertEqual(task["status"], "blocked")
             self.assertEqual(task["review_state"], "session_failed")
+
+    def test_supervisor_auto_recover_stops_once_blocked_task_retry_budget_is_consumed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Recover Budget Test",
+                description="Blocked task auto recovery should respect retry budget",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_timeout_sessions=False,
+                    auto_recover_blocked_tasks=True,
+                    max_failed_session_retries=1,
+                    recover_and_requeue_cooldown_seconds=0,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'session_failed',
+                        retry_count = 1,
+                        last_retry_reason = 'blocked_task_auto_recovered'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(supervisor_result["auto_recovered_tasks"], [])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "session_failed")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "blocked_task_auto_recovered")
 
     def test_recover_action_can_requeue_stale_session_task_without_resetting_agent_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

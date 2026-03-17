@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from maas.api import create_app
 from maas.db import connect, project_paths
@@ -106,6 +107,16 @@ class AlertsAndLiveApiTest(unittest.TestCase):
             self.assertIn("counts", payload)
             self.assertIn("revision", payload)
             self.assertIn("tasks_in_progress", payload["counts"])
+
+    def test_live_websocket_rejects_unknown_project_before_accept(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Live WebSocket Scope Test", description="Live websocket scope test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            with self.assertRaises(WebSocketDisconnect) as excinfo:
+                with client.websocket_connect("/api/live/ws?project_id=proj_missing"):
+                    self.fail("websocket should not connect for an unknown project")
+            self.assertEqual(excinfo.exception.code, 1008)
 
     def test_failures_api_exposes_quarantined_artifacts_for_failed_sessions(self):
         with tempfile.TemporaryDirectory() as tmpdir:

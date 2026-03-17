@@ -263,13 +263,18 @@ def create_app(project_root="."):
         def connection_factory():
             return connect(project_paths(root))
 
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, websocket.query_params.get("project_id"))
+        except HTTPException:
+            await websocket.close(code=1008, reason="project not found")
+            return
+        finally:
+            if connection:
+                connection.close()
+
         await websocket.accept()
         try:
-            connection = connect(paths)
-            try:
-                scoped_project_id = _selected_project_id(connection, websocket.query_params.get("project_id"))
-            finally:
-                connection.close()
             await websocket_stream(websocket.send_json, connection_factory, project_id=scoped_project_id)
         except WebSocketDisconnect:
             return

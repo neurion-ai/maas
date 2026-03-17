@@ -4,7 +4,11 @@ from datetime import datetime, timedelta
 import json
 
 from maas.ids import generate_id
-from maas.services.alerts import infer_operator_action
+from maas.services.alerts import (
+    RECOVERABLE_FAILURE_REVIEW_STATES,
+    REPEATED_TASK_FAILURE_PATTERN,
+    infer_operator_action,
+)
 from maas.services.failure_memory import fetch_repeated_failure_tasks
 from maas.services.security import ensure_board_action_allowed
 
@@ -12,6 +16,7 @@ from maas.services.security import ensure_board_action_allowed
 DEFAULT_RECOVERY_POLICY = {
     "auto_retry_timeout_sessions": False,
     "auto_retry_failed_sessions": False,
+    "auto_recover_blocked_tasks": False,
     "max_timed_out_retries": 1,
     "max_failed_session_retries": 1,
     "timed_out_retry_cooldown_seconds": 60,
@@ -25,6 +30,7 @@ DEFAULT_RECOVERY_POLICY = {
 RECOVERY_POLICY_FIELD_RULES = {
     "auto_retry_timeout_sessions": {"type": "bool"},
     "auto_retry_failed_sessions": {"type": "bool"},
+    "auto_recover_blocked_tasks": {"type": "bool"},
     "max_timed_out_retries": {"type": "int", "minimum": 0},
     "max_failed_session_retries": {"type": "int", "minimum": 0},
     "timed_out_retry_cooldown_seconds": {"type": "int", "minimum": 0},
@@ -116,6 +122,7 @@ def _retry_delay_preview(base_seconds, attempt_limit, project_policy):
 
 
 def _recovery_summary(connection, project_id):
+    auto_recovery_candidates = fetch_auto_recovery_candidate_tasks(connection, project_id=project_id, limit=None)
     tasks_row = connection.execute(
         """
         SELECT
@@ -204,6 +211,7 @@ def _recovery_summary(connection, project_id):
         "replanning_candidates": tasks_row["replanning_candidates"] or 0,
         "tasks_with_retry_history": tasks_row["tasks_with_retry_history"] or 0,
         "recoverable_blocked_tasks": tasks_row["recoverable_blocked_tasks"] or 0,
+        "auto_recovery_candidates": len(auto_recovery_candidates),
         "tasks_with_retry_overrides": tasks_with_retry_overrides or 0,
         "open_quarantine_entries": open_quarantine_entries or 0,
         "open_failure_alerts": open_failure_alerts or 0,
@@ -213,10 +221,11 @@ def _recovery_summary(connection, project_id):
 
 
 def _recovery_task_items(connection, project_id, where_clause, params, limit=8):
-    rows = connection.execute(
-        """
+    query = """
         SELECT
             tasks.task_id,
+            tasks.project_id,
+            tasks.assigned_agent_id,
             tasks.title,
             tasks.status,
             tasks.review_state,
@@ -244,10 +253,12 @@ def _recovery_task_items(connection, project_id, where_clause, params, limit=8):
         WHERE tasks.project_id = ?
           AND {0}
         ORDER BY tasks.priority DESC, tasks.updated_at DESC, tasks.created_at ASC
-        LIMIT ?
-        """.format(where_clause),
-        tuple([project_id] + list(params) + [limit]),
-    ).fetchall()
+    """.format(where_clause)
+    query_params = [project_id] + list(params)
+    if limit is not None:
+        query += "\n        LIMIT ?"
+        query_params.append(limit)
+    rows = connection.execute(query, tuple(query_params)).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -349,6 +360,80 @@ def _replan_reason(task):
     return "Operator replanning recommended."
 
 
+def _open_quarantine_task_ids(connection, project_id):
+    rows = connection.execute(
+        """
+        SELECT DISTINCT task_id
+        FROM quarantine_queue
+        WHERE project_id = ?
+          AND status = 'open'
+          AND task_id IS NOT NULL
+        """,
+        (project_id,),
+    ).fetchall()
+    return {row["task_id"] for row in rows}
+
+
+def _open_repeated_failure_task_ids(connection, project_id):
+    rows = connection.execute(
+        """
+        SELECT description
+        FROM alerts
+        WHERE project_id = ?
+          AND status IN ('open', 'acknowledged')
+          AND title = 'Repeated task failures'
+        """,
+        (project_id,),
+    ).fetchall()
+    task_ids = set()
+    for row in rows:
+        match = REPEATED_TASK_FAILURE_PATTERN.match(row["description"] or "")
+        if match is not None:
+            task_ids.add(match.group("task_id"))
+    return task_ids
+
+
+def _auto_recovery_retry_limit(task_row, project_policy):
+    if task_row.get("review_state") == "stale_session":
+        return task_timed_out_retry_limit(task_row, project_policy)
+    return task_failed_session_retry_limit(task_row, project_policy)
+
+
+def _is_auto_recovery_candidate(task_row, project_policy, open_quarantine_task_ids, repeated_failure_task_ids):
+    if task_row.get("status") != "blocked":
+        return False
+    if task_row.get("review_state") not in RECOVERABLE_FAILURE_REVIEW_STATES:
+        return False
+    if task_row["task_id"] in open_quarantine_task_ids:
+        return False
+    if task_row["task_id"] in repeated_failure_task_ids:
+        return False
+    retry_limit = _auto_recovery_retry_limit(task_row, project_policy)
+    return retry_limit > 0 and (task_row.get("retry_count") or 0) < retry_limit
+
+
+def fetch_auto_recovery_candidate_tasks(connection, project_id=None, limit=8):
+    project_id = _resolve_project_id(connection, project_id)
+    project_policy = fetch_project_recovery_policy(connection, project_id)
+    open_quarantine_task_ids = _open_quarantine_task_ids(connection, project_id)
+    repeated_failure_task_ids = _open_repeated_failure_task_ids(connection, project_id)
+    items = _recovery_task_items(
+        connection,
+        project_id,
+        "tasks.status = 'blocked' AND tasks.review_state IN ('session_failed', 'stale_session')",
+        [],
+        limit=None,
+    )
+    candidates = [
+        item
+        for item in items
+        if _is_auto_recovery_candidate(item, project_policy, open_quarantine_task_ids, repeated_failure_task_ids)
+    ]
+    if limit is None:
+        return candidates
+    return candidates[:limit]
+
+
 def _replanning_candidate_tasks(connection, project_id, limit=8):
     items = _recovery_task_items(
         connection,
@@ -412,6 +497,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
             "tasks.auto_retry_limit IS NOT NULL AND tasks.status NOT IN ('done', 'cancelled')",
             [],
         ),
+        "auto_recovery_candidates": fetch_auto_recovery_candidate_tasks(connection, project_id=project_id),
         "recoverable_blocked_tasks": _recovery_task_items(
             connection,
             project_id,
@@ -533,6 +619,10 @@ def fetch_project_recovery_policy(connection, project_id):
         "auto_retry_failed_sessions": _parse_bool(
             recovery.get("auto_retry_failed_sessions"),
             DEFAULT_RECOVERY_POLICY["auto_retry_failed_sessions"],
+        ),
+        "auto_recover_blocked_tasks": _parse_bool(
+            recovery.get("auto_recover_blocked_tasks"),
+            DEFAULT_RECOVERY_POLICY["auto_recover_blocked_tasks"],
         ),
         "max_timed_out_retries": _parse_int(
             recovery.get("max_timed_out_retries"),

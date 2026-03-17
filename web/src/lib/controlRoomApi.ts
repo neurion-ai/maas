@@ -346,6 +346,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   policy: {
     auto_retry_timeout_sessions: false,
     auto_retry_failed_sessions: false,
+    auto_recover_blocked_tasks: false,
     max_timed_out_retries: 1,
     max_failed_session_retries: 1,
     timed_out_retry_cooldown_seconds: 60,
@@ -357,6 +358,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   defaults: {
     auto_retry_timeout_sessions: false,
     auto_retry_failed_sessions: false,
+    auto_recover_blocked_tasks: false,
     max_timed_out_retries: 1,
     max_failed_session_retries: 1,
     timed_out_retry_cooldown_seconds: 60,
@@ -371,6 +373,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     replanning_candidates: 0,
     tasks_with_retry_history: 0,
     recoverable_blocked_tasks: 0,
+    auto_recovery_candidates: 0,
     tasks_with_retry_overrides: 0,
     open_quarantine_entries: 0,
     open_failure_alerts: 0,
@@ -387,6 +390,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     ]
   },
   task_retry_overrides: [],
+  auto_recovery_candidates: [],
   recoverable_blocked_tasks: [],
   task_retry_history: [],
   replanning_candidates: [],

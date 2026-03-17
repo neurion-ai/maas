@@ -29,7 +29,8 @@ type RecoveryDraft = Record<keyof RecoveryPolicySettings, string>;
 
 const BOOLEAN_FIELDS: (keyof RecoveryPolicySettings)[] = [
   "auto_retry_timeout_sessions",
-  "auto_retry_failed_sessions"
+  "auto_retry_failed_sessions",
+  "auto_recover_blocked_tasks"
 ];
 
 const NUMBER_FIELDS: (keyof RecoveryPolicySettings)[] = [
@@ -52,6 +53,7 @@ function buildDraft(
   const serverDraft: RecoveryDraft = {
     auto_retry_timeout_sessions: payload.policy.auto_retry_timeout_sessions ? "true" : "false",
     auto_retry_failed_sessions: payload.policy.auto_retry_failed_sessions ? "true" : "false",
+    auto_recover_blocked_tasks: payload.policy.auto_recover_blocked_tasks ? "true" : "false",
     max_timed_out_retries: String(payload.policy.max_timed_out_retries),
     max_failed_session_retries: String(payload.policy.max_failed_session_retries),
     timed_out_retry_cooldown_seconds: String(payload.policy.timed_out_retry_cooldown_seconds),
@@ -74,6 +76,7 @@ function buildDefaultsDraft(defaults: RecoveryPolicySettings): RecoveryDraft {
   return {
     auto_retry_timeout_sessions: defaults.auto_retry_timeout_sessions ? "true" : "false",
     auto_retry_failed_sessions: defaults.auto_retry_failed_sessions ? "true" : "false",
+    auto_recover_blocked_tasks: defaults.auto_recover_blocked_tasks ? "true" : "false",
     max_timed_out_retries: String(defaults.max_timed_out_retries),
     max_failed_session_retries: String(defaults.max_failed_session_retries),
     timed_out_retry_cooldown_seconds: String(defaults.timed_out_retry_cooldown_seconds),
@@ -613,6 +616,7 @@ export function RecoveryPage() {
         <StatCard label="Backoff tasks" value={recovery?.summary.retry_backoff_tasks ?? 0} tone="warn" />
         <StatCard label="Needs replan" value={recovery?.summary.needs_replan_tasks ?? 0} tone="warn" />
         <StatCard label="Replan candidates" value={recovery?.summary.replanning_candidates ?? 0} tone="warn" />
+        <StatCard label="Auto-recover candidates" value={recovery?.summary.auto_recovery_candidates ?? 0} tone="warn" />
         <StatCard label="Retry overrides" value={recovery?.summary.tasks_with_retry_overrides ?? 0} />
         <StatCard label="Retry history" value={recovery?.summary.tasks_with_retry_history ?? 0} />
         <StatCard label="Recoverable blocked" value={recovery?.summary.recoverable_blocked_tasks ?? 0} tone="warn" />
@@ -666,6 +670,16 @@ export function RecoveryPage() {
                   <select
                     value={currentDraft.auto_retry_failed_sessions}
                     onChange={(event) => updateDraft("auto_retry_failed_sessions", event.target.value)}
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Auto recover safe blocked tasks</span>
+                  <select
+                    value={currentDraft.auto_recover_blocked_tasks}
+                    onChange={(event) => updateDraft("auto_recover_blocked_tasks", event.target.value)}
                   >
                     <option value="false">Disabled</option>
                     <option value="true">Enabled</option>
@@ -782,6 +796,34 @@ export function RecoveryPage() {
                 <div>
                   <strong>No task overrides</strong>
                   <p>All tasks currently follow the project recovery policy.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Auto-recovery candidates</h2>
+              <p>Safe blocked failures the supervisor can recover and requeue automatically when policy is enabled. Open quarantine or repeated-failure incidents keep tasks out of this queue.</p>
+            </div>
+          </header>
+          {(recovery?.auto_recovery_candidates ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.auto_recovery_candidates ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleRecoverAndRequeueTask(taskId)}
+              primaryActionLabel="Recover + requeue"
+              pendingPrimaryActionLabel="Recovering..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No auto-recovery candidates</strong>
+                  <p>No blocked task currently meets the guardrails for hands-off recovery.</p>
                 </div>
               </div>
             </div>

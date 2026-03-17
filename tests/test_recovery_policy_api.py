@@ -24,9 +24,11 @@ class RecoveryPolicyApiTest(unittest.TestCase):
 
             self.assertFalse(payload["policy"]["auto_retry_timeout_sessions"])
             self.assertFalse(payload["policy"]["auto_retry_failed_sessions"])
+            self.assertFalse(payload["policy"]["auto_recover_blocked_tasks"])
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 1)
             self.assertEqual(payload["policy"]["retry_backoff_multiplier"], 2)
             self.assertEqual(payload["summary"]["retry_backoff_tasks"], 0)
+            self.assertEqual(payload["summary"]["auto_recovery_candidates"], 0)
             self.assertEqual(payload["summary"]["open_quarantine_entries"], 0)
             self.assertEqual(
                 payload["backoff_preview"]["timed_out_retry_delays"],
@@ -71,6 +73,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                     "policy": {
                         "auto_retry_timeout_sessions": True,
                         "auto_retry_failed_sessions": True,
+                        "auto_recover_blocked_tasks": True,
                         "max_timed_out_retries": 3,
                         "max_failed_session_retries": 2,
                         "timed_out_retry_cooldown_seconds": 30,
@@ -85,6 +88,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             payload = response.json()
             self.assertTrue(payload["policy"]["auto_retry_timeout_sessions"])
             self.assertTrue(payload["policy"]["auto_retry_failed_sessions"])
+            self.assertTrue(payload["policy"]["auto_recover_blocked_tasks"])
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 3)
             self.assertEqual(payload["policy"]["retry_backoff_max_seconds"], 120)
             self.assertEqual(
@@ -113,6 +117,7 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(config["providers"]["openai_codex"]["mode"], "codex_cli")
             self.assertEqual(config["providers"]["openai_codex"]["model"], "gpt-5-codex")
             self.assertEqual(config["recovery"]["retry_backoff_multiplier"], 3)
+            self.assertTrue(config["recovery"]["auto_recover_blocked_tasks"])
 
     def test_recovery_policy_endpoint_includes_task_overrides_retry_history_and_active_backoff_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -285,6 +290,86 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(quarantine_entries[0]["status"], "open")
             self.assertEqual(quarantine_entries[0]["artifact_count"], 1)
             self.assertEqual(quarantine_entries[0]["task_review_state"], "session_failed")
+
+    def test_recovery_policy_endpoint_includes_only_safe_auto_recovery_candidates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                safe_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                quarantined_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                repeated_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Define project workspace contracts'"
+                ).fetchone()["task_id"]
+                zero_limit_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Integrate provider adapters'"
+                ).fetchone()["task_id"]
+                quarantined_session_id = connection.execute(
+                    "SELECT session_id FROM sessions WHERE task_id = ? AND status = 'active'",
+                    (quarantined_task_id,),
+                ).fetchone()["session_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'session_failed', retry_count = 0
+                    WHERE task_id IN (?, ?, ?, ?)
+                    """,
+                    (safe_task_id, quarantined_task_id, repeated_task_id, zero_limit_task_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET auto_retry_limit = 0
+                    WHERE task_id = ?
+                    """,
+                    (zero_limit_task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO quarantine_queue (
+                        queue_id, project_id, session_id, task_id, failure_id, status, reason, artifact_count
+                    ) VALUES ('queue_auto_recover_guard', ?, ?, ?, NULL, 'open', 'quarantined', 1)
+                    """,
+                    (project_id, quarantined_session_id, quarantined_task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES (
+                        'alert_auto_recover_repeated',
+                        ?,
+                        'critical',
+                        'Repeated task failures',
+                        ?,
+                        'open'
+                    )
+                    """,
+                    (
+                        project_id,
+                        "Task {0} (Implement FastAPI board endpoint) has failed 3 times. Latest failure: crashed".format(
+                            repeated_task_id
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["auto_recovery_candidates"], 1)
+            candidate_items = {item["task_id"]: item for item in payload["auto_recovery_candidates"]}
+            self.assertIn(safe_task_id, candidate_items)
+            self.assertNotIn(quarantined_task_id, candidate_items)
+            self.assertNotIn(repeated_task_id, candidate_items)
+            self.assertNotIn(zero_limit_task_id, candidate_items)
 
     def test_recovery_policy_endpoint_includes_open_failure_alerts_and_repeated_failure_incidents(self):
         with tempfile.TemporaryDirectory() as tmpdir:

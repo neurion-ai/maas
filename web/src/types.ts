@@ -600,6 +600,7 @@ export interface RecoveryDelayPreviewItem {
 export interface RecoveryPolicySettings {
   auto_retry_timeout_sessions: boolean;
   auto_retry_failed_sessions: boolean;
+  auto_recover_blocked_tasks: boolean;
   max_timed_out_retries: number;
   max_failed_session_retries: number;
   timed_out_retry_cooldown_seconds: number;
@@ -639,6 +640,7 @@ export interface RecoveryPolicyResponse {
     replanning_candidates: number;
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
+    auto_recovery_candidates: number;
     tasks_with_retry_overrides: number;
     open_quarantine_entries: number;
     open_failure_alerts: number;
@@ -651,6 +653,7 @@ export interface RecoveryPolicyResponse {
     recover_and_requeue_delays: RecoveryDelayPreviewItem[];
   };
   task_retry_overrides: RecoveryTaskItem[];
+  auto_recovery_candidates: RecoveryTaskItem[];
   recoverable_blocked_tasks: RecoveryTaskItem[];
   task_retry_history: RecoveryTaskItem[];
   replanning_candidates: RecoveryTaskItem[];
@@ -701,6 +704,13 @@ export interface SupervisorRunResponse {
   ready_changes: SupervisorReadyChange[];
   allocations: SupervisorAllocation[];
   assigned_count: number;
+  auto_recovered_tasks: Array<{
+    task_id: string;
+    status: string;
+    review_state?: string | null;
+    next_retry_at?: string | null;
+    next_retry_reason?: string | null;
+  }>;
   stale_sessions: Array<{
     session_id: string;
     task_id: string;

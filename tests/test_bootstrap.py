@@ -78,12 +78,21 @@ lint = "example:main"
                 ]
                 session_count = connection.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
                 config_json = connection.execute("SELECT config_json FROM projects").fetchone()[0]
+                blocked_gated_count = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM tasks
+                    WHERE status = 'blocked' AND review_state = 'awaiting_onboarding_approval'
+                    """
+                ).fetchone()[0]
             finally:
                 connection.close()
 
             config = json.loads(config_json)
             self.assertEqual(config["onboarding"]["mode"], "brownfield")
+            self.assertEqual(config["onboarding"]["review_status"], "review_pending")
             self.assertEqual(session_count, 0)
+            self.assertEqual(blocked_gated_count, 4)
             self.assertIn("Review imported project understanding", task_titles)
 
     def test_bootstrap_auto_detects_brownfield_from_hidden_repo_signals(self):

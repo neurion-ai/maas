@@ -37,6 +37,7 @@ def build_default_project_config(name, description, project_type, onboarding_mod
         "onboarding": {
             "mode": onboarding_mode or "greenfield",
             "discovery_summary": discovery_summary or {},
+            "review_status": "review_pending" if onboarding_mode == "brownfield" else "not_applicable",
         },
         "agent_roles": [
             {

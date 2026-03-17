@@ -44,6 +44,9 @@ KNOWN_BROWNFIELD_HIDDEN_PATHS = {
     ".vscode",
 }
 
+BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
+BROWNFIELD_PENDING_REVIEW_STATE = "awaiting_onboarding_approval"
+
 LANGUAGE_EXTENSIONS = {
     ".py": "python",
     ".ts": "typescript",
@@ -423,7 +426,7 @@ def build_brownfield_task_specs(discovery):
     return [
         (
             "review",
-            "Review imported project understanding",
+            BROWNFIELD_REVIEW_TASK_TITLE,
             "agent_reviewer",
             98,
             "Review the brownfield understanding artifact and confirm the imported operating model before wider automation.",
@@ -431,36 +434,36 @@ def build_brownfield_task_specs(discovery):
             0,
         ),
         (
-            "ready",
+            "blocked",
             "Validate discovered workflow entrypoints",
             "agent_researcher",
             92,
             "Confirm the discovered commands and automation paths: {workflow_text}.".format(workflow_text=workflow_text),
-            None,
+            BROWNFIELD_PENDING_REVIEW_STATE,
             0,
         ),
         (
-            "ready",
+            "blocked",
             "Map high-signal repository areas into MAAS ownership",
             "agent_allocator",
             88,
             "Turn the highest-signal directories into operator-visible work areas: {top_dirs}.".format(top_dirs=top_dirs),
-            None,
+            BROWNFIELD_PENDING_REVIEW_STATE,
             0,
         ),
         (
-            "planned",
+            "blocked",
             "Align runtime and provider settings with existing tooling",
             "agent_builder",
             84,
             "Compare MAAS runtime expectations against the discovered {primary_language} stack and project tooling.".format(
                 primary_language=primary_language
             ),
-            None,
+            BROWNFIELD_PENDING_REVIEW_STATE,
             0,
         ),
         (
-            "planned",
+            "blocked",
             "Import documentation and test conventions into the working backlog",
             "agent_researcher",
             80,
@@ -468,7 +471,7 @@ def build_brownfield_task_specs(discovery):
                 docs=docs,
                 tests=tests,
             ),
-            None,
+            BROWNFIELD_PENDING_REVIEW_STATE,
             0,
         ),
     ]

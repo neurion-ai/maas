@@ -111,11 +111,12 @@ export function ArtifactsPage() {
   useEffect(() => {
     const visibleIds = (artifacts?.items ?? []).map((item) => item.artifact_id);
     if (visibleIds.length === 0) {
-      setSelectedArtifactId(null);
-      setSelectedArtifact(null);
+      if (!selectedArtifactId) {
+        setSelectedArtifact(null);
+      }
       return;
     }
-    if (!selectedArtifactId || !visibleIds.includes(selectedArtifactId)) {
+    if (!selectedArtifactId) {
       setSelectedArtifactId(visibleIds[0]);
     }
   }, [artifacts, selectedArtifactId]);

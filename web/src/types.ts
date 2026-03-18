@@ -422,6 +422,39 @@ export interface ActivityItem {
   task_id?: string | null;
 }
 
+export interface TimelineEvent {
+  event_id: string;
+  source: string;
+  event_type: string;
+  title: string;
+  description: string;
+  severity: string;
+  created_at: string;
+  task_id?: string | null;
+  session_id?: string | null;
+  agent_id?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface TimelineResponse {
+  filters: {
+    task_id?: string | null;
+    session_id?: string | null;
+    agent_id?: string | null;
+    resource_type?: string | null;
+    resource_id?: string | null;
+    limit: number;
+    order: "asc" | "desc";
+  };
+  summary: {
+    total_events: number;
+    sources: Record<string, number>;
+  };
+  events: TimelineEvent[];
+}
+
 export interface ArtifactFacetCount {
   artifact_type?: string;
   provider_type?: string;

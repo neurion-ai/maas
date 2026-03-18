@@ -88,6 +88,7 @@ from maas.services.steering import (
     review_task,
 )
 from maas.supervisor import run_supervisor_once
+from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs, run_task_verification
 
 
@@ -680,6 +681,36 @@ def create_app(project_root="."):
                     include_archived=False,
                 )
             }
+        finally:
+            connection.close()
+
+    @app.get("/api/timeline")
+    def timeline(
+        project_id: str = None,
+        task_id: str = None,
+        session_id: str = None,
+        agent_id: str = None,
+        resource_type: str = None,
+        resource_id: str = None,
+        order: str = "desc",
+        limit: str = None,
+    ):
+        parsed_limit = _parse_limit(limit, 100)
+        if order not in {"asc", "desc"}:
+            raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
+        connection = connect(paths)
+        try:
+            return fetch_incident_timeline(
+                connection,
+                project_id=_selected_project_id(connection, project_id),
+                task_id=task_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                limit=parsed_limit,
+                order=order,
+            )
         finally:
             connection.close()
 

@@ -29,7 +29,8 @@ import type {
   RestoreAndRequeueQuarantineEntryResponse,
   RestoreFailureArtifactsResponse,
   RestoreQuarantineEntryResponse,
-  SupervisorRunResponse
+  SupervisorRunResponse,
+  TimelineResponse
 } from "../types";
 import { appendProjectScope, getSelectedProjectId } from "./projectScope";
 
@@ -203,6 +204,18 @@ const ACTIVITY_FALLBACK: ActivityItem[] = [
     created_at: new Date().toISOString()
   }
 ];
+
+const TIMELINE_FALLBACK: TimelineResponse = {
+  filters: {
+    limit: 100,
+    order: "desc"
+  },
+  summary: {
+    total_events: 0,
+    sources: {}
+  },
+  events: []
+};
 
 const ARTIFACTS_FALLBACK: ArtifactsResponse = {
   summary: {
@@ -742,6 +755,31 @@ export function fetchAgentRoster() {
 
 export function fetchActivity() {
   return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
+}
+
+export function fetchIncidentTimeline(
+  params?: {
+    taskId?: string;
+    sessionId?: string;
+    agentId?: string;
+    resourceType?: string;
+    resourceId?: string;
+    order?: "asc" | "desc";
+    limit?: number;
+  },
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const query = new URLSearchParams();
+  if (params?.taskId) query.set("task_id", params.taskId);
+  if (params?.sessionId) query.set("session_id", params.sessionId);
+  if (params?.agentId) query.set("agent_id", params.agentId);
+  if (params?.resourceType) query.set("resource_type", params.resourceType);
+  if (params?.resourceId) query.set("resource_id", params.resourceId);
+  if (params?.order) query.set("order", params.order);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const path = query.size ? `/api/timeline?${query.toString()}` : "/api/timeline";
+  return fetchJson<TimelineResponse>(path, TIMELINE_FALLBACK, signal, onFallback);
 }
 
 export function fetchArtifacts(

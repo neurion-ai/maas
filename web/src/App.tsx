@@ -14,6 +14,7 @@ import { OverviewPage } from "./pages/OverviewPage";
 import { PortfolioPage } from "./pages/PortfolioPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { RecoveryPage } from "./pages/RecoveryPage";
+import { TimelinePage } from "./pages/TimelinePage";
 import type { ProjectSummary } from "./types";
 
 type View =
@@ -26,6 +27,7 @@ type View =
   | "artifacts"
   | "providers"
   | "recovery"
+  | "timeline"
   | "failures"
   | "alerts"
   | "escalations";
@@ -40,6 +42,7 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "artifacts", label: "Artifacts" },
   { id: "providers", label: "Providers" },
   { id: "recovery", label: "Recovery" },
+  { id: "timeline", label: "Timeline" },
   { id: "failures", label: "Failures" },
   { id: "alerts", label: "Alerts" },
   { id: "escalations", label: "Escalations" }
@@ -394,6 +397,7 @@ function AppShell() {
         {activeView === "providers" ? <ProvidersPage /> : null}
         {activeView === "recovery" ? <RecoveryPage /> : null}
         {activeView === "failures" ? <FailuresPage /> : null}
+        {activeView === "timeline" ? <TimelinePage /> : null}
         {activeView === "alerts" ? <AlertsPage /> : null}
         {activeView === "escalations" ? <EscalationsPage /> : null}
       </div>

@@ -710,6 +710,57 @@ lint = "example:main"
             self.assertEqual(dead_letter["status"], "resolved")
             self.assertEqual(dead_letter["resolution_note"], "replan_finished")
 
+    def test_mark_for_replan_resolves_open_dead_letter_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Replan Task Test", description="Replan task steering", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_mark_replan', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/tasks/{task_id}/actions/mark-for-replan",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                dead_letter = connection.execute(
+                    "SELECT status, resolution_note FROM dead_letter_queue WHERE dlq_id = 'dlq_mark_replan'"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "task_marked_for_replan")
+
     def test_mark_for_replan_allows_tasks_waiting_only_on_next_retry_deadline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Replan Task Test", description="Replan task steering", project_type="custom")

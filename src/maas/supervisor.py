@@ -15,6 +15,7 @@ from maas.services.failure_memory import (
 )
 from maas.services.projects import list_projects, resolve_project_id
 from maas.services.recovery_policy import (
+    fetch_auto_replan_candidate_tasks,
     fetch_auto_recovery_candidate_tasks,
     fetch_project_recovery_policy,
     retry_deadline,
@@ -23,7 +24,7 @@ from maas.services.recovery_policy import (
 )
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 from maas.services.security import revoke_task_capabilities
-from maas.services.steering import _recover_and_requeue_task
+from maas.services.steering import _mark_task_for_replan_internal, _recover_and_requeue_task
 
 
 def _audit_auto_retry(connection, project_id, task_id, actor_id, detail):
@@ -454,6 +455,48 @@ def _auto_recover_blocked_tasks(connection, project_id=None):
     return findings
 
 
+def _auto_route_circuit_breakers_to_replan(connection, project_id=None):
+    resolved_project_id = resolve_project_id(connection, project_id) if project_id is not None else resolve_project_id(connection)
+    if resolved_project_id is None:
+        return []
+
+    policy = fetch_project_recovery_policy(connection, resolved_project_id)
+    if not policy["auto_route_circuit_breakers_to_replan"]:
+        return []
+
+    findings = []
+    for candidate in fetch_auto_replan_candidate_tasks(connection, project_id=resolved_project_id, limit=None):
+        task = connection.execute(
+            """
+            SELECT
+                task_id,
+                project_id,
+                assigned_agent_id,
+                status,
+                review_state,
+                retry_count,
+                next_retry_at,
+                next_retry_reason
+            FROM tasks
+            WHERE task_id = ?
+            """,
+            (candidate["task_id"],),
+        ).fetchone()
+        if task is None or task["status"] != "blocked" or task["review_state"] != "circuit_breaker_open":
+            continue
+        refreshed_task = _mark_task_for_replan_internal(
+            connection,
+            task,
+            actor_id="system_supervisor",
+            audit_action="auto_mark_task_for_replan",
+            activity_action="auto_marked_for_replan",
+            activity_description="Task automatically moved from circuit breaker to replanning after policy guardrails cleared.",
+            resolution_reason="auto_marked_for_replan",
+        )
+        findings.append(refreshed_task)
+    return findings
+
+
 def _active_project_ids(connection, project_id=None):
     if project_id is not None:
         resolved_project_id = resolve_project_id(connection, project_id)
@@ -476,6 +519,7 @@ def run_supervisor_once(
     allocations = []
     stale_sessions = []
     auto_recovered_tasks = []
+    auto_replanned_tasks = []
 
     for scoped_project_id in _active_project_ids(connection, project_id=project_id):
         project_ready_changes = refresh_ready_tasks(connection, commit=False, project_id=scoped_project_id)
@@ -492,7 +536,15 @@ def run_supervisor_once(
             project_id=scoped_project_id,
         )
         project_auto_recovered_tasks = _auto_recover_blocked_tasks(connection, project_id=scoped_project_id)
-        if any(item.get("auto_retried") for item in project_stale_sessions) or project_auto_recovered_tasks:
+        project_auto_replanned_tasks = _auto_route_circuit_breakers_to_replan(
+            connection,
+            project_id=scoped_project_id,
+        )
+        if (
+            any(item.get("auto_retried") for item in project_stale_sessions)
+            or project_auto_recovered_tasks
+            or project_auto_replanned_tasks
+        ):
             project_ready_changes.extend(
                 refresh_ready_tasks(connection, commit=False, project_id=scoped_project_id)
             )
@@ -517,6 +569,7 @@ def run_supervisor_once(
         allocations.extend(project_allocation_result["allocations"])
         stale_sessions.extend(project_stale_sessions)
         auto_recovered_tasks.extend(project_auto_recovered_tasks)
+        auto_replanned_tasks.extend(project_auto_replanned_tasks)
         project_runs.append(
             {
                 "project_id": scoped_project_id,
@@ -525,6 +578,7 @@ def run_supervisor_once(
                 "assigned_count": project_allocation_result["assigned_count"],
                 "stale_sessions": project_stale_sessions,
                 "auto_recovered_tasks": project_auto_recovered_tasks,
+                "auto_replanned_tasks": project_auto_replanned_tasks,
             }
         )
 
@@ -535,5 +589,6 @@ def run_supervisor_once(
         "assigned_count": len([item for item in allocations if item.get("assigned")]),
         "stale_sessions": stale_sessions,
         "auto_recovered_tasks": auto_recovered_tasks,
+        "auto_replanned_tasks": auto_replanned_tasks,
         "project_runs": project_runs,
     }

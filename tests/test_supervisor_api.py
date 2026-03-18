@@ -669,6 +669,71 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "blocked_task_auto_recovered")
 
+    def test_supervisor_auto_routes_clear_circuit_breaker_to_replan_when_policy_allows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Replan Test",
+                description="Auto route circuit breaker to replanning",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                self._update_recovery_config(
+                    connection,
+                    project_id=project_id,
+                    auto_retry_timeout_sessions=False,
+                    auto_route_circuit_breakers_to_replan=True,
+                    circuit_breaker_replan_after_seconds=0,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_supervisor_auto_replan', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                task = connection.execute(
+                    "SELECT status, review_state, next_retry_at FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT status, resolution_note
+                    FROM dead_letter_queue
+                    WHERE dlq_id = 'dlq_supervisor_auto_replan'
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(supervisor_result["auto_replanned_tasks"]), 1)
+            self.assertEqual(supervisor_result["auto_replanned_tasks"][0]["task_id"], task_id)
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "needs_replan")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "auto_marked_for_replan")
+
     def test_recover_action_can_requeue_stale_session_task_without_resetting_agent_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

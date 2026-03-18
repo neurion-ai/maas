@@ -134,6 +134,86 @@ def _activity(connection, project_id, agent_id, task_id, action, description, se
     )
 
 
+def _mark_task_for_replan_internal(
+    connection,
+    task,
+    actor_id,
+    audit_action,
+    activity_action,
+    activity_description,
+    resolution_reason,
+):
+    if task["assigned_agent_id"]:
+        revoke_task_capabilities(
+            connection,
+            task["project_id"],
+            task["task_id"],
+            agent_id=task["assigned_agent_id"],
+            reason=resolution_reason,
+            revoked_by=actor_id,
+        )
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'blocked',
+            assigned_agent_id = NULL,
+            review_state = 'needs_replan',
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task["task_id"],),
+    )
+    resolved_dead_letter_entries = resolve_dead_letter_entries_for_task(
+        connection,
+        task["project_id"],
+        task["task_id"],
+        resolution_reason,
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        audit_action,
+        "task",
+        task["task_id"],
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "previous_agent_id": task["assigned_agent_id"],
+            "previous_next_retry_at": task["next_retry_at"],
+            "previous_next_retry_reason": task["next_retry_reason"],
+            "resolved_dead_letter_entries": resolved_dead_letter_entries,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task["task_id"],
+        activity_action,
+        activity_description,
+        severity="warning",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task["task_id"],
+        actor_id,
+        resolution_reason=resolution_reason,
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        task["project_id"],
+        task["task_id"],
+        actor_id,
+        reason=resolution_reason,
+    )
+    return {"task_id": task["task_id"], "status": "blocked", "review_state": "needs_replan"}
+
+
 def _load_purgeable_artifact_scope(connection, project_paths, actor_id, task_id=None, session_id=None):
     rows, _ = artifact_scope_rows(connection, project_paths, task_id=task_id, session_id=session_id)
     if not rows:
@@ -720,69 +800,17 @@ def mark_task_for_replan(connection, task_id, actor_id):
     if active_session is not None:
         raise ValueError("Task cannot be marked for replanning while a session is active")
 
-    if task["assigned_agent_id"]:
-        revoke_task_capabilities(
-            connection,
-            task["project_id"],
-            task_id,
-            agent_id=task["assigned_agent_id"],
-            reason="task_marked_for_replan",
-            revoked_by=actor_id,
-        )
-
-    connection.execute(
-        """
-        UPDATE tasks
-        SET status = 'blocked',
-            assigned_agent_id = NULL,
-            review_state = 'needs_replan',
-            next_retry_at = NULL,
-            next_retry_reason = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE task_id = ?
-        """,
-        (task_id,),
-    )
-    _audit(
+    result = _mark_task_for_replan_internal(
         connection,
-        task["project_id"],
+        task,
         actor_id,
-        "mark_task_for_replan",
-        "task",
-        task_id,
-        {
-            "previous_status": task["status"],
-            "previous_review_state": task["review_state"],
-            "previous_agent_id": task["assigned_agent_id"],
-            "previous_next_retry_at": task["next_retry_at"],
-            "previous_next_retry_reason": task["next_retry_reason"],
-        },
-    )
-    _activity(
-        connection,
-        task["project_id"],
-        task["assigned_agent_id"],
-        task_id,
-        "marked_for_replan",
-        "Task removed from retry/recovery flow and marked for manual replanning.",
-        severity="warning",
-    )
-    resolve_repeated_failure_alerts(
-        connection,
-        task["project_id"],
-        task_id,
-        actor_id,
+        audit_action="mark_task_for_replan",
+        activity_action="marked_for_replan",
+        activity_description="Task removed from retry/recovery flow and marked for manual replanning.",
         resolution_reason="task_marked_for_replan",
     )
-    resolve_task_session_failed_alerts(
-        connection,
-        task["project_id"],
-        task_id,
-        actor_id,
-        reason="task_marked_for_replan",
-    )
     connection.commit()
-    return {"task_id": task_id, "status": "blocked", "review_state": "needs_replan"}
+    return result
 
 
 def finish_task_replan(connection, task_id, actor_id):

@@ -27,11 +27,14 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertFalse(payload["policy"]["auto_recover_blocked_tasks"])
             self.assertFalse(payload["policy"]["auto_dlq_retry_exhausted_tasks"])
             self.assertFalse(payload["policy"]["auto_open_task_circuit_breakers"])
+            self.assertFalse(payload["policy"]["auto_route_circuit_breakers_to_replan"])
             self.assertEqual(payload["policy"]["circuit_breaker_failure_threshold"], 3)
+            self.assertEqual(payload["policy"]["circuit_breaker_replan_after_seconds"], 300)
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 1)
             self.assertEqual(payload["policy"]["retry_backoff_multiplier"], 2)
             self.assertEqual(payload["summary"]["retry_backoff_tasks"], 0)
             self.assertEqual(payload["summary"]["auto_recovery_candidates"], 0)
+            self.assertEqual(payload["summary"]["auto_replan_candidates"], 0)
             self.assertEqual(payload["summary"]["open_dead_letter_entries"], 0)
             self.assertEqual(payload["summary"]["circuit_breaker_tasks"], 0)
             self.assertEqual(payload["summary"]["open_circuit_breakers"], 0)
@@ -82,7 +85,9 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                         "auto_recover_blocked_tasks": True,
                         "auto_dlq_retry_exhausted_tasks": True,
                         "auto_open_task_circuit_breakers": True,
+                        "auto_route_circuit_breakers_to_replan": True,
                         "circuit_breaker_failure_threshold": 4,
+                        "circuit_breaker_replan_after_seconds": 45,
                         "max_timed_out_retries": 3,
                         "max_failed_session_retries": 2,
                         "timed_out_retry_cooldown_seconds": 30,
@@ -100,7 +105,9 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertTrue(payload["policy"]["auto_recover_blocked_tasks"])
             self.assertTrue(payload["policy"]["auto_dlq_retry_exhausted_tasks"])
             self.assertTrue(payload["policy"]["auto_open_task_circuit_breakers"])
+            self.assertTrue(payload["policy"]["auto_route_circuit_breakers_to_replan"])
             self.assertEqual(payload["policy"]["circuit_breaker_failure_threshold"], 4)
+            self.assertEqual(payload["policy"]["circuit_breaker_replan_after_seconds"], 45)
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 3)
             self.assertEqual(payload["policy"]["retry_backoff_max_seconds"], 120)
             self.assertEqual(
@@ -132,7 +139,9 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertTrue(config["recovery"]["auto_recover_blocked_tasks"])
             self.assertTrue(config["recovery"]["auto_dlq_retry_exhausted_tasks"])
             self.assertTrue(config["recovery"]["auto_open_task_circuit_breakers"])
+            self.assertTrue(config["recovery"]["auto_route_circuit_breakers_to_replan"])
             self.assertEqual(config["recovery"]["circuit_breaker_failure_threshold"], 4)
+            self.assertEqual(config["recovery"]["circuit_breaker_replan_after_seconds"], 45)
 
     def test_recovery_policy_endpoint_includes_dead_letter_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -256,6 +265,56 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                 payload["circuit_breaker_tasks"][0]["circuit_breaker_detail"],
                 {"trigger": "repeated_failures", "failure_count": 3, "threshold": 3},
             )
+
+    def test_recovery_policy_endpoint_includes_auto_replan_candidates_for_clear_circuit_breakers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                recovery = dict(config.get("recovery") or {})
+                recovery["circuit_breaker_replan_after_seconds"] = 0
+                config["recovery"] = recovery
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_auto_replan_candidate', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project["project_id"], task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["auto_replan_candidates"], 1)
+            candidate = payload["auto_replan_candidates"][0]
+            self.assertEqual(candidate["task_id"], task_id)
+            self.assertEqual(candidate["review_state"], "circuit_breaker_open")
+            self.assertIn("circuit breaker", candidate["auto_replan_reason"].lower())
+            self.assertIsNotNone(candidate["circuit_breaker_opened_at"])
 
     def test_recovery_policy_endpoint_includes_task_overrides_retry_history_and_active_backoff_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:

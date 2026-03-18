@@ -86,6 +86,7 @@ def run_orchestrator_once(
             "ready_changes": len(project_run["ready_changes"]),
             "stale_sessions": len(project_run["stale_sessions"]),
             "auto_recovered_tasks": len(project_run["auto_recovered_tasks"]),
+            "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
             "provider_jobs_processed": len(processed_jobs),
             "queue_controls": queue_controls,
         }
@@ -106,6 +107,7 @@ def run_orchestrator_once(
         "assigned_count": supervisor_result["assigned_count"],
         "stale_sessions": supervisor_result["stale_sessions"],
         "auto_recovered_tasks": supervisor_result["auto_recovered_tasks"],
+        "auto_replanned_tasks": supervisor_result.get("auto_replanned_tasks") or [],
         "provider_jobs_processed": total_jobs_processed,
         "project_runs": project_runs,
     }

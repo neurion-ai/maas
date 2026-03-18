@@ -845,7 +845,9 @@ export interface RecoveryPolicySettings {
   auto_recover_blocked_tasks: boolean;
   auto_dlq_retry_exhausted_tasks: boolean;
   auto_open_task_circuit_breakers: boolean;
+  auto_route_circuit_breakers_to_replan: boolean;
   circuit_breaker_failure_threshold: number;
+  circuit_breaker_replan_after_seconds: number;
   max_timed_out_retries: number;
   max_failed_session_retries: number;
   timed_out_retry_cooldown_seconds: number;
@@ -882,6 +884,8 @@ export interface RecoveryTaskItem {
     retry_limit?: number;
     retry_count?: number;
   };
+  circuit_breaker_opened_at?: string | null;
+  auto_replan_reason?: string | null;
 }
 
 export interface DeadLetterQueueItem {
@@ -926,6 +930,7 @@ export interface RecoveryPolicyResponse {
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
     auto_recovery_candidates: number;
+    auto_replan_candidates: number;
     open_dead_letter_entries: number;
     open_circuit_breakers: number;
     tasks_with_retry_overrides: number;
@@ -941,6 +946,7 @@ export interface RecoveryPolicyResponse {
   };
   task_retry_overrides: RecoveryTaskItem[];
   auto_recovery_candidates: RecoveryTaskItem[];
+  auto_replan_candidates: RecoveryTaskItem[];
   recoverable_blocked_tasks: RecoveryTaskItem[];
   task_retry_history: RecoveryTaskItem[];
   replanning_candidates: RecoveryTaskItem[];

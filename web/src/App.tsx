@@ -25,28 +25,28 @@ const THEME_STORAGE_KEY = "maas:theme";
 const VIEWS: Array<{ id: View; label: string; summary: string }> = [
   {
     id: "home",
-    label: "Home",
-    summary: "Recommended next actions, current project state, and first-run guidance."
+    label: "Control room",
+    summary: "Agents, board, incidents, live feed, and selected-task evidence."
   },
   {
     id: "work",
     label: "Work",
-    summary: "Board, plan, task detail, and execution steering."
+    summary: "Full planning surface, board steering, and repo-grounded task context."
   },
   {
     id: "runs",
     label: "Runs",
-    summary: "Providers, workers, queueing, agents, and outputs."
+    summary: "Providers, workers, queued jobs, and runtime outputs."
   },
   {
     id: "incidents",
     label: "Incidents",
-    summary: "Failures, alerts, recovery, and timeline replay."
+    summary: "Recovery queues, alerts, failures, and incident replay."
   },
   {
     id: "projects",
     label: "Projects",
-    summary: "Portfolio health, project lifecycle, and cross-project supervision."
+    summary: "Portfolio health, project lifecycle, and multi-project supervision."
   }
 ];
 
@@ -274,80 +274,90 @@ function AppShell() {
   }, [activeProjects, theme]);
 
   return (
-    <div className="product-shell">
-      <aside className="shell-sidebar">
-        <div className="brand-block">
-          <span className="eyebrow">MAAS</span>
-          <h1>AI software delivery, made operable</h1>
-          <p>Import a repo, supervise execution, recover from failures, and keep evidence attached to the work.</p>
+    <div className="cockpit-shell">
+      <header className="cockpit-shell__topbar">
+        <div className="cockpit-shell__brand">
+          <strong>MAAS</strong>
+          <span>dense operator control room</span>
         </div>
 
-        <nav className="shell-nav" aria-label="Primary views">
-          {VIEWS.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={`shell-nav__item ${activeView === view.id ? "is-active" : ""}`}
-              onClick={() => setActiveView(view.id)}
+        <div className="cockpit-shell__project">
+          <label htmlFor="active-project-select">Project</label>
+          <div className="cockpit-shell__project-row">
+            <select
+              id="active-project-select"
+              aria-label="Selected project"
+              value={activeProject?.project_id ?? ""}
+              onChange={(event) => {
+                const nextProjectId = event.target.value || null;
+                persistSelectedProjectId(nextProjectId);
+                setSelectedProjectId(nextProjectId);
+              }}
             >
-              <strong>{view.label}</strong>
-              <span>{view.summary}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="status-chip">
-            <span className={`status-chip__dot ${connected ? "is-live" : transport === "polling" ? "is-warn" : ""}`} />
-            {liveTransportLabel}
-          </div>
-          <button type="button" className="hero-button hero-button--ghost hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
-            Command palette
-          </button>
-        </div>
-      </aside>
-
-      <main className="shell-main">
-        <header className="shell-topbar">
-          <div className="shell-topbar__project">
-            <span className="eyebrow">Current project</span>
-            <div className="shell-topbar__project-row">
-              <select
-                aria-label="Selected project"
-                value={activeProject?.project_id ?? ""}
-                onChange={(event) => {
-                  const nextProjectId = event.target.value || null;
-                  persistSelectedProjectId(nextProjectId);
-                  setSelectedProjectId(nextProjectId);
-                }}
-              >
-                {activeProjects.map((project) => (
-                  <option key={project.project_id} value={project.project_id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              <div>
-                <strong>{activeProject?.name ?? "No active project"}</strong>
-                <p>{activeProject?.description ?? "Create or restore a project to begin."}</p>
-              </div>
+              {activeProjects.map((project) => (
+                <option key={project.project_id} value={project.project_id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <div className="cockpit-shell__project-copy">
+              <strong>{activeProject?.name ?? "No active project"}</strong>
+              <span>{activeProject?.description ?? "Create or restore a project to begin."}</span>
             </div>
           </div>
+        </div>
 
-          <div className="shell-topbar__actions">
-            <button
-              type="button"
-              className="hero-button hero-button--ghost"
-              onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-            >
-              {theme === "dark" ? "Light theme" : "Dark theme"}
-            </button>
-            <button type="button" className="hero-button" onClick={() => setCommandPaletteOpen(true)}>
-              Search and jump
-            </button>
+        <div className="cockpit-shell__telemetry">
+          <div className="telemetry-chip">
+            <span className={`status-dot status-dot--${connected ? "good" : transport === "polling" ? "warn" : "default"}`} />
+            <div>
+              <strong>{liveTransportLabel}</strong>
+              <span>{activeProject?.onboarding_mode ?? "workspace"} · {activeProject?.project_type ?? "custom"}</span>
+            </div>
           </div>
-        </header>
+          <div className="telemetry-chip">
+            <strong>{activeProject?.task_count ?? 0}</strong>
+            <span>tasks</span>
+          </div>
+          <div className="telemetry-chip">
+            <strong>{activeProject?.agent_count ?? 0}</strong>
+            <span>agents</span>
+          </div>
+          <div className="telemetry-chip">
+            <strong>{activeProject?.open_alert_count ?? 0}</strong>
+            <span>alerts</span>
+          </div>
+        </div>
 
+        <div className="cockpit-shell__actions">
+          <button
+            type="button"
+            className="hero-button hero-button--ghost hero-button--compact"
+            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+          >
+            {theme === "dark" ? "Light" : "Dark"}
+          </button>
+          <button type="button" className="hero-button hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
+            Command
+          </button>
+        </div>
+      </header>
+
+      <nav className="cockpit-tabs" aria-label="Primary views">
+        {VIEWS.map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            className={`cockpit-tabs__item ${activeView === view.id ? "is-active" : ""}`}
+            onClick={() => setActiveView(view.id)}
+          >
+            <strong>{view.label}</strong>
+            <span>{view.summary}</span>
+          </button>
+        ))}
+      </nav>
+
+      <main className="cockpit-shell__main">
         <div className="product-content">
           {activeView === "home" ? <HomePage onNavigate={setActiveView} /> : null}
           {activeView === "work" ? <WorkPage /> : null}

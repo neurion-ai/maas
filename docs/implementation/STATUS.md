@@ -45,8 +45,18 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#114` is implemented on `codex/ux-product-redesign`
 - [x] `#115` is implemented on `codex/ux-product-redesign`
 - [x] `#116` is implemented on `codex/ux-product-redesign`
+- [x] `#117` is implemented on `codex/dense-control-room-redesign`
+- [x] `#118` is implemented on `codex/dense-control-room-redesign`
+- [x] `#119` is implemented on `codex/dense-control-room-redesign`
+- [x] `#120` is implemented on `codex/dense-control-room-redesign`
+- [x] `#121` is implemented on `codex/dense-control-room-redesign`
+- [x] `#122` is implemented on `codex/dense-control-room-redesign`
+- [x] `#123` is implemented on `codex/dense-control-room-redesign`
+- [x] `#124` is implemented on `codex/dense-control-room-redesign`
+- [x] `#125` is implemented on `codex/dense-control-room-redesign`
+- [x] `#126` is implemented on `codex/dense-control-room-redesign`
 
-The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#126` sequence is fully implemented on the stacked branch chain above `main`.
 
 ## Extended Numbered Roadmap
 
@@ -86,6 +96,16 @@ The current numbered `#81-#116` sequence is fully implemented on the stacked bra
 - [x] `#114` Portfolio and project-management UX redesign
 - [x] `#115` Command palette, contextual actions, empty states, and inline guidance
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass
+- [x] `#117` Shell density reset
+- [x] `#118` Default control room layout
+- [x] `#119` Compact kanban redesign
+- [x] `#120` Agent roster and interaction view
+- [x] `#121` Curated live ticker
+- [x] `#122` Goal/subgoal/task relationship explorer
+- [x] `#123` Incident rail and playbooks
+- [x] `#124` Evidence and verification drawer
+- [x] `#125` Project status and portfolio command bar
+- [x] `#126` Remove legacy hero UX and final dense visual pass
 
 ## Current Snapshot
 
@@ -98,6 +118,7 @@ The current numbered `#81-#116` sequence is fully implemented on the stacked bra
 - [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
 - [x] The stacked UX redesign now provides a simpler mental model, dual-theme shell, guided home surface, unified Work/Runs/Incidents pages, and command-palette navigation on top of the existing backend stack.
+- [x] The current dense-control-room branch goes further by replacing the oversized hero/dashboard posture with a compact operator cockpit: top status strip, agent rail, dense kanban, incident rail, curated ticker, and selected-task evidence inspector.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`

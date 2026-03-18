@@ -44,6 +44,19 @@
 - [x] `#115` Command palette, contextual actions, empty states, and inline guidance
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass
 
+## Dense Control-Room Sequence On `codex/dense-control-room-redesign`
+
+- [x] `#117` Shell density reset
+- [x] `#118` Default control room layout
+- [x] `#119` Compact kanban redesign
+- [x] `#120` Agent roster and interaction view
+- [x] `#121` Curated live ticker
+- [x] `#122` Goal/subgoal/task relationship explorer
+- [x] `#123` Incident rail and playbooks
+- [x] `#124` Evidence and verification drawer
+- [x] `#125` Project status and portfolio command bar
+- [x] `#126` Remove legacy hero UX and final dense visual pass
+
 ## Board Contract Checklist
 
 ### Column shape

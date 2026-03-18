@@ -66,6 +66,16 @@ Current stacked development chain above `main`:
 - `#114` exists on `codex/ux-product-redesign`
 - `#115` exists on `codex/ux-product-redesign`
 - `#116` exists on `codex/ux-product-redesign`
+- `#117` exists on `codex/dense-control-room-redesign`
+- `#118` exists on `codex/dense-control-room-redesign`
+- `#119` exists on `codex/dense-control-room-redesign`
+- `#120` exists on `codex/dense-control-room-redesign`
+- `#121` exists on `codex/dense-control-room-redesign`
+- `#122` exists on `codex/dense-control-room-redesign`
+- `#123` exists on `codex/dense-control-room-redesign`
+- `#124` exists on `codex/dense-control-room-redesign`
+- `#125` exists on `codex/dense-control-room-redesign`
+- `#126` exists on `codex/dense-control-room-redesign`
 
 ### Current project state
 
@@ -146,6 +156,16 @@ Current stacked development chain above `main`:
 - [x] `#114` Portfolio and project-management UX redesign
 - [x] `#115` Command palette, contextual actions, empty states, and inline guidance
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass
+- [x] `#117` Shell density reset
+- [x] `#118` Default control room layout
+- [x] `#119` Compact kanban redesign
+- [x] `#120` Agent roster and interaction view
+- [x] `#121` Curated live ticker
+- [x] `#122` Goal/subgoal/task relationship explorer
+- [x] `#123` Incident rail and playbooks
+- [x] `#124` Evidence and verification drawer
+- [x] `#125` Project status and portfolio command bar
+- [x] `#126` Remove legacy hero UX and final dense visual pass
 
 ### Current stacked branch progress
 
@@ -185,8 +205,18 @@ Current stacked development chain above `main`:
 - [x] `#114` is implemented on `codex/ux-product-redesign`
 - [x] `#115` is implemented on `codex/ux-product-redesign`
 - [x] `#116` is implemented on `codex/ux-product-redesign`
+- [x] `#117` is implemented on `codex/dense-control-room-redesign`
+- [x] `#118` is implemented on `codex/dense-control-room-redesign`
+- [x] `#119` is implemented on `codex/dense-control-room-redesign`
+- [x] `#120` is implemented on `codex/dense-control-room-redesign`
+- [x] `#121` is implemented on `codex/dense-control-room-redesign`
+- [x] `#122` is implemented on `codex/dense-control-room-redesign`
+- [x] `#123` is implemented on `codex/dense-control-room-redesign`
+- [x] `#124` is implemented on `codex/dense-control-room-redesign`
+- [x] `#125` is implemented on `codex/dense-control-room-redesign`
+- [x] `#126` is implemented on `codex/dense-control-room-redesign`
 
-The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#126` sequence is fully implemented on the stacked branch chain above `main`.
 
 ### UX and product-design sequence now implemented on the stacked branch
 
@@ -210,6 +240,29 @@ The current numbered `#81-#116` sequence is fully implemented on the stacked bra
   make advanced functionality discoverable without overwhelming the default UI.
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass:
   finish the redesign with mobile/tablet behavior, keyboard-first interactions, stronger hierarchy, and usability QA.
+
+### Dense operator control-room sequence now implemented on the stacked branch
+
+- [x] `#117` Shell density reset:
+  remove the oversized landing-page shell and replace it with a compact top strip, tighter navigation, and smaller controls.
+- [x] `#118` Default control room layout:
+  make the landing screen a dense three-pane operator cockpit with agents on the left, kanban in the center, and ops context on the right.
+- [x] `#119` Compact kanban redesign:
+  replace oversized cards with compact execution cards that expose assignee, goal, evidence signals, and failure pressure at a glance.
+- [x] `#120` Agent roster and interaction view:
+  turn agents into first-class visible actors with status, current work, heartbeat, and quick intervention hooks.
+- [x] `#121` Curated live ticker:
+  add a dense meaningful-event feed so the system feels alive without turning into raw telemetry spam.
+- [x] `#122` Goal/subgoal/task relationship explorer:
+  expose selected-task goal lineage, sibling work, repo-plan matches, and recent task-specific history in one inspector.
+- [x] `#123` Incident rail and playbooks:
+  surface actionable incidents directly in the right rail instead of forcing operators to hunt through separate admin pages.
+- [x] `#124` Evidence and verification drawer:
+  put verification state, git diff evidence, artifacts, and task history next to the selected task.
+- [x] `#125` Project status and portfolio command bar:
+  move project selection, health, alert load, and transport/runtime status into a compact top command strip.
+- [x] `#126` Remove legacy hero UX and final dense visual pass:
+  shrink typography, card heights, and button scale across the control room so the product reads like an operations cockpit instead of a landing page.
 
 ### Extended numbered roadmap
 

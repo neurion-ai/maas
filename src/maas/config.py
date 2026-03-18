@@ -15,6 +15,8 @@ DEFAULT_PROVIDER_SETTINGS = {
         "cli_command": "claude",
         "timeout_seconds": 300,
         "permission_mode": "acceptEdits",
+        "job_limit_per_pass": 2,
+        "queue_paused": False,
         "model": "",
     },
     "openai_codex": {
@@ -22,7 +24,13 @@ DEFAULT_PROVIDER_SETTINGS = {
         "cli_command": "codex",
         "timeout_seconds": 300,
         "sandbox": "workspace-write",
+        "job_limit_per_pass": 2,
+        "queue_paused": False,
         "model": "",
+    },
+    "python_script": {
+        "job_limit_per_pass": 2,
+        "queue_paused": False,
     },
 }
 

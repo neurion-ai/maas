@@ -17,7 +17,8 @@
 - [x] `#89` brownfield runbook and command catalog is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#90` portfolio view across projects is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#91` background orchestration daemon is implemented on `codex/brownfield-runbook-command-catalog`
-- [ ] `#92` queue and worker capacity management is the next unfinished step
+- [x] `#92` queue and worker capacity management is implemented on `codex/queue-capacity-controls`
+- [ ] `#93` stronger runner sandbox envelopes is the next unfinished step
 
 ## Extended Numbered Roadmap
 

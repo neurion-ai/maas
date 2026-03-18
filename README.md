@@ -39,7 +39,8 @@ Current stacked development chain above `main`:
 - `#89` exists on `codex/brownfield-runbook-command-catalog`
 - `#90` exists on `codex/brownfield-runbook-command-catalog`
 - `#91` exists on `codex/brownfield-runbook-command-catalog`
-- `#92` is the next unfinished step in the current sequence
+- `#92` exists on `codex/queue-capacity-controls`
+- `#93` is the next unfinished step in the current sequence
 
 ### Current project state
 
@@ -102,7 +103,8 @@ Current stacked development chain above `main`:
 - [x] `#89` is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#90` is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#91` is implemented on `codex/brownfield-runbook-command-catalog`
-- [ ] `#92` is the next unfinished item
+- [x] `#92` is implemented on `codex/queue-capacity-controls`
+- [ ] `#93` is the next unfinished item
 
 ### Extended numbered roadmap
 

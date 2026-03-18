@@ -850,7 +850,7 @@ export async function setProviderMode(providerId: string, mode: string) {
   return payload;
 }
 
-export async function setProviderSettings(providerId: string, settings: Record<string, string | number>) {
+export async function setProviderSettings(providerId: string, settings: Record<string, string | number | boolean>) {
   const payload = await postJson(`/api/providers/${providerId}/actions/set-settings`, {
     actor_id: "agent_allocator",
     settings,

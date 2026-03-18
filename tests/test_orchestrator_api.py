@@ -94,6 +94,95 @@ class OrchestratorApiTest(unittest.TestCase):
             self.assertEqual(job_row["status"], "completed")
             self.assertIsNotNone(job_row["session_id"])
 
+    def test_orchestrator_honors_provider_queue_pause_and_limit_controls(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Orchestrator Queue Controls Test",
+                description="orchestrator queue control test",
+                project_type="custom",
+            )
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["goal_id"]
+                first_task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Queued provider work one",
+                )
+                second_task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Queued provider work two",
+                )
+                first_job = queue_provider_task(
+                    connection,
+                    paths,
+                    provider_id="python_script",
+                    actor_id="agent_allocator",
+                    project_id=project_id,
+                    agent_id="agent_reviewer",
+                    task_id=first_task_id,
+                )
+                second_job = queue_provider_task(
+                    connection,
+                    paths,
+                    provider_id="python_script",
+                    actor_id="agent_allocator",
+                    project_id=project_id,
+                    agent_id="agent_reviewer",
+                    task_id=second_task_id,
+                )
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            paused_response = client.post(
+                "/api/providers/python_script/actions/set-settings",
+                json={"actor_id": "agent_allocator", "settings": {"queue_paused": True, "job_limit_per_pass": 1}},
+            )
+            self.assertEqual(paused_response.status_code, 200)
+
+            paused_run = client.post(
+                "/api/orchestrator/run",
+                json={"allocate_limit": 2, "provider_job_limit": 3},
+            ).json()
+            self.assertEqual(paused_run["provider_jobs_processed"], 0)
+
+            resumed_response = client.post(
+                "/api/providers/python_script/actions/set-settings",
+                json={"actor_id": "agent_allocator", "settings": {"queue_paused": False, "job_limit_per_pass": 1}},
+            )
+            self.assertEqual(resumed_response.status_code, 200)
+
+            limited_run = client.post(
+                "/api/orchestrator/run",
+                json={"allocate_limit": 2, "provider_job_limit": 3},
+            ).json()
+            self.assertEqual(limited_run["provider_jobs_processed"], 1)
+
+            connection = connect(paths)
+            try:
+                statuses = {
+                    row["job_id"]: row["status"]
+                    for row in connection.execute(
+                        "SELECT job_id, status FROM provider_job_queue ORDER BY created_at ASC"
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual(statuses[first_job["job_id"]], "completed")
+            self.assertEqual(statuses[second_job["job_id"]], "queued")
+
 
 if __name__ == "__main__":
     unittest.main()

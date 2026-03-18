@@ -702,6 +702,8 @@ export interface ProviderRuntimeControls {
   permission_mode?: string;
   sandbox?: string;
   model?: string;
+  job_limit_per_pass?: number;
+  queue_paused?: boolean;
 }
 
 export interface ProviderEditableRuntimeControls {
@@ -710,6 +712,8 @@ export interface ProviderEditableRuntimeControls {
   permission_mode?: string;
   sandbox?: string;
   model?: string;
+  job_limit_per_pass?: number | string;
+  queue_paused?: boolean | string;
 }
 
 export interface ProviderRunSummary {

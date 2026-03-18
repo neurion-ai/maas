@@ -19,7 +19,8 @@
 - [x] `#89` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
 - [x] `#90` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
 - [x] `#91` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
-- [ ] `#92` is the next unfinished item in the current stacked sequence
+- [x] `#92` is implemented on the stacked branch `codex/queue-capacity-controls`
+- [ ] `#93` is the next unfinished item in the current stacked sequence
 
 ## Extended Numbered Roadmap
 

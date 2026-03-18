@@ -58,6 +58,12 @@ function formatRuntimeControls(provider: ProviderStatusItem) {
   if (controls.model) {
     rows.push(`Model: ${controls.model}`);
   }
+  if (typeof controls.job_limit_per_pass === "number") {
+    rows.push(`Jobs/pass: ${controls.job_limit_per_pass}`);
+  }
+  if (typeof controls.queue_paused === "boolean") {
+    rows.push(`Queue: ${controls.queue_paused ? "paused" : "running"}`);
+  }
   return rows.join(" | ");
 }
 
@@ -210,7 +216,13 @@ export function ProvidersPage() {
       const draft = settingsDrafts[provider.id] ?? {};
       const payload: Record<string, string | number> = {};
       Object.entries(draft).forEach(([key, value]) => {
-        payload[key] = key === "timeout_seconds" ? Number(value) : value;
+        if (key === "timeout_seconds" || key === "job_limit_per_pass") {
+          payload[key] = Number(value);
+        } else if (key === "queue_paused") {
+          payload[key] = value === "true";
+        } else {
+          payload[key] = value;
+        }
       });
       await setProviderSettings(provider.id, payload);
       await reloadProviders(provider.id);
@@ -410,11 +422,21 @@ export function ProvidersPage() {
                         {Object.entries(provider.configurable_runtime_controls ?? {}).map(([key]) => (
                           <label key={key}>
                             {key}
-                            <input
-                              type={key === "timeout_seconds" ? "number" : "text"}
-                              value={settingsDrafts[provider.id]?.[key] ?? ""}
-                              onChange={(event) => updateDraft(provider.id, key, event.target.value)}
-                            />
+                            {key === "queue_paused" ? (
+                              <select
+                                value={settingsDrafts[provider.id]?.[key] ?? "false"}
+                                onChange={(event) => updateDraft(provider.id, key, event.target.value)}
+                              >
+                                <option value="false">false</option>
+                                <option value="true">true</option>
+                              </select>
+                            ) : (
+                              <input
+                                type={key === "timeout_seconds" || key === "job_limit_per_pass" ? "number" : "text"}
+                                value={settingsDrafts[provider.id]?.[key] ?? ""}
+                                onChange={(event) => updateDraft(provider.id, key, event.target.value)}
+                              />
+                            )}
                           </label>
                         ))}
                       </div>

@@ -200,6 +200,8 @@ class ProviderRuntimeTest(unittest.TestCase):
                     "timeout_seconds": 120,
                     "sandbox": "workspace-write",
                     "model": "gpt-5-codex",
+                    "job_limit_per_pass": 2,
+                    "queue_paused": False,
                 },
             )
 
@@ -230,6 +232,8 @@ class ProviderRuntimeTest(unittest.TestCase):
                     "timeout_seconds": 120,
                     "permission_mode": "acceptEdits",
                     "model": "sonnet",
+                    "job_limit_per_pass": 2,
+                    "queue_paused": False,
                 },
             )
 
@@ -515,6 +519,8 @@ class ProviderRuntimeTest(unittest.TestCase):
                         "cli_command": "codex-beta",
                         "timeout_seconds": 45,
                         "sandbox": "workspace-write",
+                        "job_limit_per_pass": 1,
+                        "queue_paused": True,
                         "model": "gpt-5-mini",
                     },
                 },
@@ -523,6 +529,8 @@ class ProviderRuntimeTest(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["configurable_runtime_controls"]["cli_command"], "codex-beta")
             self.assertEqual(payload["configurable_runtime_controls"]["timeout_seconds"], 45)
+            self.assertEqual(payload["configurable_runtime_controls"]["job_limit_per_pass"], 1)
+            self.assertTrue(payload["configurable_runtime_controls"]["queue_paused"])
             self.assertEqual(payload["configurable_runtime_controls"]["model"], "gpt-5-mini")
 
     def test_provider_settings_endpoint_rejects_invalid_values(self):
@@ -541,6 +549,18 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("timeout_seconds", response.json()["detail"])
+
+            response = client.post(
+                "/api/providers/openai_codex/actions/set-settings",
+                json={
+                    "actor_id": "agent_allocator",
+                    "settings": {
+                        "job_limit_per_pass": -1,
+                    },
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("job_limit_per_pass", response.json()["detail"])
 
     def test_provider_settings_endpoint_rejects_cli_command_paths(self):
         with tempfile.TemporaryDirectory() as tmpdir:

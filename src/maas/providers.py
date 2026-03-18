@@ -7,6 +7,7 @@ import re
 
 from maas.config import DEFAULT_PROVIDER_SETTINGS
 from maas.ids import generate_id
+from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -113,13 +114,13 @@ def _project_provider_config(connection, project_id):
     if connection is None:
         return {}
 
-    if project_id is None:
-        row = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
-    else:
-        row = connection.execute(
-            "SELECT project_id, config_json FROM projects WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
+    resolved_project_id = resolve_project_id(connection, project_id)
+    if resolved_project_id is None:
+        return {}
+    row = connection.execute(
+        "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+        (resolved_project_id,),
+    ).fetchone()
     if row is None:
         return {}
     try:
@@ -329,9 +330,7 @@ def _provider_run_history(connection, project_id):
     if connection is None:
         return {}
 
-    if project_id is None:
-        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-        project_id = project["project_id"] if project else None
+    project_id = resolve_project_id(connection, project_id)
     if project_id is None:
         return {}
 
@@ -585,9 +584,7 @@ def _provider_run_targets(connection, project_id, limit=5):
     if connection is None:
         return []
 
-    if project_id is None:
-        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-        project_id = project["project_id"] if project else None
+    project_id = resolve_project_id(connection, project_id)
     if project_id is None:
         return []
 
@@ -650,16 +647,10 @@ def update_provider_mode(connection, provider_id, actor_id, mode, project_id=Non
             )
         )
 
-    if project_id is None:
-        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-    else:
-        project = connection.execute(
-            "SELECT project_id FROM projects WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
-    if project is None:
+    resolved_project_id = resolve_project_id(connection, project_id)
+    if resolved_project_id is None:
         raise ValueError("Project not found")
-    project_id = project["project_id"]
+    project_id = resolved_project_id
 
     ensure_board_action_allowed(connection, actor_id, project_id, "configure_provider", "provider", provider_id)
     persisted_mode = "simulated" if normalized_mode == "local_simulation" else normalized_mode
@@ -776,16 +767,10 @@ def update_provider_settings(connection, provider_id, actor_id, settings, projec
             )
         )
 
-    if project_id is None:
-        project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-    else:
-        project = connection.execute(
-            "SELECT project_id FROM projects WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
-    if project is None:
+    resolved_project_id = resolve_project_id(connection, project_id)
+    if resolved_project_id is None:
         raise ValueError("Project not found")
-    project_id = project["project_id"]
+    project_id = resolved_project_id
 
     ensure_board_action_allowed(connection, actor_id, project_id, "configure_provider", "provider", provider_id)
 

@@ -13,6 +13,7 @@ from maas.providers import (
     update_provider_settings,
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -197,12 +198,9 @@ def _record_provider_preflight(
 
 
 def run_provider_preflight(connection, project_paths, provider_id, actor_id, project_id=None):
-    scoped_project_id = project_id
+    scoped_project_id = resolve_project_id(connection, project_id)
     if scoped_project_id is None:
-        row = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-        if row is None:
-            raise ValueError("Project not found")
-        scoped_project_id = row["project_id"]
+        raise ValueError("Project not found")
     ensure_board_action_allowed(connection, actor_id, scoped_project_id, "check_provider_runtime", "provider", provider_id)
     providers = list_provider_status(connection=connection, project_id=scoped_project_id)
     provider = next((item for item in providers if item["id"] == provider_id), None)

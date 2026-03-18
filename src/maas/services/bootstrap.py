@@ -766,13 +766,22 @@ def build_brownfield_task_specs(discovery):
     return task_specs
 
 
-def seed_project(connection, config, mode="greenfield", discovery=None):
+def seed_project(
+    connection,
+    config,
+    mode="greenfield",
+    discovery=None,
+    source_root=None,
+    stable_agent_ids=False,
+    seed_runtime_demo=True,
+):
     project_id = generate_id("proj")
     project = config["project"]
+    project_source_root = source_root or project.get("source_root") or ""
     connection.execute(
         """
-        INSERT INTO projects (project_id, name, description, project_type, config_json)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO projects (project_id, name, description, project_type, config_json, state, source_root)
+        VALUES (?, ?, ?, ?, ?, 'active', ?)
         """,
         (
             project_id,
@@ -780,12 +789,17 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
             project["description"],
             project["type"],
             json.dumps(config),
+            project_source_root,
         ),
     )
 
     agents = []
+    agent_ids = {}
     for role in config["agent_roles"]:
-        agent_id = "agent_{role}".format(role=role["role"])
+        default_agent_id = "agent_{role}".format(role=role["role"])
+        agent_id = default_agent_id if stable_agent_ids else generate_id("agent")
+        agent_ids[default_agent_id] = agent_id
+        agent_ids[role["role"]] = agent_id
         agents.append((agent_id, role["role"], role["description"]))
         connection.execute(
             """
@@ -838,6 +852,7 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
     for status, title, agent_id, priority, description, review_state, progress_pct in task_specs:
         task_id = generate_id("task")
         task_ids.append(task_id)
+        assigned_agent_id = agent_ids.get(agent_id, agent_id)
         heartbeat = "CURRENT_TIMESTAMP" if status == "in_progress" else None
         connection.execute(
             """
@@ -855,7 +870,7 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
                 description,
                 status,
                 priority,
-                agent_id,
+                assigned_agent_id,
                 json.dumps([{"type": "artifact_exists"}]),
                 progress_pct,
                 review_state,
@@ -869,7 +884,7 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
                 description,
                 status,
                 priority,
-                agent_id,
+                assigned_agent_id,
                 json.dumps([{"type": "artifact_exists"}]),
                 progress_pct,
                 review_state,
@@ -877,17 +892,17 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
             ),
             )
 
-        if agent_id and status in ("planned", "ready", "assigned", "in_progress", "blocked"):
+        if assigned_agent_id and status in ("planned", "ready", "assigned", "in_progress", "blocked"):
             grant_task_capabilities(
                 connection,
                 project_id,
                 task_id,
-                agent_id,
+                assigned_agent_id,
                 TASK_EXECUTION_CAPABILITIES,
                 granted_by="system_bootstrap",
             )
 
-    if mode == "greenfield":
+    if mode == "greenfield" and seed_runtime_demo:
         connection.execute(
             """
             INSERT INTO task_dependencies (dependency_id, project_id, source_task_id, target_task_id, dependency_type)
@@ -902,7 +917,7 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
                 session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message
             ) VALUES (?, ?, ?, ?, 'active', 'python_script', 55, 'Implementing board endpoint')
             """,
-            (generate_id("sess"), project_id, "agent_builder", task_ids[2]),
+            (generate_id("sess"), project_id, agent_ids["agent_builder"], task_ids[2]),
         )
         connection.execute(
             """
@@ -910,7 +925,7 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
             SET status = 'running', current_task_id = ?, last_heartbeat_at = CURRENT_TIMESTAMP
             WHERE agent_id = ?
             """,
-            (task_ids[2], "agent_builder"),
+            (task_ids[2], agent_ids["agent_builder"]),
         )
 
         connection.execute(
@@ -919,8 +934,17 @@ def seed_project(connection, config, mode="greenfield", discovery=None):
                 activity_id, project_id, agent_id, task_id, action, category, description, severity
             ) VALUES (?, ?, ?, ?, 'task_started', 'runtime', 'Builder picked up board endpoint work.', 'info')
             """,
-            (generate_id("act"), project_id, "agent_builder", task_ids[2]),
+            (generate_id("act"), project_id, agent_ids["agent_builder"], task_ids[2]),
         )
+        connection.execute(
+            """
+            INSERT INTO alerts (
+                alert_id, project_id, severity, title, description, status
+            ) VALUES (?, ?, 'warning', 'Broader provider integrations pending', 'Simulated adapters and explicit local CLI modes are available, but broader provider coverage is still pending.', 'open')
+            """,
+            (generate_id("alert"), project_id),
+        )
+    elif mode == "greenfield":
         connection.execute(
             """
             INSERT INTO alerts (
@@ -972,6 +996,7 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
         project_type=project_type or "custom",
         onboarding_mode=resolved_mode,
         discovery_summary=build_discovery_summary(discovery),
+        source_root=paths.root,
     )
     save_project_config(paths.project_config, config)
     with open(paths.understanding_path, "w", encoding="utf-8") as handle:
@@ -982,6 +1007,14 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
 
     run_migrations(project_root, paths)
     connection = connect(paths)
-    project_id = seed_project(connection, config, mode=resolved_mode, discovery=discovery)
+    project_id = seed_project(
+        connection,
+        config,
+        mode=resolved_mode,
+        discovery=discovery,
+        source_root=paths.root,
+        stable_agent_ids=True,
+        seed_runtime_demo=True,
+    )
     connection.close()
     return {"paths": paths, "config": config, "project_id": project_id, "mode": resolved_mode, "discovery": discovery}

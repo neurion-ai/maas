@@ -50,7 +50,7 @@ Legend:
 - [x] Recovery for agents left in `error`
 - [x] Real local Claude Code CLI integration behind explicit provider config
 - [x] Real local OpenAI Codex CLI integration behind explicit provider config
-- [x] Provider status visibility with effective mode, runtime controls, config warnings, recent run history, manual run controls, mode switching, and editable settings
+- [x] Provider status visibility with effective mode, runtime controls, config warnings, preflight readiness, recent run history, manual run controls, mode switching, and editable settings
 - [x] Artifact browser and artifact-state visibility in the control room
 - [x] Artifact browser supports preview, guarded download, compare, lineage/provenance pivots, and task/session export bundles
 - [x] Artifact browser operator actions for restore, restore-and-requeue, dismiss, and reopen on quarantined artifacts
@@ -67,7 +67,7 @@ Legend:
 
 ### Next high-value PR sequence
 
-- [ ] `#80` Provider runtime preflight and readiness checks
+- [x] `#80` Provider runtime preflight and readiness checks
 - [ ] `#81` Multi-project write path and project lifecycle
 - [ ] `#82` Project-aware supervisor and background orchestration
 - [ ] `#83` Brownfield file-backed planning and repo navigation

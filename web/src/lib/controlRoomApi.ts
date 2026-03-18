@@ -14,6 +14,9 @@ import type {
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  ProjectActionResponse,
+  ProjectCreateRequest,
+  ProjectCreateResponse,
   ProjectsResponse,
   ProvidersResponse,
   RecoveryPolicyResponse,
@@ -472,6 +475,25 @@ async function fetchJson<T>(
 
 export function fetchProjects() {
   return fetchJson<ProjectsResponse>("/api/projects", { projects: [] });
+}
+
+export async function createProject(payload: ProjectCreateRequest) {
+  const response = await postJson<ProjectCreateResponse>("/api/projects", payload);
+  return response as ProjectCreateResponse;
+}
+
+export async function archiveProject(projectId: string) {
+  const response = await postJson<ProjectActionResponse>(`/api/projects/${projectId}/actions/archive`, {
+    actor_id: "agent_allocator"
+  });
+  return response as ProjectActionResponse;
+}
+
+export async function restoreProject(projectId: string) {
+  const response = await postJson<ProjectActionResponse>(`/api/projects/${projectId}/actions/restore`, {
+    actor_id: "agent_allocator"
+  });
+  return response as ProjectActionResponse;
 }
 
 export function fetchOverview() {

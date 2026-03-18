@@ -33,7 +33,7 @@ def _audit_denial(connection, project_id, actor_id, action_type, resource_type, 
     )
 
 
-def ensure_board_action_allowed(connection, actor_id, project_id, action_type, resource_type, resource_id):
+def _resolve_board_actor(connection, actor_id, project_id):
     actor = connection.execute(
         """
         SELECT agent_id, role, permissions_json
@@ -42,6 +42,26 @@ def ensure_board_action_allowed(connection, actor_id, project_id, action_type, r
         """,
         (actor_id, project_id),
     ).fetchone()
+    if actor is not None:
+        return actor
+    if not actor_id.startswith("agent_"):
+        return None
+
+    role = actor_id[len("agent_") :]
+    return connection.execute(
+        """
+        SELECT agent_id, role, permissions_json
+        FROM agents
+        WHERE project_id = ? AND role = ?
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (project_id, role),
+    ).fetchone()
+
+
+def ensure_board_action_allowed(connection, actor_id, project_id, action_type, resource_type, resource_id):
+    actor = _resolve_board_actor(connection, actor_id, project_id)
     if actor is None:
         _audit_denial(connection, project_id, actor_id, action_type, resource_type, resource_id, "actor_not_found")
         connection.commit()
@@ -53,7 +73,7 @@ def ensure_board_action_allowed(connection, actor_id, project_id, action_type, r
         connection.commit()
         raise PermissionError("Actor is not allowed to perform board actions")
 
-    return {"actor_id": actor_id, "role": actor["role"]}
+    return {"actor_id": actor["agent_id"], "role": actor["role"]}
 
 
 def _validate_capability(capability):

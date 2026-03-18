@@ -387,6 +387,25 @@ export function HomePage({ onNavigate }: HomePageProps) {
       ),
     [board]
   );
+  const boardBacklogSummary = useMemo(
+    () =>
+      boardColumns
+        .filter((column) => ["planned", "ready"].includes(column.key))
+        .map((column) => ({ key: column.key, title: column.title, count: column.tasks.length })),
+    [boardColumns]
+  );
+  const boardFocusColumns = useMemo(() => {
+    const orderedKeys: Array<BoardColumn["key"]> = ["in_progress", "review", "blocked", "ready", "planned"];
+    const columnByKey = new Map(boardColumns.map((column) => [column.key, column] as const));
+    const prioritized = orderedKeys
+      .map((key) => columnByKey.get(key))
+      .filter((column): column is BoardColumn => Boolean(column));
+    const visible = prioritized.filter(
+      (column) => column.tasks.length > 0 || ["in_progress", "review", "blocked"].includes(column.key)
+    );
+    return visible.length ? visible : prioritized.slice(0, 3);
+  }, [boardColumns]);
+  const boardIsFitted = boardFocusColumns.length > 0 && boardFocusColumns.length <= 4;
   const tickerItems = useMemo(() => buildTickerItems(timeline, overview?.recent_activity), [overview, timeline]);
 
   const selectedTask =
@@ -620,80 +639,85 @@ export function HomePage({ onNavigate }: HomePageProps) {
 
   return (
     <section className="control-room">
-      <header className="control-room__header surface-card surface-card--dense">
-        <div>
-          <div className="control-room__eyebrow">Control room</div>
-          <h1>{overview?.project?.name ?? "No active project"}</h1>
-          <p>{overview?.project?.description ?? "Create or restore a project to start supervising agents."}</p>
+      <header className="control-room__masthead surface-card surface-card--dense">
+        <div className="control-room__masthead-row">
+          <div className="control-room__masthead-copy">
+            <div className="control-room__eyebrow">Control room</div>
+            <h1>{overview?.project?.name ?? "No active project"}</h1>
+            <p>{overview?.project?.description ?? "Create or restore a project to start supervising agents."}</p>
+          </div>
+          <div className="control-room__header-actions">
+            <button
+              type="button"
+              className="hero-button hero-button--primary hero-button--compact"
+              disabled={pendingActionKey === "supervisor"}
+              onClick={() =>
+                void runAction(
+                  "supervisor",
+                  "Supervisor pass completed.",
+                  () => runSupervisorPass(3),
+                  "Supervisor pass failed."
+                )
+              }
+            >
+              {pendingActionKey === "supervisor" ? "Running..." : "Run supervisor"}
+            </button>
+            <button
+              type="button"
+              className="hero-button hero-button--ghost hero-button--compact"
+              disabled={pendingActionKey === "orchestrator"}
+              onClick={() =>
+                void runAction(
+                  "orchestrator",
+                  "Orchestrator pass completed.",
+                  () => runOrchestratorPass(4, 2),
+                  "Orchestrator pass failed."
+                )
+              }
+            >
+              {pendingActionKey === "orchestrator" ? "Running..." : "Run orchestrator"}
+            </button>
+            <button
+              type="button"
+              className="hero-button hero-button--ghost hero-button--compact"
+              onClick={() => onNavigate("projects")}
+            >
+              Projects
+            </button>
+          </div>
         </div>
-        <div className="control-room__header-actions">
-          <button
-            type="button"
-            className="hero-button hero-button--primary hero-button--compact"
-            disabled={pendingActionKey === "supervisor"}
-            onClick={() =>
-              void runAction(
-                "supervisor",
-                "Supervisor pass completed.",
-                () => runSupervisorPass(3),
-                "Supervisor pass failed."
-              )
-            }
-          >
-            {pendingActionKey === "supervisor" ? "Running..." : "Supervisor"}
-          </button>
-          <button
-            type="button"
-            className="hero-button hero-button--ghost hero-button--compact"
-            disabled={pendingActionKey === "orchestrator"}
-            onClick={() =>
-              void runAction(
-                "orchestrator",
-                "Orchestrator pass completed.",
-                () => runOrchestratorPass(4, 2),
-                "Orchestrator pass failed."
-              )
-            }
-          >
-            {pendingActionKey === "orchestrator" ? "Running..." : "Orchestrator"}
-          </button>
-          <button type="button" className="hero-button hero-button--ghost hero-button--compact" onClick={() => onNavigate("projects")}>
-            Projects
-          </button>
+        <div className="control-room__status-strip">
+          <div className="status-panel">
+            <span className={`status-dot status-dot--${projectHealth === "Stable" ? "good" : projectHealth === "Degraded" ? "warn" : "critical"}`} />
+            <div>
+              <strong>{projectHealth}</strong>
+              <span>project health</span>
+            </div>
+          </div>
+          <div className="status-panel">
+            <strong>{overview?.summary.tasks_in_progress ?? 0}</strong>
+            <span>active runs</span>
+          </div>
+          <div className="status-panel">
+            <strong>{overview?.summary.tasks_review ?? 0}</strong>
+            <span>waiting review</span>
+          </div>
+          <div className="status-panel">
+            <strong>{recovery?.summary.open_failure_alerts ?? 0}</strong>
+            <span>failure alerts</span>
+          </div>
+          <div className="status-panel">
+            <strong>{portfolio?.summary.queued_provider_jobs ?? 0}</strong>
+            <span>queued jobs</span>
+          </div>
+          <div className="status-panel">
+            <strong>{portfolio?.summary.projects_with_issues ?? 0}</strong>
+            <span>projects with issues</span>
+          </div>
         </div>
       </header>
 
       {notice ? <div className="banner banner--info">{notice}</div> : null}
-
-      <section className="control-room__status-strip">
-        <div className="status-panel">
-          <span className={`status-dot status-dot--${projectHealth === "Stable" ? "good" : projectHealth === "Degraded" ? "warn" : "critical"}`} />
-          <div>
-            <strong>{projectHealth}</strong>
-            <span>project health</span>
-          </div>
-        </div>
-        <div className="status-panel">
-          <strong>{overview?.summary.tasks_in_progress ?? 0}</strong>
-          <span>active runs</span>
-        </div>
-        <div className="status-panel">
-          <strong>{overview?.summary.tasks_review ?? 0}</strong>
-          <span>waiting review</span>
-        </div>
-        <div className="status-panel">
-          <strong>{recovery?.summary.open_failure_alerts ?? 0}</strong>
-          <span>failure alerts</span>
-        </div>
-        <div className="status-panel">
-          <strong>{portfolio?.summary.queued_provider_jobs ?? 0}</strong>
-          <span>queued jobs</span>
-        </div>
-        <div className="status-panel">
-          <strong>{portfolio?.summary.projects_with_issues ?? 0}</strong>
-          <span>projects with issues</span>
-        </div>
-      </section>
 
       <section className="control-room__grid">
         <aside className="control-room__agents surface-card surface-card--dense">
@@ -781,27 +805,49 @@ export function HomePage({ onNavigate }: HomePageProps) {
               <div>
                 <span className="eyebrow">Kanban</span>
                 <h2>Execution flow</h2>
+                <div className="board-queue-strip">
+                  {boardBacklogSummary.map((column) => (
+                    <span key={column.key} className="board-queue-pill">
+                      <strong>{column.count}</strong>
+                      <span>{column.title}</span>
+                    </span>
+                  ))}
+                </div>
               </div>
               <button type="button" className="text-link" onClick={() => onNavigate("work")}>
                 Open workbench
               </button>
             </div>
-            <div className="compact-board">
-              {boardColumns.map((column) => (
+            <div
+              className={`compact-board ${boardIsFitted ? "compact-board--fitted" : ""}`}
+              style={
+                boardIsFitted
+                  ? { gridTemplateColumns: `repeat(${Math.max(boardFocusColumns.length, 1)}, minmax(0, 1fr))` }
+                  : undefined
+              }
+            >
+              {boardFocusColumns.map((column) => (
                 <section key={column.key} className={`compact-board__column compact-board__column--${columnTone(column.key)}`}>
                   <header className="compact-board__column-header">
                     <strong>{column.title}</strong>
                     <span>{column.tasks.length}</span>
                   </header>
                   <div className="compact-board__cards">
-                    {column.tasks.slice(0, column.key === "planned" ? 6 : 10).map((task) => (
-                      <CompactBoardCard
-                        key={task.task_id}
-                        task={task}
-                        selected={selectedTask?.task_id === task.task_id}
-                        onSelect={() => setSelectedTaskId(task.task_id)}
-                      />
-                    ))}
+                    {column.tasks.length ? (
+                      column.tasks.slice(0, column.key === "planned" ? 6 : 10).map((task) => (
+                        <CompactBoardCard
+                          key={task.task_id}
+                          task={task}
+                          selected={selectedTask?.task_id === task.task_id}
+                          onSelect={() => setSelectedTaskId(task.task_id)}
+                        />
+                      ))
+                    ) : (
+                      <div className="compact-board__empty">
+                        <strong>No {column.title.toLowerCase()} tasks</strong>
+                        <span>The lane is clear right now.</span>
+                      </div>
+                    )}
                   </div>
                 </section>
               ))}

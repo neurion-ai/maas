@@ -2182,26 +2182,27 @@ textarea {
 
 :root,
 :root[data-theme="light"] {
-  --bg: #eef2f7;
-  --bg-elevated: rgba(255, 255, 255, 0.86);
-  --bg-hero: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(244, 247, 252, 0.92));
+  --bg: #e8edf4;
+  --bg-elevated: rgba(255, 255, 255, 0.9);
+  --bg-hero: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(241, 245, 251, 0.94));
   --panel: rgba(255, 255, 255, 0.78);
-  --panel-strong: rgba(255, 255, 255, 0.94);
-  --panel-muted: rgba(245, 248, 252, 0.9);
-  --ink: #101725;
-  --muted: #60708c;
-  --line: rgba(28, 41, 63, 0.12);
-  --line-strong: rgba(28, 41, 63, 0.2);
-  --accent: #0b7a71;
-  --accent-strong: #0f5d67;
-  --accent-soft: rgba(11, 122, 113, 0.12);
-  --accent-soft-strong: rgba(11, 122, 113, 0.18);
-  --warn: #b7791f;
-  --warn-soft: rgba(183, 121, 31, 0.14);
-  --danger: #c2413b;
-  --danger-soft: rgba(194, 65, 59, 0.14);
-  --shadow-lg: 0 18px 42px rgba(18, 28, 45, 0.08);
-  --shadow-md: 0 10px 24px rgba(18, 28, 45, 0.06);
+  --panel-strong: rgba(255, 255, 255, 0.96);
+  --panel-muted: rgba(243, 247, 252, 0.92);
+  --ink: #0d1625;
+  --muted: #61728f;
+  --line: rgba(22, 34, 56, 0.1);
+  --line-strong: rgba(22, 34, 56, 0.18);
+  --accent: #0f7a6f;
+  --accent-strong: #0b5f5f;
+  --accent-soft: rgba(15, 122, 111, 0.12);
+  --accent-soft-strong: rgba(15, 122, 111, 0.18);
+  --warn: #b77d26;
+  --warn-soft: rgba(183, 125, 38, 0.14);
+  --danger: #c34943;
+  --danger-soft: rgba(195, 73, 67, 0.14);
+  --shadow-lg: 0 22px 54px rgba(16, 26, 43, 0.08);
+  --shadow-md: 0 12px 30px rgba(16, 26, 43, 0.06);
+  --shadow-sm: 0 6px 16px rgba(16, 26, 43, 0.05);
   --radius-xl: 18px;
   --radius-lg: 14px;
   --radius-md: 10px;
@@ -2227,8 +2228,9 @@ textarea {
   --warn-soft: rgba(240, 178, 74, 0.16);
   --danger: #f87171;
   --danger-soft: rgba(248, 113, 113, 0.18);
-  --shadow-lg: 0 20px 46px rgba(0, 0, 0, 0.34);
-  --shadow-md: 0 12px 28px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 22px 52px rgba(0, 0, 0, 0.34);
+  --shadow-md: 0 14px 30px rgba(0, 0, 0, 0.26);
+  --shadow-sm: 0 8px 18px rgba(0, 0, 0, 0.2);
 }
 
 body {
@@ -2236,23 +2238,23 @@ body {
   font-size: 13px;
   line-height: 1.45;
   background:
-    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-soft) 92%, transparent 8%), transparent 24%),
-    radial-gradient(circle at bottom right, color-mix(in srgb, var(--line-strong) 80%, transparent 20%), transparent 28%),
-    linear-gradient(180deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 86%, black 14%) 100%);
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-soft) 92%, transparent 8%), transparent 22%),
+    radial-gradient(circle at top right, color-mix(in srgb, var(--line-strong) 72%, transparent 28%), transparent 30%),
+    linear-gradient(180deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 90%, black 10%) 100%);
 }
 
 .cockpit-shell {
   min-height: 100vh;
   display: grid;
-  gap: 12px;
-  padding: 12px;
+  gap: 10px;
+  padding: 10px;
 }
 
 .cockpit-shell__topbar,
 .cockpit-tabs {
   display: grid;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--panel-strong) 92%, transparent 8%);
@@ -2261,17 +2263,18 @@ body {
 }
 
 .cockpit-shell__topbar {
-  grid-template-columns: max-content minmax(220px, 340px) minmax(0, 1fr) max-content;
+  grid-template-columns: max-content minmax(260px, 1fr) minmax(0, auto) max-content;
   align-items: center;
+  gap: 12px;
 }
 
 .cockpit-shell__brand {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .cockpit-shell__brand strong {
-  font-size: 1.1rem;
+  font-size: 1rem;
   line-height: 1;
   letter-spacing: -0.03em;
 }
@@ -2287,11 +2290,11 @@ body {
 
 .cockpit-shell__project {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .cockpit-shell__project label {
-  font-size: 0.74rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -2305,8 +2308,8 @@ body {
 
 .cockpit-shell__project-row select {
   min-width: 180px;
-  padding: 9px 12px;
-  border-radius: 999px;
+  padding: 8px 11px;
+  border-radius: 12px;
   border: 1px solid var(--line);
   background: var(--panel-muted);
 }
@@ -2326,7 +2329,7 @@ body {
 
 .cockpit-shell__telemetry {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   overflow: auto;
 }
@@ -2335,9 +2338,9 @@ body {
 .status-panel {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 36px;
-  padding: 0 12px;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel-muted) 88%, transparent 12%);
@@ -2357,33 +2360,36 @@ body {
 
 .cockpit-shell__actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .cockpit-tabs {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  padding: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .cockpit-tabs__item {
-  display: grid;
-  gap: 2px;
-  text-align: left;
-  padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent 8%);
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .cockpit-tabs__item strong {
-  font-size: 0.92rem;
-}
-
-.cockpit-tabs__item span {
-  color: var(--muted);
-  font-size: 0.76rem;
-  line-height: 1.35;
+  font-size: 0.8rem;
+  letter-spacing: -0.01em;
 }
 
 .cockpit-tabs__item.is-active {
@@ -2398,24 +2404,43 @@ body {
 
 .control-room {
   display: grid;
+  gap: 10px;
+}
+
+.control-room__masthead,
+.control-room__header {
+  display: flex;
   gap: 12px;
 }
 
-.control-room__header {
+.control-room__masthead {
+  display: grid;
+  gap: 10px;
+}
+
+.control-room__masthead-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.control-room__header h1 {
-  margin: 0;
-  font-size: 1.7rem;
-  line-height: 1;
-  letter-spacing: -0.05em;
+.control-room__masthead-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
-.control-room__header p {
+.control-room__header h1,
+.control-room__masthead-copy h1 {
+  margin: 0;
+  font-size: 1.34rem;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.control-room__header p,
+.control-room__masthead-copy p {
   margin: 4px 0 0;
   color: var(--muted);
 }
@@ -2432,23 +2457,23 @@ body {
 .control-room__header-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .control-room__status-strip {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  gap: 6px;
 }
 
 .status-panel {
-  justify-content: space-between;
+  justify-content: flex-start;
   min-width: 0;
 }
 
 .status-panel strong,
 .telemetry-chip strong {
-  font-size: 0.88rem;
+  font-size: 0.8rem;
 }
 
 .status-dot {
@@ -2474,15 +2499,15 @@ body {
 
 .control-room__grid {
   display: grid;
-  grid-template-columns: 268px minmax(0, 1fr) 340px;
-  gap: 12px;
+  grid-template-columns: 220px minmax(0, 1fr) 292px;
+  gap: 10px;
   align-items: start;
 }
 
 .control-room__center,
 .control-room__ops {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -2492,10 +2517,14 @@ body {
 .advanced-pane,
 .shell-topbar,
 .command-palette {
-  padding: 12px 14px;
+  padding: 11px 13px;
   border-radius: var(--radius-lg);
   border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-strong) 92%, transparent 8%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-strong) 92%, transparent 8%),
+    color-mix(in srgb, var(--panel) 90%, transparent 10%)
+  );
   box-shadow: var(--shadow-md);
 }
 
@@ -2513,14 +2542,19 @@ body {
 }
 
 .surface-card__header h2 {
-  font-size: 1rem;
+  font-size: 0.95rem;
   letter-spacing: -0.02em;
 }
 
 .eyebrow {
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 3px 7px;
   font-size: 0.68rem;
   letter-spacing: 0.08em;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-soft) 74%, transparent 26%);
 }
 
 .agent-rail,
@@ -2528,6 +2562,14 @@ body {
 .ticker-list {
   display: grid;
   gap: 8px;
+}
+
+.agent-rail,
+.attention-list,
+.ticker-list {
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .agent-rail__item,
@@ -2604,23 +2646,35 @@ body {
 .compact-board {
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: minmax(210px, 1fr);
+  grid-auto-columns: minmax(240px, 1fr);
   gap: 10px;
   overflow: auto;
   padding-bottom: 2px;
+}
+
+.compact-board--fitted {
+  grid-auto-flow: row;
+  overflow: visible;
 }
 
 .compact-board__column {
   display: grid;
   gap: 8px;
   min-width: 0;
+  align-content: start;
+  min-height: 312px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-muted) 92%, transparent 8%), transparent 100%);
 }
 
 .compact-board__column-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding-bottom: 6px;
+  padding: 0 2px 8px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -2628,6 +2682,25 @@ body {
   display: grid;
   gap: 8px;
   align-content: start;
+}
+
+.compact-board__empty {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 76%, transparent 24%);
+}
+
+.compact-board__empty strong {
+  font-size: 0.8rem;
+}
+
+.compact-board__empty span {
+  color: var(--muted);
+  font-size: 0.74rem;
 }
 
 .compact-board-card {
@@ -2642,6 +2715,7 @@ body {
 .compact-board-card.is-selected {
   border-color: color-mix(in srgb, var(--accent) 34%, var(--line) 66%);
   background: color-mix(in srgb, var(--accent-soft) 74%, var(--panel-muted) 26%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent 84%);
 }
 
 .compact-board-card__priority,
@@ -2688,7 +2762,7 @@ body {
 
 .task-inspector {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .task-inspector__primary {
@@ -2804,6 +2878,31 @@ body {
   display: grid;
   gap: 8px;
   padding: 10px;
+}
+
+.board-queue-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.board-queue-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 88%, transparent 12%);
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.board-queue-pill strong {
+  color: var(--ink);
+  font-size: 0.76rem;
 }
 
 .attention-item--critical,
@@ -3018,12 +3117,8 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .cockpit-tabs {
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  }
-
   .control-room__grid {
-    grid-template-columns: 240px minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
   }
 
   .control-room__ops {
@@ -3065,6 +3160,7 @@ body {
 
   .cockpit-shell__project-row,
   .control-room__header,
+  .control-room__masthead-row,
   .dashboard-hero,
   .dashboard-hero__actions,
   .work-toolbar,

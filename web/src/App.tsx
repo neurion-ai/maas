@@ -349,10 +349,10 @@ function AppShell() {
             key={view.id}
             type="button"
             className={`cockpit-tabs__item ${activeView === view.id ? "is-active" : ""}`}
+            title={view.summary}
             onClick={() => setActiveView(view.id)}
           >
             <strong>{view.label}</strong>
-            <span>{view.summary}</span>
           </button>
         ))}
       </nav>

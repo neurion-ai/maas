@@ -439,7 +439,7 @@ class ProviderRuntimeTest(unittest.TestCase):
             bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
             connection = connect(project_paths(tmpdir))
             try:
-                self._enable_openai_codex_cli(connection)
+                project_id = self._enable_openai_codex_cli(connection)
                 connection.commit()
             finally:
                 connection.close()
@@ -448,9 +448,30 @@ class ProviderRuntimeTest(unittest.TestCase):
             os.environ["OPENAI_API_KEY"] = "test-openai-key"
             try:
                 with mock.patch("maas.services.provider_runtime.shutil.which", return_value="/usr/bin/codex"):
+                    def record_preflight_run(command, cwd, capture_output, text, timeout, check, env):
+                        self.assertEqual(cwd, tmpdir)
+                        self.assertTrue(
+                            env["MAAS_RUNTIME_ROOT"].startswith(
+                                os.path.join(tmpdir, ".maas", "projects", project_id, "runtime", "envelopes")
+                            )
+                        )
+                        self.assertTrue(env["HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                        self.assertTrue(env["XDG_CACHE_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                        self.assertTrue(env["XDG_CONFIG_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                        self.assertTrue(env["XDG_DATA_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                        with open(env["MAAS_RUNTIME_MANIFEST"], "r", encoding="utf-8") as handle:
+                            manifest = json.load(handle)
+                        self.assertEqual(manifest["provider_id"], "openai_codex")
+                        self.assertEqual(manifest["purpose"], "preflight")
+                        completed = mock.Mock()
+                        completed.returncode = 0
+                        completed.stdout = "codex 1.2.3\n"
+                        completed.stderr = ""
+                        return completed
+
                     with mock.patch(
                         "maas.services.provider_runtime.subprocess.run",
-                        return_value=mock.Mock(returncode=0, stdout="codex 1.2.3\n", stderr=""),
+                        side_effect=record_preflight_run,
                     ) as run_mock:
                         response = client.post(
                             "/api/providers/openai_codex/actions/run-preflight",
@@ -1017,10 +1038,23 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertIn("--model", command)
                 self.assertEqual(env["OPENAI_API_KEY"], "test-openai-key")
                 self.assertNotIn("UNRELATED_SECRET", env)
-                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "projects", project_id, "runtime")))
+                self.assertTrue(
+                    env["MAAS_RUNTIME_ROOT"].startswith(
+                        os.path.join(tmpdir, ".maas", "projects", project_id, "runtime", "envelopes")
+                    )
+                )
+                self.assertTrue(env["TMPDIR"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["XDG_CACHE_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["XDG_CONFIG_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["XDG_DATA_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
                 self.assertEqual(env["MAAS_PROJECT_ROOT"], tmpdir)
                 self.assertEqual(env["MAAS_PROJECT_ID"], project_id)
                 self.assertEqual(cwd, tmpdir)
+                with open(env["MAAS_RUNTIME_MANIFEST"], "r", encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertEqual(manifest["provider_id"], "openai_codex")
+                self.assertEqual(manifest["purpose"], "task_run")
                 output_file = command[command.index("-o") + 1]
                 with open(output_file, "w", encoding="utf-8") as handle:
                     handle.write("Codex completed the task.")
@@ -1086,9 +1120,13 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertIn("Codex completed the task.", artifact_content)
             artifact_metadata = json.loads(artifact["metadata_json"])
             self.assertEqual(artifact_metadata["execution_mode"], "codex_cli")
+            self.assertTrue(os.path.exists(artifact_metadata["runtime_manifest_path"]))
             self.assertEqual(len(activity_rows), 5)
             self.assertTrue(
                 all(json.loads(row["details_json"]).get("external_runtime") == "codex_cli" for row in activity_rows)
+            )
+            self.assertTrue(
+                all(json.loads(row["details_json"]).get("environment_scope") == "session_envelope" for row in activity_rows)
             )
 
     def test_claude_code_cli_mode_executes_real_command_path_when_enabled(self):
@@ -1114,10 +1152,23 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertIn("--add-dir", command)
                 self.assertEqual(env["ANTHROPIC_API_KEY"], "test-anthropic-key")
                 self.assertNotIn("UNRELATED_SECRET", env)
-                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "projects", project_id, "runtime")))
+                self.assertTrue(
+                    env["MAAS_RUNTIME_ROOT"].startswith(
+                        os.path.join(tmpdir, ".maas", "projects", project_id, "runtime", "envelopes")
+                    )
+                )
+                self.assertTrue(env["TMPDIR"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["XDG_CACHE_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["XDG_CONFIG_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertTrue(env["XDG_DATA_HOME"].startswith(env["MAAS_RUNTIME_ROOT"]))
                 self.assertEqual(env["MAAS_PROJECT_ROOT"], tmpdir)
                 self.assertEqual(env["MAAS_PROJECT_ID"], project_id)
                 self.assertEqual(cwd, tmpdir)
+                with open(env["MAAS_RUNTIME_MANIFEST"], "r", encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertEqual(manifest["provider_id"], "claude_code")
+                self.assertEqual(manifest["purpose"], "task_run")
                 completed = mock.Mock()
                 completed.returncode = 0
                 completed.stdout = "Claude completed the task.\n"
@@ -1180,9 +1231,13 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertIn("Claude completed the task.", artifact_content)
             artifact_metadata = json.loads(artifact["metadata_json"])
             self.assertEqual(artifact_metadata["execution_mode"], "claude_cli")
+            self.assertTrue(os.path.exists(artifact_metadata["runtime_manifest_path"]))
             self.assertEqual(len(activity_rows), 5)
             self.assertTrue(
                 all(json.loads(row["details_json"]).get("external_runtime") == "claude_cli" for row in activity_rows)
+            )
+            self.assertTrue(
+                all(json.loads(row["details_json"]).get("environment_scope") == "session_envelope" for row in activity_rows)
             )
 
     def test_live_provider_runtime_uses_selected_project_source_root_and_runtime_dir(self):

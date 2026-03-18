@@ -8,10 +8,12 @@ MAAS is being implemented as a single-project, greenfield-first, board-first age
 
 This roadmap now needs to be read alongside the actual implementation status in `docs/implementation/STATUS.md`.
 
-Legend for the checklist column:
+Legend for numbered roadmap checklists:
 
-- `[x]` shipped on `main`
-- `[ ]` not fully shipped on `main`
+- `[x]` completed in the current numbered delivery sequence
+- `[ ]` not yet completed in the current numbered delivery sequence
+
+Use "Current stacked development chain above `main`" to see which completed items are on `main` versus stacked branches.
 
 Current stacked development chain above `main`:
 
@@ -47,22 +49,62 @@ Current stacked development chain above `main`:
 - [ ] The repository is still much earlier against the broader long-horizon roadmap.
 - [ ] The biggest remaining roadmap buckets are project lifecycle/orchestration, deeper brownfield execution, stronger recovery automation, stronger isolation, and broader provider/runtime coverage.
 
-## Next Recommended PR Sequence
+## Current Numbered Delivery Sequence
 
 - [x] `#80` Provider runtime preflight and readiness checks:
   let operators verify live runtime readiness before task execution by checking CLI availability, required auth env, and persisted readiness state in the Providers surface.
 - [x] `#81` Multi-project write path and project lifecycle:
   move beyond read scoping by adding create/import/archive flows, project-scoped write operations, and explicit lifecycle management for multiple repos.
-- [ ] `#82` Project-aware supervisor and background orchestration:
+- [x] `#82` Project-aware supervisor and background orchestration:
   make the scheduler, supervisor, live transport, and recovery automation operate cleanly per project instead of assuming a single active workspace loop.
-- [ ] `#83` Brownfield file-backed planning and repo navigation:
+- [x] `#83` Brownfield file-backed planning and repo navigation:
   turn brownfield discovery into file-linked task graphs, code-area navigation, and reviewable imported workflow execution plans that operators can actually steer.
-- [ ] `#84` Policy-driven self-healing and circuit breakers:
+- [x] `#84` Policy-driven self-healing and circuit breakers:
   expand the current recovery workbench into guarded automation for recover/requeue/quarantine/escalate decisions with explicit stop conditions.
-- [ ] `#85` Sandboxed provider runners per project:
+- [x] `#85` Sandboxed provider runners per project:
   strengthen runtime isolation by moving from sanitized subprocess envs to clearer per-project runtime boundaries and safer execution sandboxes.
-- [ ] `#86` Remote or queued provider execution beyond local CLI paths:
+- [x] `#86` Remote or queued provider execution beyond local CLI paths:
   add the next meaningful execution mode after local CLI paths, such as a queued or remote runner, once readiness and isolation are strong enough.
+- [x] `#87` Brownfield rescan and drift detection:
+  rerun imported-repo discovery, detect meaningful changes, and reopen onboarding review when the codebase drifts.
+- [x] `#88` File-linked task scopes and acceptance criteria:
+  make brownfield seeded work concrete by attaching real paths and derived validation commands.
+- [x] `#89` Brownfield runbook and command catalog:
+  turn discovered workflow signals into a reviewable operator runbook with concrete command recipes.
+- [x] `#90` Portfolio view across projects:
+  add a cross-project operational surface for health, alerts, sessions, recovery pressure, and provider readiness.
+- [x] `#91` Background orchestration daemon:
+  add a reusable orchestration pass that coordinates supervisor and queued provider job processing across projects.
+- [x] `#92` Queue and worker capacity controls:
+  expose per-provider queue pause and per-pass limits so queued execution can be throttled safely.
+- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation:
+  add per-session runner envelopes with isolated temp/home/cache roots and persisted run manifests.
+- [ ] `#94` Policy-driven self-healing v2:
+  expand circuit breakers into richer automatic recover/defer/replan/DLQ decisions with explicit stop conditions.
+- [ ] `#95` Brownfield onboarding review v2:
+  let operators edit ignored paths, accepted workflows, and runbook commands before imported work is released.
+- [ ] `#96` Remote executor or worker pool:
+  add execution beyond direct local CLI runs by introducing queued remote workers.
+- [ ] `#97` Cross-project scheduler fairness and capacity policy:
+  prevent one project from starving others once multi-project orchestration is always-on.
+- [ ] `#98` Repo-grounded plan synthesis and refresh:
+  generate and refresh task graphs directly from the brownfield codebase map and drift signals.
+- [ ] `#99` Verification runners and evidence capture:
+  turn test/lint/build commands into first-class verification jobs with durable logs and artifacts.
+- [ ] `#100` Git-aware task workspaces and diff review:
+  add task branches/worktrees, changed-file tracking, and reviewable diff artifacts.
+- [ ] `#101` Cross-project command center:
+  add a portfolio-level operator surface for escalations, recovery pressure, and global system health.
+- [ ] `#102` Queue and worker capacity controls:
+  broaden capacity governance beyond per-provider pass limits into queue concurrency and drain controls.
+- [ ] `#103` Policy-driven approval and risk routing:
+  route risky actions into approval flows based on project policy and touched scope.
+- [ ] `#104` Cost, runtime, and quota controls:
+  enforce per-project and per-provider usage budgets.
+- [ ] `#105` Notifications and outbound integrations:
+  push important incidents out of the dashboard via webhooks or messaging integrations.
+- [ ] `#106` Incident timeline and replay:
+  add a correlated incident history so operators can reconstruct what happened across tasks, alerts, sessions, and recovery actions.
 
 ## Current Stacked Branch Progress
 
@@ -89,11 +131,11 @@ Current stacked development chain above `main`:
 - [x] `#85` Sandboxed provider runners per project
 - [x] `#86` Remote or queued provider execution beyond local CLI paths
 - [x] `#87` Brownfield rescan and drift detection
-- [ ] `#88` File-linked task scopes and acceptance criteria
-- [ ] `#89` Brownfield runbook and command catalog
-- [ ] `#90` Portfolio view across projects
-- [ ] `#91` Background orchestration daemon
-- [ ] `#92` Queue and worker capacity management on top of the provider job queue
+- [x] `#88` File-linked task scopes and acceptance criteria
+- [x] `#89` Brownfield runbook and command catalog
+- [x] `#90` Portfolio view across projects
+- [x] `#91` Background orchestration daemon
+- [x] `#92` Queue and worker capacity management on top of the provider job queue
 - [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
 - [ ] `#94` Policy-driven self-healing v2
 - [ ] `#95` Brownfield onboarding review v2

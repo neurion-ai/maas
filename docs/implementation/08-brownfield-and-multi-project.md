@@ -29,11 +29,11 @@
 - [x] `#85` Sandboxed provider runners per project
 - [x] `#86` Remote or queued provider execution beyond local CLI paths
 - [x] `#87` Brownfield rescan and drift detection
-- [ ] `#88` File-linked task scopes and acceptance criteria
-- [ ] `#89` Brownfield runbook and command catalog
-- [ ] `#90` Portfolio view across projects
-- [ ] `#91` Background orchestration daemon
-- [ ] `#92` Queue and worker capacity management on top of the provider job queue
+- [x] `#88` File-linked task scopes and acceptance criteria
+- [x] `#89` Brownfield runbook and command catalog
+- [x] `#90` Portfolio view across projects
+- [x] `#91` Background orchestration daemon
+- [x] `#92` Queue and worker capacity management on top of the provider job queue
 - [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
 - [ ] `#94` Policy-driven self-healing v2
 - [ ] `#95` Brownfield onboarding review v2

@@ -345,6 +345,38 @@ export function OverviewPage() {
                     </div>
                   </div>
                 ) : null}
+                {(overview.onboarding.discovery_summary.runbook_commands?.length ?? 0) > 0 ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Imported runbook</strong>
+                      {overview.onboarding.discovery_summary.runbook_commands?.map((item) => (
+                        <p key={`${item.label}-${item.command ?? ""}-${item.path ?? ""}`}>
+                          <strong>{item.label}</strong>
+                          {item.command ? ` · ${item.command}` : ""}
+                          {item.path ? ` · ${item.path}` : ""}
+                          {item.detail ? ` · ${item.detail}` : ""}
+                          {item.review_note ? ` · ${item.review_note}` : ""}
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingRepoPath === item.path}
+                                onClick={() => void handleOpenRepoFile(item.path ?? "")}
+                              >
+                                {pendingRepoPath === item.path ? "Opening..." : "Open file"}
+                              </button>
+                            </>
+                          ) : null}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.discovery_summary.runbook_commands?.length ?? 0} recipes</span>
+                    </div>
+                  </div>
+                ) : null}
                 {(overview.onboarding.discovery_summary.repo_areas?.length ?? 0) > 0 ? (
                   <div className="data-list__item">
                     <div>

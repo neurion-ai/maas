@@ -496,6 +496,15 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             "{kind}:{name}".format(kind=item["kind"], name=item["name"])
             for item in discovery["workflow_signals"]
         ) or "none detected"
+        runbook = "\n".join(
+            "- {label}{command}{path}{note}".format(
+                label=item["label"],
+                command=(" | command: `{0}`".format(item["command"]) if item.get("command") else ""),
+                path=(" | path: {0}".format(item["path"]) if item.get("path") else ""),
+                note=(" | note: {0}".format(item["review_note"]) if item.get("review_note") else ""),
+            )
+            for item in _build_runbook_commands(discovery)
+        ) or "- none detected"
         codebase_map = "\n".join(
             "- {name} ({kind}, {language}, {count} files): {summary}{samples}".format(
                 name=item["name"],
@@ -537,6 +546,8 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
 ## Workflow Signals
 
 - Detected commands and automation: {workflows}
+- Imported runbook:
+{runbook}
 - Imported codebase map:
 {codebase_map}
 - Initial README excerpt:
@@ -566,6 +577,7 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             docs=docs,
             tests=tests,
             workflows=workflows,
+            runbook=runbook,
             codebase_map=codebase_map,
             readme_excerpt=readme_excerpt,
         )
@@ -616,6 +628,7 @@ def build_discovery_summary(discovery):
             }
             for item in discovery["workflow_signals"][:5]
         ],
+        "runbook_commands": _build_runbook_commands(discovery),
         "repo_areas": [item["name"] for item in discovery["top_level_dirs"][:4]],
         "codebase_map": [
             {
@@ -697,6 +710,45 @@ def _workflow_validation_command(signal):
     if kind == "npm_script":
         return "npm run {name}".format(name=name)
     return None
+
+
+def _runbook_entry_for_signal(signal):
+    kind = signal.get("kind")
+    label = "{kind}:{name}".format(kind=kind, name=signal.get("name"))
+    command = _workflow_validation_command(signal)
+    entry = {
+        "label": label,
+        "kind": kind,
+        "name": signal.get("name"),
+        "path": signal.get("path"),
+        "command": command,
+        "detail": signal.get("detail") or "",
+        "review_note": "",
+    }
+    if kind == "python_script":
+        entry["review_note"] = "Review the imported pyproject entrypoint and map it to a MAAS validation recipe."
+    elif kind == "github_actions":
+        entry["review_note"] = "Review the imported CI workflow and mirror its checks inside the MAAS runbook."
+    elif command:
+        entry["review_note"] = "Use this imported command as a first-pass validation recipe."
+    else:
+        entry["review_note"] = "Review the imported workflow before wider automation."
+    return entry
+
+
+def _build_runbook_commands(discovery):
+    entries = []
+    seen = set()
+    for signal in discovery.get("workflow_signals", []):
+        if signal.get("kind") not in WORKFLOW_SIGNAL_LABELS:
+            continue
+        entry = _runbook_entry_for_signal(signal)
+        key = (entry["label"], entry.get("command") or "", entry.get("path") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(entry)
+    return entries[:8]
 
 
 def _brownfield_repo_area_paths(item):

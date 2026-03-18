@@ -94,6 +94,10 @@ lint = "example:main"
                 1,
             )
             self.assertGreaterEqual(
+                len(overview_payload["onboarding"]["discovery_summary"]["runbook_commands"]),
+                1,
+            )
+            self.assertGreaterEqual(
                 len(overview_payload["onboarding"]["discovery_summary"]["codebase_map"]),
                 1,
             )
@@ -115,6 +119,13 @@ lint = "example:main"
             self.assertIn(
                 "src",
                 overview_payload["onboarding"]["discovery_summary"]["repo_areas"],
+            )
+            self.assertIn(
+                "python_script:lint",
+                [
+                    item["label"]
+                    for item in overview_payload["onboarding"]["discovery_summary"]["runbook_commands"]
+                ],
             )
 
     def test_overview_repeated_failure_summary_is_not_capped_to_top_five(self):

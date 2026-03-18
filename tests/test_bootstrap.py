@@ -146,6 +146,14 @@ lint = "example:main"
                 config["onboarding"]["discovery_summary"]["codebase_map"][1]["kind"],
                 "tests",
             )
+            self.assertIn(
+                "make test",
+                [
+                    item.get("command")
+                    for item in config["onboarding"]["discovery_summary"]["runbook_commands"]
+                    if item.get("command")
+                ],
+            )
             self.assertIn("Review imported project understanding", task_titles)
             self.assertIn("Validate imported workflow: lint", task_titles)
             self.assertIn("src/app.py", map_task_description)

@@ -199,6 +199,15 @@ export interface OverviewOnboarding {
       path?: string;
       detail?: string;
     }>;
+    runbook_commands?: Array<{
+      label: string;
+      kind: string;
+      name?: string;
+      path?: string;
+      command?: string | null;
+      detail?: string;
+      review_note?: string;
+    }>;
     repo_areas?: string[];
     codebase_map?: Array<{
       name: string;

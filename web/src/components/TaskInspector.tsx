@@ -176,9 +176,12 @@ export function TaskInspector({
           <div className="inspector-copy-stack">
             <p>{task.scheduler_summary ?? "No scheduler rationale recorded yet."}</p>
             {goalPath.length ? (
-              <div className="inspector-flow__path">
-                {goalPath.map((node) => (
-                  <span key={node.goal_id}>{node.title}</span>
+              <div className="inspector-breadcrumb" aria-label="Goal path">
+                {goalPath.map((node, index) => (
+                  <span key={node.goal_id} className="inspector-breadcrumb__item">
+                    {index > 0 ? <span className="inspector-breadcrumb__sep">/</span> : null}
+                    <span>{node.title}</span>
+                  </span>
                 ))}
               </div>
             ) : (
@@ -186,15 +189,19 @@ export function TaskInspector({
             )}
             {siblingTasks.length ? (
               <div className="inspector-flow__list">
+                <span className="inspector-list-label">Related tasks</span>
                 {siblingTasks.slice(0, 5).map((sibling) => (
                   <button
                     key={sibling.task_id}
                     type="button"
-                    className="inspector-chip"
+                    className="inspector-nav-row"
                     onClick={() => onSelectSibling?.(sibling.task_id)}
                   >
-                    <strong>{sibling.title}</strong>
-                    <span>{formatStatusLabel(sibling.status)}</span>
+                    <span className="inspector-nav-row__copy">
+                      <strong>{sibling.title}</strong>
+                      <span>{formatStatusLabel(sibling.status)}</span>
+                    </span>
+                    <span className="inspector-nav-row__action">Open</span>
                   </button>
                 ))}
               </div>
@@ -219,8 +226,9 @@ export function TaskInspector({
             </p>
             {repoPlanItems.length ? (
               <div className="inspector-flow__list">
+                <span className="inspector-list-label">Matching repo-plan items</span>
                 {repoPlanItems.map((item) => (
-                  <div key={item.synthesis_key} className="inspector-chip inspector-chip--static">
+                  <div key={item.synthesis_key} className="inspector-static-row">
                     <strong>{item.title}</strong>
                     <span>{formatList(item.paths, 2)}</span>
                   </div>

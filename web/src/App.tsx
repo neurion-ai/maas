@@ -19,7 +19,6 @@ import type { ProjectSummary } from "./types";
 
 type View = "home" | "work" | "runs" | "incidents" | "projects";
 type ThemeMode = "light" | "dark";
-type CockpitMode = "ops" | "focus" | "review";
 
 const THEME_STORAGE_KEY = "maas:theme";
 
@@ -27,12 +26,12 @@ const VIEWS: Array<{ id: View; label: string; summary: string }> = [
   {
     id: "home",
     label: "Cockpit",
-    summary: "Agents, active board, incidents, live feed, and selected-task evidence."
+    summary: "Supervisor overview for agents, incident pressure, and the next operator decision."
   },
   {
     id: "work",
     label: "Board",
-    summary: "Full board, filters, and task steering in a dedicated workspace."
+    summary: "The only task workspace: kanban in the center, inspector on the right."
   },
   {
     id: "runs",
@@ -59,12 +58,6 @@ const DEFAULT_PROJECT_FORM: ProjectFormState = {
   sourceRoot: ""
 };
 
-const COCKPIT_MODES: Array<{ id: CockpitMode; label: string; summary: string }> = [
-  { id: "ops", label: "Ops", summary: "Full operator cockpit with agents, board, incidents, and inspector." },
-  { id: "focus", label: "Focus", summary: "Trim the cockpit down to the active workspace and inspector." },
-  { id: "review", label: "Review", summary: "Bias the cockpit toward incidents, evidence, and inspection." }
-];
-
 function getInitialView(): View {
   const hash = window.location.hash.replace("#", "");
   return (VIEWS.find((view) => view.id === hash)?.id ?? "home") as View;
@@ -80,7 +73,6 @@ function getInitialTheme(): ThemeMode {
 
 function AppShell() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
-  const [cockpitMode, setCockpitMode] = useState<CockpitMode>("ops");
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -168,16 +160,29 @@ function AppShell() {
     };
   }, []);
 
-  const liveTransportLabel =
-    transport === "websocket"
-      ? connected
-        ? "Live transport: WebSocket"
-        : "Connecting via WebSocket"
+  const liveTransportTone = connected ? (transport === "polling" ? "warn" : "good") : transport === "polling" ? "warn" : "default";
+  const liveTransportLabel = connected
+    ? transport === "websocket"
+      ? "Live"
       : transport === "sse"
-        ? connected
-          ? "Live transport: SSE"
-          : "Connecting via SSE"
-        : "Polling fallback";
+        ? "Fallback live"
+        : "Polling"
+    : transport === "websocket"
+      ? "Syncing"
+      : transport === "sse"
+        ? "Retrying"
+        : "Polling";
+  const liveTransportDetail = connected
+    ? transport === "websocket"
+      ? "Live updates active"
+      : transport === "sse"
+        ? "Server stream fallback"
+        : "Polling every 15s"
+    : transport === "websocket"
+      ? "Opening live stream"
+      : transport === "sse"
+        ? "Retrying live stream"
+        : "Live transport unavailable";
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -254,21 +259,16 @@ function AppShell() {
     return [
       ...navigationActions,
       {
-        id: "command:supervisor",
-        label: "Run supervisor pass",
-        description: "Refresh readiness and allocate the next set of tasks.",
-        keywords: ["allocate", "scheduler", "supervisor"],
+        id: "command:run",
+        label: "Run work loop",
+        description: "Advance the board and drain the queue using the default operator path.",
+        keywords: ["run", "queue", "board", "supervisor", "orchestrator"],
         run: () => {
-          void runSupervisorPass(3);
-        }
-      },
-      {
-        id: "command:orchestrator",
-        label: "Run orchestrator pass",
-        description: "Process project-aware orchestration, queued jobs, and assignment flow.",
-        keywords: ["orchestrator", "jobs", "queue"],
-        run: () => {
-          void runOrchestratorPass(4, 2);
+          if ((activeProject?.task_count ?? 0) > 0) {
+            void runOrchestratorPass(4, 2);
+          } else {
+            void runSupervisorPass(3);
+          }
         }
       },
       {
@@ -278,25 +278,18 @@ function AppShell() {
         keywords: ["theme", "dark", "light"],
         run: () => setTheme((current) => (current === "dark" ? "light" : "dark"))
       },
-      ...COCKPIT_MODES.map((mode) => ({
-        id: `cockpit:${mode.id}`,
-        label: `Switch cockpit to ${mode.label}`,
-        description: mode.summary,
-        keywords: ["cockpit", mode.id, mode.label.toLowerCase()],
-        run: () => setCockpitMode(mode.id)
-      })),
       ...projectActions
     ];
-  }, [activeProjects, theme]);
+  }, [activeProject?.task_count, activeProjects, theme]);
 
   return (
-    <div className={`cockpit-shell cockpit-shell--${cockpitMode}`}>
+    <div className="cockpit-shell">
       <header className="cockpit-shell__topbar">
         <div className="cockpit-shell__topbar-main">
           <div className="cockpit-shell__brand">
             <span className="cockpit-shell__eyebrow">MAAS operator system</span>
             <strong>MAAS</strong>
-            <span>board-first multi-agent cockpit</span>
+            <span>operator cockpit and board workspace</span>
           </div>
 
           <div className="cockpit-shell__project">
@@ -329,10 +322,10 @@ function AppShell() {
         <div className="cockpit-shell__topbar-side">
           <div className="cockpit-shell__telemetry">
             <div className="telemetry-chip telemetry-chip--wide">
-              <span className={`status-dot status-dot--${connected ? "good" : transport === "polling" ? "warn" : "default"}`} />
+              <span className={`status-dot status-dot--${liveTransportTone}`} />
               <div>
                 <strong>{liveTransportLabel}</strong>
-                <span>{activeProject?.onboarding_mode ?? "workspace"} · {activeProject?.project_type ?? "custom"}</span>
+                <span>{liveTransportDetail}</span>
               </div>
             </div>
             <div className="telemetry-chip">
@@ -350,19 +343,6 @@ function AppShell() {
           </div>
 
           <div className="cockpit-shell__actions">
-            <div className="cockpit-mode-strip" aria-label="Cockpit modes">
-              {COCKPIT_MODES.map((mode) => (
-                <button
-                  key={mode.id}
-                  type="button"
-                  className={`cockpit-mode-strip__item ${cockpitMode === mode.id ? "is-active" : ""}`}
-                  title={mode.summary}
-                  onClick={() => setCockpitMode(mode.id)}
-                >
-                  {mode.label}
-                </button>
-              ))}
-            </div>
             <button
               type="button"
               className="hero-button hero-button--ghost hero-button--compact"
@@ -393,8 +373,8 @@ function AppShell() {
 
       <main className="cockpit-shell__main">
         <div className={`product-content product-content--${activeView}`}>
-          {activeView === "home" ? <HomePage onNavigate={setActiveView} mode={cockpitMode} /> : null}
-          {activeView === "work" ? <WorkPage /> : null}
+          {activeView === "home" ? <HomePage onNavigate={setActiveView} mode="ops" /> : null}
+          {activeView === "work" ? <WorkPage onNavigate={setActiveView} /> : null}
           {activeView === "runs" ? <RunsPage /> : null}
           {activeView === "incidents" ? <IncidentsPage /> : null}
           {activeView === "projects" ? (

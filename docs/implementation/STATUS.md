@@ -45,40 +45,45 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#114` is implemented on `codex/ux-product-redesign`
 - [x] `#115` is implemented on `codex/ux-product-redesign`
 - [x] `#116` is implemented on `codex/ux-product-redesign`
-- [x] `#117` is implemented on `codex/dense-control-room-redesign`
-- [x] `#118` is implemented on `codex/dense-control-room-redesign`
-- [x] `#119` is implemented on `codex/dense-control-room-redesign`
-- [x] `#120` is implemented on `codex/dense-control-room-redesign`
-- [x] `#121` is implemented on `codex/dense-control-room-redesign`
-- [x] `#122` is implemented on `codex/dense-control-room-redesign`
-- [x] `#123` is implemented on `codex/dense-control-room-redesign`
-- [x] `#124` is implemented on `codex/dense-control-room-redesign`
-- [x] `#125` is implemented on `codex/dense-control-room-redesign`
-- [x] `#126` is implemented on `codex/dense-control-room-redesign`
-- [x] `#127` is implemented on `codex/dense-control-room-redesign`
-- [x] `#128` is implemented on `codex/dense-control-room-redesign`
-- [x] `#129` is implemented on `codex/dense-control-room-redesign`
-- [x] `#130` is implemented on `codex/dense-control-room-redesign`
-- [x] `#131` is implemented on `codex/dense-control-room-redesign`
-- [x] `#132` is implemented on `codex/dense-control-room-redesign`
-- [x] `#133` is implemented on `codex/dense-control-room-redesign`
-- [x] `#134` is implemented on `codex/dense-control-room-redesign`
-- [x] `#135` is implemented on `codex/dense-control-room-redesign`
-- [x] `#136` is implemented on `codex/dense-control-room-redesign`
-- [x] `#137` is implemented on `codex/dense-control-room-redesign`
-- [x] `#138` is implemented on `codex/dense-control-room-redesign`
-- [x] `#139` is implemented on `codex/dense-control-room-redesign`
-- [x] `#140` is implemented on `codex/dense-control-room-redesign`
-- [x] `#141` is implemented on `codex/dense-control-room-redesign`
-- [x] `#142` is implemented on `codex/dense-control-room-redesign`
-- [x] `#143` is implemented on `codex/dense-control-room-redesign`
-- [x] `#144` is implemented on `codex/dense-control-room-redesign`
-- [x] `#145` is implemented on `codex/dense-control-room-redesign`
-- [x] `#146` is implemented on `codex/dense-control-room-redesign`
+- [x] `#117` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#118` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#119` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#120` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#121` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#122` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#123` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#124` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#125` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#126` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#127` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#128` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#129` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#130` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#131` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#132` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#133` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#134` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#135` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#136` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#137` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#138` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#139` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#140` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#141` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#142` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#143` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#144` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#145` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#146` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#147` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#148` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#149` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#150` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#151` is implemented on `codex/linear-vibekanban-cockpit`
 
-The current numbered `#81-#146` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#151` sequence is fully implemented on the stacked branch chain above `main`.
 
-The current product-modeling sequence on `codex/dense-control-room-redesign` now covers both the cockpit pivot (`#127-#136`) and the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`).
+The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 
 ## Extended Numbered Roadmap
 
@@ -148,6 +153,11 @@ The current product-modeling sequence on `codex/dense-control-room-redesign` now
 - [x] `#144` Utility and settings demotion
 - [x] `#145` Dense typography and dark-theme cleanup
 - [x] `#146` Remove remaining inline control clutter
+- [x] `#147` Distinct Cockpit and Board roles
+- [x] `#148` Guided brownfield review/start flow
+- [x] `#149` Unified Run action and advanced control demotion
+- [x] `#150` Intent-first project setup flow
+- [x] `#151` Inspector-visible board interaction model
 
 ## Current Snapshot
 

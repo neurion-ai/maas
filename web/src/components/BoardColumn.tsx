@@ -101,7 +101,6 @@ export function BoardColumn({
         </div>
         <span className="board-column__count">
           {column.tasks.length}
-          {column.tasks.length === 1 ? " task" : " tasks"}
         </span>
       </header>
       <div className="board-column__stack">

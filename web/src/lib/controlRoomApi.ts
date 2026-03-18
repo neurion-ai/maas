@@ -1103,7 +1103,16 @@ async function postJson<T = any>(path: string, body: object): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`Unexpected status: ${response.status}`);
+    let detail = `Unexpected status: ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (typeof payload?.detail === "string" && payload.detail.trim()) {
+        detail = payload.detail;
+      }
+    } catch {
+      // Ignore non-JSON error bodies and fall back to status text.
+    }
+    throw new Error(detail);
   }
 
   if (response.status === 204) {

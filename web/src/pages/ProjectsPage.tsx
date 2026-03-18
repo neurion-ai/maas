@@ -257,6 +257,7 @@ export function ProjectsPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [pickingSourceRoot, setPickingSourceRoot] = useState(false);
+  const [setupMode, setSetupMode] = useState<"new" | "import" | null>(null);
   const livePulse = useLivePulse();
 
   const activeProjects = projects.filter((project) => project.state !== "archived");
@@ -285,6 +286,12 @@ export function ProjectsPage({
       mounted = false;
     };
   }, [livePulse, selectedProject?.project_id]);
+
+  useEffect(() => {
+    if (!projectSubmitting && !projectForm.name && !projectForm.sourceRoot && !projectForm.description) {
+      setSetupMode(null);
+    }
+  }, [projectForm, projectSubmitting]);
 
   async function handleOrchestratorPass() {
     setPendingActionKey("orchestrator");
@@ -560,6 +567,15 @@ export function ProjectsPage({
                 </div>
               </div>
               <div className="surface-card__actions">
+                {onNavigate ? (
+                  <button
+                    type="button"
+                    className="hero-button hero-button--ghost hero-button--compact"
+                    onClick={() => onNavigate("home")}
+                  >
+                    Open cockpit
+                  </button>
+                ) : null}
                 {selectedOverview?.onboarding?.review_task_status === "planned" ? (
                   <button
                     type="button"
@@ -587,15 +603,6 @@ export function ProjectsPage({
                   <button
                     type="button"
                     className="hero-button hero-button--ghost hero-button--compact"
-                    onClick={() => onNavigate("home")}
-                  >
-                    Open cockpit
-                  </button>
-                ) : null}
-                {onNavigate ? (
-                  <button
-                    type="button"
-                    className="hero-button hero-button--ghost hero-button--compact"
                     onClick={() => onNavigate("work")}
                   >
                     Open board
@@ -607,7 +614,7 @@ export function ProjectsPage({
                   disabled={pendingActionKey === "orchestrator"}
                   onClick={() => void handleOrchestratorPass()}
                 >
-                  {pendingActionKey === "orchestrator" ? "Running orchestrator..." : "Run orchestrator"}
+                  {pendingActionKey === "orchestrator" ? "Running..." : "Run"}
                 </button>
               </div>
             </div>
@@ -694,103 +701,121 @@ export function ProjectsPage({
           <div className="surface-card__header">
             <div>
               <span className="eyebrow">Create / import</span>
-              <h2>Add another workspace</h2>
+              <h2>Start another workspace</h2>
             </div>
           </div>
-          <p className="surface-card__copy">
-            Keep this compact: name it, choose the mode, and optionally point MAAS at an existing repo.
-          </p>
-          <form className="project-form project-form--stack" onSubmit={onCreateProject}>
-            <div className="field-grid field-grid--two">
+          {setupMode == null ? (
+            <div className="project-setup-chooser">
+              <p className="surface-card__copy">Choose the job you want MAAS to do, then fill only the fields that matter.</p>
+              <div className="surface-card__actions">
+                <button
+                  type="button"
+                  className="hero-button hero-button--primary hero-button--compact"
+                  onClick={() => {
+                    setSetupMode("import");
+                    onProjectFormChange({ ...projectForm, mode: "brownfield" });
+                  }}
+                >
+                  Import repo
+                </button>
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  onClick={() => {
+                    setSetupMode("new");
+                    onProjectFormChange({ ...projectForm, mode: "greenfield", sourceRoot: "" });
+                  }}
+                >
+                  New workspace
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form className="project-form project-form--stack" onSubmit={onCreateProject}>
+              <div className="surface-card__actions">
+                <span className="status-chip">{setupMode === "import" ? "Brownfield import" : "Greenfield workspace"}</span>
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  onClick={() => setSetupMode(null)}
+                >
+                  Hide setup
+                </button>
+              </div>
               <label className="field-control">
                 <span>Name</span>
                 <input
                   type="text"
                   value={projectForm.name}
-                  placeholder="Payments platform"
+                  placeholder={setupMode === "import" ? "Imported repo name" : "Payments platform"}
                   onChange={(event) => onProjectFormChange({ ...projectForm, name: event.target.value })}
                   required
                 />
               </label>
-              <label className="field-control">
-                <span>Mode</span>
-                <select
-                  value={projectForm.mode}
-                  onChange={(event) =>
-                    onProjectFormChange({
-                      ...projectForm,
-                      mode: event.target.value as ProjectFormState["mode"]
-                    })
-                  }
-                >
-                  <option value="auto">Auto</option>
-                  <option value="greenfield">Greenfield</option>
-                  <option value="brownfield">Brownfield</option>
-                </select>
-              </label>
-            </div>
-            <label className="field-control">
-              <span className="field-control__label-row">
-                <span>Source root</span>
-                <button
-                  type="button"
-                  className="inline-link-button"
-                  disabled={pickingSourceRoot}
-                  onClick={() => void handleBrowseSourceRoot()}
-                >
-                  {pickingSourceRoot ? "Opening…" : "Browse…"}
-                </button>
-              </span>
-              <input
-                type="text"
-                value={projectForm.sourceRoot}
-                placeholder="/path/to/existing/repo"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={handleSourceRootDrop}
-                onChange={(event) => onProjectFormChange({ ...projectForm, sourceRoot: event.target.value })}
-              />
-            </label>
-            <details className="advanced-pane">
-              <summary>Optional metadata</summary>
-              <div className="advanced-pane__content">
-                <div className="field-grid field-grid--two">
-                  <label className="field-control">
-                    <span>Project type</span>
-                    <input
-                      type="text"
-                      value={projectForm.projectType}
-                      onChange={(event) => onProjectFormChange({ ...projectForm, projectType: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-control">
-                    <span>Description</span>
-                    <input
-                      type="text"
-                      value={projectForm.description}
-                      placeholder="What this project is trying to accomplish"
-                      onChange={(event) => onProjectFormChange({ ...projectForm, description: event.target.value })}
-                    />
-                  </label>
+              {setupMode === "import" ? (
+                <label className="field-control">
+                  <span className="field-control__label-row">
+                    <span>Source root</span>
+                    <button
+                      type="button"
+                      className="inline-link-button"
+                      disabled={pickingSourceRoot}
+                      onClick={() => void handleBrowseSourceRoot()}
+                    >
+                      {pickingSourceRoot ? "Opening…" : "Browse…"}
+                    </button>
+                  </span>
+                  <input
+                    type="text"
+                    value={projectForm.sourceRoot}
+                    placeholder="/path/to/existing/repo"
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={handleSourceRootDrop}
+                    onChange={(event) => onProjectFormChange({ ...projectForm, sourceRoot: event.target.value })}
+                    required
+                  />
+                </label>
+              ) : null}
+              <details className="advanced-pane">
+                <summary>Optional metadata</summary>
+                <div className="advanced-pane__content">
+                  <div className="field-grid field-grid--two">
+                    <label className="field-control">
+                      <span>Project type</span>
+                      <input
+                        type="text"
+                        value={projectForm.projectType}
+                        onChange={(event) => onProjectFormChange({ ...projectForm, projectType: event.target.value })}
+                      />
+                    </label>
+                    <label className="field-control">
+                      <span>Description</span>
+                      <input
+                        type="text"
+                        value={projectForm.description}
+                        placeholder="What this project is trying to accomplish"
+                        onChange={(event) => onProjectFormChange({ ...projectForm, description: event.target.value })}
+                      />
+                    </label>
+                  </div>
                 </div>
+              </details>
+              <p className="project-form__hint">
+                {setupMode === "import"
+                  ? "Point MAAS at a local repo and it will open with a brownfield review flow before wider automation."
+                  : "Create a clean workspace and let MAAS seed the first greenfield plan."}
+              </p>
+              <div className="surface-card__actions">
+                <button
+                  type="submit"
+                  className="hero-button hero-button--primary project-form__submit"
+                  disabled={projectSubmitting}
+                >
+                  {projectSubmitting ? "Working..." : setupMode === "import" ? "Import repo" : "Create workspace"}
+                </button>
               </div>
-            </details>
-            <p className="project-form__hint">
-              Empty source root means a new workspace. A local repo path means import that codebase and show brownfield review state here first.
-            </p>
-            <div className="surface-card__actions">
-              <button
-                type="submit"
-                className="hero-button hero-button--primary project-form__submit"
-                disabled={projectSubmitting}
-              >
-                {projectSubmitting
-                  ? "Working..."
-                  : projectForm.sourceRoot.trim()
-                    ? "Import repo"
-                    : "Create workspace"}
-              </button>
-            </div>
-          </form>
+            </form>
+          )}
         </article>
       </section>
 

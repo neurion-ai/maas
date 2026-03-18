@@ -93,13 +93,19 @@ export function TaskCard({
           <p className="task-card__lead">{task.goal?.title ?? "Unlinked goal"}</p>
         </div>
         {onInspect ? (
-          <button
-            type="button"
-            className={`task-action task-action--ghost ${isFocused ? "is-active" : ""}`}
-            onClick={() => onInspect(task.task_id)}
-          >
-            {isFocused ? "Open" : "Inspect"}
-          </button>
+          isFocused ? (
+            <span className="task-card__selection" aria-label="Selected task">
+              Selected
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="task-action task-action--ghost"
+              onClick={() => onInspect(task.task_id)}
+            >
+              Inspect
+            </button>
+          )
         ) : null}
       </div>
 

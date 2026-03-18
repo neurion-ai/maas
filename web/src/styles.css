@@ -156,7 +156,8 @@ select {
   border: 1px solid var(--line);
   border-radius: 14px;
   padding: 11px 13px;
-  background: #fff;
+  background: color-mix(in srgb, var(--panel-strong) 90%, transparent 10%);
+  color: var(--ink);
 }
 
 .project-form__row {
@@ -165,16 +166,17 @@ select {
   grid-template-columns: 1fr 180px;
 }
 
-.project-form button,
+.project-form button:not(.hero-button):not(.inline-link-button),
 .project-card__actions button {
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fff;
+  background: color-mix(in srgb, var(--panel-strong) 90%, transparent 10%);
+  color: var(--ink);
   padding: 10px 14px;
   cursor: pointer;
 }
 
-.project-form button {
+.project-form button:not(.hero-button):not(.inline-link-button) {
   justify-self: start;
 }
 
@@ -224,6 +226,15 @@ select {
   color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
+}
+
+.project-form .inline-link-button,
+.field-control__label-row .inline-link-button {
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
 }
 
 .inline-link-button:disabled {
@@ -1618,6 +1629,85 @@ textarea {
   border-color: color-mix(in srgb, var(--danger) 28%, var(--line) 72%);
 }
 
+.provider-readiness {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.provider-readiness__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 88%, transparent 12%);
+  color: var(--text);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.provider-readiness__badge--good {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line) 65%);
+  background: color-mix(in srgb, var(--accent-soft) 18%, var(--panel-muted) 82%);
+}
+
+.provider-readiness__badge--critical {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--line) 65%);
+  background: color-mix(in srgb, var(--danger-soft) 18%, var(--panel-muted) 82%);
+}
+
+.provider-readiness__meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.provider-preflight-trace {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 92%, transparent 8%);
+}
+
+.provider-preflight-trace--empty {
+  color: var(--muted);
+}
+
+.provider-preflight-trace__label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.provider-preflight-trace strong {
+  font-size: 0.82rem;
+}
+
+.provider-preflight-trace p {
+  margin: 0;
+}
+
+.provider-preflight-feedback {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.provider-preflight-feedback--error {
+  color: var(--danger);
+}
+
 .project-tile.is-selected {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--line) 62%);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent 80%), var(--shadow-md);
@@ -1858,7 +1948,7 @@ textarea {
 }
 
 .detail-grid > div {
-  min-width: 150px;
+  min-width: 0;
   flex: 1 1 160px;
   padding: 14px;
   border-radius: var(--radius-sm);
@@ -1880,6 +1970,9 @@ textarea {
 
 .detail-grid > div strong {
   font-size: 1rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .detail-section {
@@ -1976,6 +2069,15 @@ textarea {
 .project-form--stack {
   display: grid;
   gap: 12px;
+}
+
+.project-setup-chooser {
+  display: grid;
+  gap: 12px;
+}
+
+.project-setup-chooser .surface-card__actions {
+  justify-content: flex-start;
 }
 
 .segmented-control {
@@ -2546,19 +2648,32 @@ body {
 }
 
 .status-panel {
-  justify-content: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-muted) 88%, transparent 12%);
+  justify-content: center;
   min-width: 0;
 }
 
+.status-panel--health {
+  justify-content: flex-start;
+  padding-right: 16px;
+}
+
 .status-panel__copy {
-  display: grid;
-  gap: 1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
 .status-panel__copy strong,
 .status-panel__copy span {
-  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2567,6 +2682,18 @@ body {
 .status-panel strong,
 .telemetry-chip strong {
   font-size: 0.8rem;
+}
+
+.status-panel > strong,
+.status-panel > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-panel > span,
+.status-panel__copy span {
+  color: var(--muted);
 }
 
 .status-dot {
@@ -2592,9 +2719,13 @@ body {
 
 .control-room__grid {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 292px;
+  grid-template-columns: 220px minmax(0, 1fr) 360px;
   gap: 10px;
   align-items: start;
+}
+
+.control-room__grid--supervision {
+  grid-template-columns: minmax(0, 1fr) 320px;
 }
 
 .control-room--focus .control-room__grid {
@@ -2618,6 +2749,167 @@ body {
   display: grid;
   gap: 10px;
   min-width: 0;
+}
+
+.control-room__ops {
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.control-room__action-grid,
+.signal-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.control-room__action-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.signal-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-muted) 88%, transparent 12%);
+}
+
+.signal-row strong,
+.signal-row p {
+  margin: 0;
+}
+
+.signal-row p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.signal-row--warn {
+  border-color: color-mix(in srgb, var(--warn) 28%, var(--line) 72%);
+}
+
+.signal-row--critical {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--line) 72%);
+}
+
+.onboarding-takeover {
+  display: grid;
+  gap: 12px;
+}
+
+.onboarding-takeover .surface-card__header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+.onboarding-takeover__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: start;
+}
+
+.onboarding-takeover__summary {
+  display: grid;
+  gap: 10px;
+}
+
+.onboarding-takeover__chips,
+.onboarding-takeover__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.onboarding-takeover__actions {
+  justify-content: flex-end;
+}
+
+.workbench-callout {
+  display: grid;
+  gap: 10px;
+}
+
+.workbench-callout__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agent-roster-card {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-roster {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-roster__row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1.4fr) 180px 96px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-muted) 90%, transparent 10%);
+}
+
+.agent-roster__row--warn {
+  border-color: color-mix(in srgb, var(--warn) 28%, var(--line) 72%);
+}
+
+.agent-roster__row--critical {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--line) 72%);
+}
+
+.agent-roster__identity,
+.agent-roster__context,
+.agent-roster__risk {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-roster__identity strong,
+.agent-roster__context strong,
+.agent-roster__identity span,
+.agent-roster__context span,
+.agent-roster__heartbeat {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-roster__identity span,
+.agent-roster__context span,
+.agent-roster__heartbeat {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.agent-roster__signals,
+.agent-roster__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.agent-roster__signals {
+  flex-wrap: wrap;
+}
+
+.agent-roster__risk {
+  justify-items: start;
 }
 
 .surface-card--dense,
@@ -2939,6 +3231,22 @@ body {
   gap: 10px;
 }
 
+.control-room__inspector-card {
+  position: sticky;
+  top: 10px;
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+}
+
+.control-room__inspector-card .task-inspector__grid {
+  grid-template-columns: 1fr;
+}
+
+.control-room__inspector-card .task-inspector__summary > div {
+  min-width: 0;
+  flex: 1 1 calc(50% - 8px);
+}
+
 .inspector-panel {
   display: grid;
   gap: 8px;
@@ -2965,33 +3273,105 @@ body {
   gap: 6px;
 }
 
-.inspector-flow__path span,
-.inspector-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 0 8px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--panel-strong) 90%, transparent 10%);
-  font-size: 0.72rem;
-}
-
-.inspector-chip {
-  width: 100%;
-  justify-content: space-between;
-  min-height: 34px;
-  text-align: left;
-}
-
-.inspector-chip--static {
-  cursor: default;
-}
-
 .inspector-flow__list {
   display: grid;
   gap: 6px;
+}
+
+.inspector-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.inspector-breadcrumb__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.inspector-breadcrumb__item:last-child {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.inspector-breadcrumb__sep {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+.inspector-list-label {
+  color: var(--muted);
+  font-size: 0.67rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.inspector-nav-row,
+.inspector-static-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent 16%);
+  font-size: 0.76rem;
+}
+
+.inspector-nav-row {
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
+}
+
+.inspector-nav-row:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent-soft) 24%, var(--panel-strong) 76%);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line) 72%);
+}
+
+.inspector-nav-row__copy,
+.inspector-static-row {
+  text-align: left;
+}
+
+.inspector-nav-row__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.inspector-nav-row__copy strong,
+.inspector-static-row strong {
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.inspector-nav-row__copy span,
+.inspector-static-row span,
+.inspector-nav-row__action {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.inspector-nav-row__action {
+  flex: 0 0 auto;
+  padding-left: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.inspector-static-row {
+  display: grid;
+  gap: 2px;
+  cursor: default;
 }
 
 .inspector-pre {
@@ -3375,9 +3755,39 @@ body {
     grid-template-columns: 220px minmax(0, 1fr);
   }
 
+  .control-room__grid--supervision {
+    grid-template-columns: 1fr;
+  }
+
   .control-room__ops {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .control-room__inspector-card {
+    grid-column: 1 / -1;
+    position: static;
+    max-height: none;
+  }
+
+  .onboarding-takeover__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .onboarding-takeover__actions {
+    justify-content: flex-start;
+  }
+
+  .control-room__action-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agent-roster__row {
+    grid-template-columns: 140px minmax(0, 1fr) 170px auto;
+  }
+
+  .agent-roster__risk {
+    display: none;
   }
 }
 
@@ -3393,6 +3803,25 @@ body {
 
   .control-room__status-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .control-room__inspector-card {
+    position: static;
+    max-height: none;
+  }
+
+  .control-room__action-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-roster__row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .agent-roster__signals,
+  .agent-roster__actions {
+    justify-content: flex-start;
   }
 }
 
@@ -3487,6 +3916,11 @@ body {
   min-width: 0;
 }
 
+.workbench-layout__inspector > .surface-card {
+  position: sticky;
+  top: 10px;
+}
+
 .workbench-secondary {
   margin-top: 4px;
 }
@@ -3497,8 +3931,18 @@ body {
 
 .board-column__count {
   min-width: auto;
-  padding: 8px 10px;
-  font-size: 0.7rem;
+  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--panel-strong) 78%, var(--panel-muted) 22%);
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 0.68rem;
+  font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -3536,6 +3980,20 @@ body {
   margin: 0;
   font-size: 0.95rem;
   line-height: 1.15;
+}
+
+.task-card__selection {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line) 74%);
+  background: color-mix(in srgb, var(--accent-soft) 74%, var(--panel-muted) 26%);
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .task-card--compact .task-card__lead {
@@ -3583,8 +4041,46 @@ body {
 }
 
 .task-card--compact .task-action {
-  min-height: 0;
-  padding: 8px 10px;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.task-card--compact .task-action--ghost {
+  background: color-mix(in srgb, var(--panel-strong) 82%, transparent 18%);
+  border-color: var(--line-strong);
+  color: var(--ink);
+}
+
+.task-card--compact .task-action--approve {
+  background: color-mix(in srgb, var(--accent) 84%, var(--panel-strong) 16%);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line) 58%);
+  color: white;
+}
+
+.task-card--compact .task-action--reject {
+  background: color-mix(in srgb, var(--danger-soft) 88%, var(--panel-strong) 12%);
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--line) 70%);
+  color: var(--danger);
+}
+
+.task-card--compact .task-action--secondary {
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--panel-strong) 45%);
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--line) 74%);
+  color: var(--ink);
+}
+
+:root[data-theme="dark"] .board-column__count {
+  background: color-mix(in srgb, var(--panel-strong) 72%, black 28%);
+  color: color-mix(in srgb, white 72%, var(--ink) 28%);
+}
+
+:root[data-theme="dark"] .task-card--compact .task-action--ghost {
+  background: color-mix(in srgb, var(--panel-strong) 68%, black 32%);
+  color: color-mix(in srgb, white 82%, var(--muted) 18%);
 }
 
 .task-inspector-v2 {

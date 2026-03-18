@@ -82,6 +82,13 @@ function formatStatusLabel(value?: string | null) {
   return value.replace(/_/g, " ");
 }
 
+async function waitForMinimumFeedback(startedAt: number, minimumMs = 700) {
+  const remaining = minimumMs - (Date.now() - startedAt);
+  if (remaining > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, remaining));
+  }
+}
+
 export function ProvidersPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -215,14 +222,21 @@ export function ProvidersPage() {
   }
 
   async function handleRunPreflight(provider: ProviderStatusItem) {
+    const startedAt = Date.now();
     setPendingPreflight(provider.id);
     setNotice(null);
     try {
       const payload = await runProviderPreflight(provider.id);
+      await waitForMinimumFeedback(startedAt);
       await reloadProviders();
       setNotice(payload.summary);
-    } catch {
-      setNotice(`Provider preflight failed for ${provider.name}; keeping the previous readiness state.`);
+    } catch (error) {
+      await waitForMinimumFeedback(startedAt);
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : `Provider preflight failed for ${provider.name}; keeping the previous readiness state.`
+      );
     } finally {
       setPendingPreflight(null);
     }

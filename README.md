@@ -66,38 +66,43 @@ Current stacked development chain above `main`:
 - `#114` exists on `codex/ux-product-redesign`
 - `#115` exists on `codex/ux-product-redesign`
 - `#116` exists on `codex/ux-product-redesign`
-- `#117` exists on `codex/dense-control-room-redesign`
-- `#118` exists on `codex/dense-control-room-redesign`
-- `#119` exists on `codex/dense-control-room-redesign`
-- `#120` exists on `codex/dense-control-room-redesign`
-- `#121` exists on `codex/dense-control-room-redesign`
-- `#122` exists on `codex/dense-control-room-redesign`
-- `#123` exists on `codex/dense-control-room-redesign`
-- `#124` exists on `codex/dense-control-room-redesign`
-- `#125` exists on `codex/dense-control-room-redesign`
-- `#126` exists on `codex/dense-control-room-redesign`
-- `#127` exists on `codex/dense-control-room-redesign`
-- `#128` exists on `codex/dense-control-room-redesign`
-- `#129` exists on `codex/dense-control-room-redesign`
-- `#130` exists on `codex/dense-control-room-redesign`
-- `#131` exists on `codex/dense-control-room-redesign`
-- `#132` exists on `codex/dense-control-room-redesign`
-- `#133` exists on `codex/dense-control-room-redesign`
-- `#134` exists on `codex/dense-control-room-redesign`
-- `#135` exists on `codex/dense-control-room-redesign`
-- `#136` exists on `codex/dense-control-room-redesign`
-- `#137` exists on `codex/dense-control-room-redesign`
-- `#138` exists on `codex/dense-control-room-redesign`
-- `#139` exists on `codex/dense-control-room-redesign`
-- `#140` exists on `codex/dense-control-room-redesign`
-- `#141` exists on `codex/dense-control-room-redesign`
-- `#142` exists on `codex/dense-control-room-redesign`
-- `#143` exists on `codex/dense-control-room-redesign`
-- `#144` exists on `codex/dense-control-room-redesign`
-- `#145` exists on `codex/dense-control-room-redesign`
-- `#146` exists on `codex/dense-control-room-redesign`
+- `#117` exists on `codex/linear-vibekanban-cockpit`
+- `#118` exists on `codex/linear-vibekanban-cockpit`
+- `#119` exists on `codex/linear-vibekanban-cockpit`
+- `#120` exists on `codex/linear-vibekanban-cockpit`
+- `#121` exists on `codex/linear-vibekanban-cockpit`
+- `#122` exists on `codex/linear-vibekanban-cockpit`
+- `#123` exists on `codex/linear-vibekanban-cockpit`
+- `#124` exists on `codex/linear-vibekanban-cockpit`
+- `#125` exists on `codex/linear-vibekanban-cockpit`
+- `#126` exists on `codex/linear-vibekanban-cockpit`
+- `#127` exists on `codex/linear-vibekanban-cockpit`
+- `#128` exists on `codex/linear-vibekanban-cockpit`
+- `#129` exists on `codex/linear-vibekanban-cockpit`
+- `#130` exists on `codex/linear-vibekanban-cockpit`
+- `#131` exists on `codex/linear-vibekanban-cockpit`
+- `#132` exists on `codex/linear-vibekanban-cockpit`
+- `#133` exists on `codex/linear-vibekanban-cockpit`
+- `#134` exists on `codex/linear-vibekanban-cockpit`
+- `#135` exists on `codex/linear-vibekanban-cockpit`
+- `#136` exists on `codex/linear-vibekanban-cockpit`
+- `#137` exists on `codex/linear-vibekanban-cockpit`
+- `#138` exists on `codex/linear-vibekanban-cockpit`
+- `#139` exists on `codex/linear-vibekanban-cockpit`
+- `#140` exists on `codex/linear-vibekanban-cockpit`
+- `#141` exists on `codex/linear-vibekanban-cockpit`
+- `#142` exists on `codex/linear-vibekanban-cockpit`
+- `#143` exists on `codex/linear-vibekanban-cockpit`
+- `#144` exists on `codex/linear-vibekanban-cockpit`
+- `#145` exists on `codex/linear-vibekanban-cockpit`
+- `#146` exists on `codex/linear-vibekanban-cockpit`
+- `#147` exists on `codex/linear-vibekanban-cockpit`
+- `#148` exists on `codex/linear-vibekanban-cockpit`
+- `#149` exists on `codex/linear-vibekanban-cockpit`
+- `#150` exists on `codex/linear-vibekanban-cockpit`
+- `#151` exists on `codex/linear-vibekanban-cockpit`
 
-The current product-modeling sequence on `codex/dense-control-room-redesign` now covers both the cockpit pivot (`#127-#136`) and the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`).
+The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 
 ### Current project state
 
@@ -208,6 +213,11 @@ The current product-modeling sequence on `codex/dense-control-room-redesign` now
 - [x] `#144` Utility and settings demotion
 - [x] `#145` Dense typography and dark-theme cleanup
 - [x] `#146` Remove remaining inline control clutter
+- [x] `#147` Distinct Cockpit and Board roles
+- [x] `#148` Guided brownfield review/start flow
+- [x] `#149` Unified Run action and advanced control demotion
+- [x] `#150` Intent-first project setup flow
+- [x] `#151` Inspector-visible board interaction model
 
 ### Current stacked branch progress
 
@@ -247,16 +257,16 @@ The current product-modeling sequence on `codex/dense-control-room-redesign` now
 - [x] `#114` is implemented on `codex/ux-product-redesign`
 - [x] `#115` is implemented on `codex/ux-product-redesign`
 - [x] `#116` is implemented on `codex/ux-product-redesign`
-- [x] `#117` is implemented on `codex/dense-control-room-redesign`
-- [x] `#118` is implemented on `codex/dense-control-room-redesign`
-- [x] `#119` is implemented on `codex/dense-control-room-redesign`
-- [x] `#120` is implemented on `codex/dense-control-room-redesign`
-- [x] `#121` is implemented on `codex/dense-control-room-redesign`
-- [x] `#122` is implemented on `codex/dense-control-room-redesign`
-- [x] `#123` is implemented on `codex/dense-control-room-redesign`
-- [x] `#124` is implemented on `codex/dense-control-room-redesign`
-- [x] `#125` is implemented on `codex/dense-control-room-redesign`
-- [x] `#126` is implemented on `codex/dense-control-room-redesign`
+- [x] `#117` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#118` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#119` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#120` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#121` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#122` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#123` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#124` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#125` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#126` is implemented on `codex/linear-vibekanban-cockpit`
 
 The current numbered `#81-#126` sequence is fully implemented on the stacked branch chain above `main`.
 

@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   fetchAgentRoster,
-  fetchArtifactDetail,
-  fetchArtifacts,
-  fetchGoalTree,
   fetchIncidentTimeline,
   fetchOverview,
   fetchPortfolio,
@@ -20,30 +17,17 @@ import {
   runSupervisorPass
 } from "../lib/controlRoomApi";
 import {
-  fetchBoard,
-  finishTaskReplan,
-  markTaskForReplan,
-  prepareTaskGitWorkspace,
   recoverAndRequeueTask,
-  recoverTask,
-  refreshTaskGitDiff,
-  reviewTask,
-  runTaskVerification
+  reviewTask
 } from "../lib/boardApi";
 import { assignNextTask } from "../lib/controlRoomApi";
+import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
 import type {
   ActivityItem,
   AgentRosterEntry,
   AgentRosterResponse,
   AlertOperatorAction,
-  ArtifactDetail,
-  ArtifactsResponse,
-  BoardColumn,
-  BoardResponse,
-  BoardTask,
-  GoalTreeNode,
-  GoalTreeResponse,
   OverviewResponse,
   PortfolioResponse,
   RecoveryPolicyResponse,
@@ -97,13 +81,6 @@ function formatHeartbeat(seconds?: number | null) {
   return `${Math.round(seconds / 60)}m`;
 }
 
-function formatPriority(priority: number) {
-  if (priority >= 90) return "P0";
-  if (priority >= 75) return "P1";
-  if (priority >= 50) return "P2";
-  return "P3";
-}
-
 function formatStatusLabel(value?: string | null) {
   if (!value) {
     return "Unknown";
@@ -120,17 +97,6 @@ function formatAgentRole(agent: AgentRosterEntry) {
   return agent.role;
 }
 
-function formatList(items?: string[] | null, limit = 4) {
-  const values = (items ?? []).filter(Boolean);
-  if (!values.length) {
-    return "None";
-  }
-  if (values.length <= limit) {
-    return values.join(", ");
-  }
-  return `${values.slice(0, limit).join(", ")} +${values.length - limit}`;
-}
-
 function statusTone(status?: string | null) {
   if (!status) {
     return "default";
@@ -142,34 +108,6 @@ function statusTone(status?: string | null) {
     return "warn";
   }
   return "default";
-}
-
-function columnTone(columnKey: BoardColumn["key"]) {
-  if (columnKey === "blocked") return "critical";
-  if (columnKey === "review") return "warn";
-  if (columnKey === "in_progress") return "default";
-  return "default";
-}
-
-function flattenTasks(board: BoardResponse | null) {
-  return (board?.columns ?? []).flatMap((column) => column.tasks);
-}
-
-function findGoalPath(nodes: GoalTreeNode[], goalId?: string | null, trail: GoalTreeNode[] = []): GoalTreeNode[] | null {
-  if (!goalId) {
-    return null;
-  }
-  for (const node of nodes) {
-    const nextTrail = [...trail, node];
-    if (node.goal_id === goalId) {
-      return nextTrail;
-    }
-    const childTrail = findGoalPath(node.children, goalId, nextTrail);
-    if (childTrail) {
-      return childTrail;
-    }
-  }
-  return null;
 }
 
 function buildTickerItems(timeline: TimelineResponse | null, activity: ActivityItem[] | undefined): TickerItem[] {
@@ -229,33 +167,9 @@ function buildTickerItems(timeline: TimelineResponse | null, activity: ActivityI
 
 function buildAgentContext(
   agent: AgentRosterEntry,
-  tasks: BoardTask[],
   tickerItems: TickerItem[]
 ): { subtitle: string; detail: string; tone: "critical" | "warn" | "default" } {
-  const currentTask = tasks.find((task) => task.task_id === agent.current_task_id);
   const lastEvent = tickerItems.find((item) => item.agentId === agent.agent_id);
-
-  if (currentTask) {
-    if (currentTask.status === "blocked") {
-      return {
-        subtitle: currentTask.title,
-        detail: currentTask.review_state ? `Blocked · ${currentTask.review_state}` : "Blocked",
-        tone: "critical"
-      };
-    }
-    if (currentTask.status === "review") {
-      return {
-        subtitle: currentTask.title,
-        detail: "Waiting on review",
-        tone: "warn"
-      };
-    }
-    return {
-      subtitle: currentTask.title,
-      detail: currentTask.goal?.title ?? "Active execution",
-      tone: "default"
-    };
-  }
 
   if (agent.status === "error") {
     return {
@@ -274,81 +188,43 @@ function buildAgentContext(
   }
 
   return {
-    subtitle: agent.current_task_title ?? "No current task",
+    subtitle: agent.current_task_title ?? "Working",
     detail: lastEvent?.summary ?? "No recent activity recorded.",
     tone: statusTone(agent.status)
   };
 }
 
-function matchRepoPlanItems(task: BoardTask, overview: OverviewResponse | null) {
-  const items = overview?.onboarding?.repo_plan_state?.items ?? overview?.onboarding?.repo_plan_preview?.items ?? [];
-  const scopedPaths = task.scoped_paths ?? [];
-  if (!items.length) {
-    return [];
+function buildAgentRiskLabel(agent: AgentRosterEntry, tone: "critical" | "warn" | "default") {
+  if (agent.status === "error") {
+    return "Needs recovery";
   }
-  return items.filter((item) => {
-    if (scopedPaths.length) {
-      return item.paths.some((path) => scopedPaths.some((scope) => path.startsWith(scope) || scope.startsWith(path)));
-    }
-    return Boolean(task.goal?.title && item.title.toLowerCase().includes(task.goal.title.toLowerCase()));
-  });
-}
-
-function CompactBoardCard({
-  task,
-  selected,
-  onSelect
-}: {
-  task: BoardTask;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button type="button" className={`compact-board-card ${selected ? "is-selected" : ""}`} onClick={onSelect}>
-      <div className="compact-board-card__top">
-        <span className={`compact-board-card__priority compact-board-card__priority--${statusTone(task.review_state ?? task.status)}`}>
-          {formatPriority(task.priority)}
-        </span>
-        <span className="compact-board-card__id">{task.task_id}</span>
-      </div>
-      <strong className="compact-board-card__title">{task.title}</strong>
-      <div className="compact-board-card__meta">
-        <span>{task.agent?.name ?? "Unassigned"}</span>
-        <span>{task.goal?.title ?? "Unlinked"}</span>
-      </div>
-      <div className="compact-board-card__signals">
-        {task.review_state ? <span>{task.review_state.replaceAll("_", " ")}</span> : null}
-        {task.failure_count ? <span>{task.failure_count} failures</span> : null}
-        {task.latest_verification_status ? <span>{task.latest_verification_status}</span> : null}
-        {task.next_retry_at ? <span>retry pending</span> : null}
-      </div>
-    </button>
-  );
+  if (tone === "critical") {
+    return "Blocked";
+  }
+  if (agent.status === "idle") {
+    return "Idle capacity";
+  }
+  if (tone === "warn") {
+    return "Watch";
+  }
+  return "Healthy";
 }
 
 export function HomePage({ onNavigate, mode }: HomePageProps) {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
-  const [board, setBoard] = useState<BoardResponse | null>(null);
-  const [goalTree, setGoalTree] = useState<GoalTreeResponse | null>(null);
   const [roster, setRoster] = useState<AgentRosterResponse | null>(null);
   const [recovery, setRecovery] = useState<RecoveryPolicyResponse | null>(null);
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
-  const [taskArtifacts, setTaskArtifacts] = useState<ArtifactsResponse | null>(null);
-  const [taskTimeline, setTaskTimeline] = useState<TimelineResponse | null>(null);
-  const [taskDiffArtifact, setTaskDiffArtifact] = useState<ArtifactDetail | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   async function loadControlRoom() {
-    const [overviewPayload, portfolioPayload, boardPayload, goalTreePayload, rosterPayload, recoveryPayload, timelinePayload] =
+    const [overviewPayload, portfolioPayload, rosterPayload, recoveryPayload, timelinePayload] =
       await Promise.all([
         fetchOverview(),
         fetchPortfolio(),
-        fetchBoard(),
-        fetchGoalTree(),
         fetchAgentRoster(),
         fetchRecoveryPolicy(),
         fetchIncidentTimeline({ limit: 24 })
@@ -356,8 +232,6 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
 
     setOverview(overviewPayload);
     setPortfolio(portfolioPayload);
-    setBoard(boardPayload);
-    setGoalTree(goalTreePayload);
     setRoster(rosterPayload);
     setRecovery(recoveryPayload);
     setTimeline(timelinePayload);
@@ -367,12 +241,10 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
     let mounted = true;
     async function load() {
       try {
-        const [overviewPayload, portfolioPayload, boardPayload, goalTreePayload, rosterPayload, recoveryPayload, timelinePayload] =
+        const [overviewPayload, portfolioPayload, rosterPayload, recoveryPayload, timelinePayload] =
           await Promise.all([
             fetchOverview(),
             fetchPortfolio(),
-            fetchBoard(),
-            fetchGoalTree(),
             fetchAgentRoster(),
             fetchRecoveryPolicy(),
             fetchIncidentTimeline({ limit: 24 })
@@ -382,8 +254,6 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
         }
         setOverview(overviewPayload);
         setPortfolio(portfolioPayload);
-        setBoard(boardPayload);
-        setGoalTree(goalTreePayload);
         setRoster(rosterPayload);
         setRecovery(recoveryPayload);
         setTimeline(timelinePayload);
@@ -400,80 +270,9 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
     };
   }, [livePulse]);
 
-  const allTasks = useMemo(() => flattenTasks(board), [board]);
-  const boardColumns = useMemo(
-    () =>
-      (board?.columns ?? []).filter((column) =>
-        ["planned", "ready", "in_progress", "review", "blocked"].includes(column.key)
-      ),
-    [board]
-  );
-  const boardBacklogSummary = useMemo(
-    () =>
-      boardColumns
-        .filter((column) => ["planned", "ready"].includes(column.key))
-        .map((column) => ({ key: column.key, title: column.title, count: column.tasks.length })),
-    [boardColumns]
-  );
-  const boardFocusColumns = useMemo(() => {
-    const orderedKeys: Array<BoardColumn["key"]> = ["in_progress", "review", "blocked", "ready", "planned"];
-    const columnByKey = new Map(boardColumns.map((column) => [column.key, column] as const));
-    const prioritized = orderedKeys
-      .map((key) => columnByKey.get(key))
-      .filter((column): column is BoardColumn => Boolean(column));
-    const visible = prioritized.filter(
-      (column) => column.tasks.length > 0 || ["in_progress", "review", "blocked"].includes(column.key)
-    );
-    return visible.length ? visible : prioritized.slice(0, 3);
-  }, [boardColumns]);
-  const boardIsFitted = boardFocusColumns.length > 0 && boardFocusColumns.length <= 4;
   const tickerItems = useMemo(() => buildTickerItems(timeline, overview?.recent_activity), [overview, timeline]);
-
-  const selectedTask =
-    allTasks.find((task) => task.task_id === selectedTaskId) ??
-    allTasks.find((task) => task.status === "in_progress") ??
-    allTasks.find((task) => task.status === "review") ??
-    allTasks.find((task) => task.status === "blocked") ??
-    allTasks[0] ??
-    null;
-
-  useEffect(() => {
-    if (selectedTask && selectedTask.task_id !== selectedTaskId) {
-      setSelectedTaskId(selectedTask.task_id);
-    }
-  }, [selectedTask, selectedTaskId]);
-
-  useEffect(() => {
-    let mounted = true;
-    async function loadTaskContext() {
-      if (!selectedTask) {
-        if (mounted) {
-          setTaskArtifacts(null);
-          setTaskTimeline(null);
-          setTaskDiffArtifact(null);
-        }
-        return;
-      }
-      const [artifactsPayload, timelinePayload, diffPayload] = await Promise.all([
-        fetchArtifacts({ taskId: selectedTask.task_id, limit: 6, offset: 0 }),
-        fetchIncidentTimeline({ taskId: selectedTask.task_id, limit: 8 }),
-        selectedTask.git_workspace_diff_artifact_id
-          ? fetchArtifactDetail(selectedTask.git_workspace_diff_artifact_id)
-          : Promise.resolve(null)
-      ]);
-      if (!mounted) {
-        return;
-      }
-      setTaskArtifacts(artifactsPayload);
-      setTaskTimeline(timelinePayload);
-      setTaskDiffArtifact(diffPayload);
-    }
-
-    void loadTaskContext();
-    return () => {
-      mounted = false;
-    };
-  }, [livePulse, selectedTask?.git_workspace_diff_artifact_id, selectedTask?.task_id]);
+  const selectedPortfolioProject =
+    portfolio?.projects.find((project) => project.project_id === overview?.project?.project_id) ?? null;
 
   async function runAction(actionKey: string, successMessage: string, action: () => Promise<unknown>, fallback: string) {
     setPendingActionKey(actionKey);
@@ -494,8 +293,12 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
 
     const projectId = overview?.project?.project_id;
     const onboarding = overview?.onboarding;
+    const importReviewPending =
+      onboarding?.mode === "brownfield" &&
+      !!onboarding.review_status &&
+      !["approved", "reviewed", "not_applicable"].includes(onboarding.review_status);
 
-    if (onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "planned") {
+    if (!importReviewPending && onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "planned") {
       items.push({
         id: "brownfield-prepare-review",
         pendingKey: "brownfield-review:prepare",
@@ -514,7 +317,7 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
       });
     }
 
-    if (onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "review") {
+    if (!importReviewPending && onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "review") {
       items.push({
         id: "brownfield-review",
         pendingKey: "brownfield-review:approve",
@@ -533,7 +336,7 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
       });
     }
 
-    if (onboarding?.mode === "brownfield" && projectId && onboarding.drift_summary?.detected) {
+    if (!importReviewPending && onboarding?.mode === "brownfield" && projectId && onboarding.drift_summary?.detected) {
       items.push({
         id: "brownfield-rescan",
         pendingKey: "brownfield-rescan",
@@ -552,7 +355,7 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
       });
     }
 
-    if (onboarding?.mode === "brownfield" && projectId && onboarding.repo_plan_state?.stale) {
+    if (!importReviewPending && onboarding?.mode === "brownfield" && projectId && onboarding.repo_plan_state?.stale) {
       items.push({
         id: "repo-plan-refresh",
         pendingKey: "repo-plan-refresh",
@@ -724,557 +527,442 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
     return items.slice(0, 10);
   }, [overview, recovery]);
 
-  const goalPath = useMemo(
-    () => findGoalPath(goalTree?.roots ?? [], selectedTask?.goal?.id ?? null) ?? [],
-    [goalTree, selectedTask?.goal?.id]
-  );
-  const sameGoalTasks = useMemo(
-    () =>
-      selectedTask?.goal?.id
-        ? allTasks.filter((task) => task.goal?.id === selectedTask.goal?.id && task.task_id !== selectedTask.task_id)
-        : [],
-    [allTasks, selectedTask]
-  );
-  const repoPlanItems = useMemo(
-    () => (selectedTask ? matchRepoPlanItems(selectedTask, overview).slice(0, 6) : []),
-    [overview, selectedTask]
-  );
+  const pendingImportReview =
+    overview?.onboarding?.mode === "brownfield" &&
+    !!overview?.onboarding?.review_status &&
+    !["approved", "reviewed", "not_applicable"].includes(overview.onboarding.review_status);
+  const reviewTaskId = overview?.onboarding?.review_task_id ?? null;
+  const onboardingWorkflowLabels =
+    overview?.onboarding?.discovery_summary.workflow_details?.map((detail) => detail.label).filter(Boolean) ??
+    overview?.onboarding?.discovery_summary.workflow_labels ??
+    [];
+  const onboardingCodeAreas =
+    overview?.onboarding?.discovery_summary.codebase_map?.map((area) => area.name).filter(Boolean) ??
+    overview?.onboarding?.discovery_summary.repo_areas ??
+    [];
+  const blockedTaskCount = overview?.summary.tasks_blocked ?? 0;
+  const pendingGatedTasks = overview?.onboarding?.pending_gated_tasks ?? 0;
+  const hasRuntimeRisk =
+    (recovery?.summary.open_failure_alerts ?? 0) > 0 || (recovery?.summary.open_dead_letter_entries ?? 0) > 0;
+  const queuedProviderJobs = portfolio?.summary.queued_provider_jobs ?? 0;
+  const currentProjectId = overview?.project?.project_id ?? null;
+  const criticalAttentionCount = attentionItems.filter((item) => item.tone === "critical").length;
+  const queueMode = selectedPortfolioProject?.provider_capacity.queue_mode ?? "running";
 
-  const projectHealth = overview?.summary.tasks_blocked
-    ? "Degraded"
-    : (recovery?.summary.open_failure_alerts ?? 0) > 0 || (recovery?.summary.open_dead_letter_entries ?? 0) > 0
-      ? "At risk"
-      : "Stable";
+  function openTaskInBoard(taskId: string | null) {
+    if (taskId) {
+      setPendingTaskFocus(taskId);
+    }
+    onNavigate("work");
+  }
+
+  const projectHealth = pendingImportReview
+    ? "Needs import review"
+    : blockedTaskCount > 0
+      ? "Blocked"
+      : hasRuntimeRisk
+        ? "At risk"
+        : "Stable";
+
+  const projectHealthDetail = pendingImportReview
+    ? `${pendingGatedTasks} imported tasks gated`
+    : blockedTaskCount > 0
+      ? `${blockedTaskCount} blocked tasks`
+      : hasRuntimeRisk
+        ? "Failures or dead-letter work need attention"
+        : "No active blockers";
+
+  const runPrimaryLoop = () =>
+    runAction(
+      "run",
+      queuedProviderJobs > 0 ? "Run completed; queue and board refreshed." : "Run completed; board refreshed.",
+      () => (queuedProviderJobs > 0 ? runOrchestratorPass(4, 2) : runSupervisorPass(3)),
+      queuedProviderJobs > 0 ? "Run failed while processing queued work." : "Run failed while refreshing the board."
+    );
+
+  const recommendation = pendingImportReview
+    ? {
+        title: "Review imported repo before releasing work",
+        detail:
+          reviewTaskId && overview?.onboarding?.review_task_status === "review"
+            ? "Open the review task on Board, inspect MAAS's imported understanding, then approve it."
+            : "Prepare the import review first so the gated brownfield tasks have one clear decision path.",
+        primaryLabel:
+          reviewTaskId && overview?.onboarding?.review_task_status === "review" ? "Open review on Board" : "Prepare review",
+        primaryAction:
+          reviewTaskId && overview?.onboarding?.review_task_status === "review"
+            ? () => openTaskInBoard(reviewTaskId)
+            : () =>
+                runAction(
+                  "brownfield-review:prepare",
+                  "Import review is ready on the board.",
+                  () => runSupervisorPass(3),
+                  "Supervisor pass failed; the import review is still pending."
+                ),
+        secondaryLabel: "Open Projects",
+        secondaryAction: () => onNavigate("projects")
+      }
+    : attentionItems.length > 0
+      ? {
+          title: "Triage the incident queue",
+          detail: `${attentionItems.length} operator item${attentionItems.length === 1 ? "" : "s"} are waiting, including ${criticalAttentionCount} critical.`,
+          primaryLabel: "Open incidents",
+          primaryAction: () => onNavigate("incidents"),
+          secondaryLabel: "Open Board",
+          secondaryAction: () => onNavigate("work")
+        }
+      : {
+          title: queuedProviderJobs > 0 ? "Drain queued work" : "Continue supervised execution",
+          detail:
+            queuedProviderJobs > 0
+              ? `${queuedProviderJobs} queued provider job${queuedProviderJobs === 1 ? "" : "s"} are ready to process in ${queueMode} mode.`
+              : `${overview?.summary.tasks_in_progress ?? 0} run${overview?.summary.tasks_in_progress === 1 ? "" : "s"} active and no urgent incident requires you.`,
+          primaryLabel: queuedProviderJobs > 0 ? "Run work loop" : "Open Board",
+          primaryAction: queuedProviderJobs > 0 ? runPrimaryLoop : () => onNavigate("work"),
+          secondaryLabel: "Open Execution",
+          secondaryAction: () => onNavigate("runs")
+        };
+
+  const systemSignals = [
+    {
+      label: "Recoverable now",
+      value: recovery?.summary.recoverable_blocked_tasks ?? 0,
+      detail: "tasks ready for recover or requeue",
+      tone: "warn" as const
+    },
+    {
+      label: "Dead letters",
+      value: recovery?.summary.open_dead_letter_entries ?? 0,
+      detail: "contained failures still unresolved",
+      tone: "critical" as const
+    },
+    {
+      label: "Circuit breakers",
+      value: recovery?.summary.open_circuit_breakers ?? 0,
+      detail: "tasks frozen by repeat failure pressure",
+      tone: "critical" as const
+    },
+    {
+      label: "Queued jobs",
+      value: queuedProviderJobs,
+      detail: `${queueMode} mode`,
+      tone: "default" as const
+    }
+  ];
+
+  const cockpitActions = [
+    { id: "board", label: "Open Board", run: () => onNavigate("work") },
+    { id: "runs", label: "Open Execution", run: () => onNavigate("runs") },
+    { id: "incidents", label: "Open Incidents", run: () => onNavigate("incidents") },
+    { id: "projects", label: "Open Projects", run: () => onNavigate("projects") }
+  ];
 
   return (
     <section className={`control-room control-room--${mode}`}>
       <header className="control-room__masthead surface-card surface-card--dense">
         <div className="control-room__masthead-row">
           <div className="control-room__masthead-copy">
-            <div className="control-room__eyebrow">Control room</div>
+            <div className="control-room__eyebrow">Board</div>
             <h1>{overview?.project?.name ?? "No active project"}</h1>
             <p>{overview?.project?.description ?? "Create or restore a project to start supervising agents."}</p>
           </div>
           <div className="control-room__header-actions">
-            <button
-              type="button"
-              className="hero-button hero-button--primary hero-button--compact"
-              disabled={pendingActionKey === "supervisor"}
-              onClick={() =>
-                void runAction(
-                  "supervisor",
-                  "Supervisor pass completed.",
-                  () => runSupervisorPass(3),
-                  "Supervisor pass failed."
-                )
-              }
-            >
-              {pendingActionKey === "supervisor" ? "Running..." : "Run supervisor"}
-            </button>
-            <button
-              type="button"
-              className="hero-button hero-button--ghost hero-button--compact"
-              disabled={pendingActionKey === "orchestrator"}
-              onClick={() =>
-                void runAction(
-                  "orchestrator",
-                  "Orchestrator pass completed.",
-                  () => runOrchestratorPass(4, 2),
-                  "Orchestrator pass failed."
-                )
-              }
-            >
-              {pendingActionKey === "orchestrator" ? "Running..." : "Run orchestrator"}
-            </button>
-            <button
-              type="button"
-              className="hero-button hero-button--ghost hero-button--compact"
-              onClick={() => onNavigate("projects")}
-            >
-              Projects
-            </button>
+            {!pendingImportReview ? (
+              <button
+                type="button"
+                className="hero-button hero-button--primary hero-button--compact"
+                disabled={pendingActionKey === "run"}
+                onClick={() => void runPrimaryLoop()}
+              >
+                {pendingActionKey === "run" ? "Running..." : "Run"}
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="control-room__status-strip">
-          <div className="status-panel">
-            <span className={`status-dot status-dot--${projectHealth === "Stable" ? "good" : projectHealth === "Degraded" ? "warn" : "critical"}`} />
+          <div className="status-panel status-panel--health">
+            <span
+              className={`status-dot status-dot--${
+                projectHealth === "Stable" ? "good" : projectHealth === "At risk" ? "critical" : "warn"
+              }`}
+            />
             <div className="status-panel__copy">
               <strong>{projectHealth}</strong>
-              <span>project health</span>
+              <span>{projectHealthDetail}</span>
             </div>
           </div>
           <div className="status-panel">
-            <div className="status-panel__copy">
-              <strong>{overview?.summary.tasks_in_progress ?? 0}</strong>
-              <span>active runs</span>
-            </div>
+            <strong>{overview?.summary.tasks_in_progress ?? 0}</strong>
+            <span>active runs</span>
           </div>
           <div className="status-panel">
-            <div className="status-panel__copy">
-              <strong>{overview?.summary.tasks_review ?? 0}</strong>
-              <span>waiting review</span>
-            </div>
+            <strong>{overview?.summary.tasks_review ?? 0}</strong>
+            <span>waiting review</span>
           </div>
           <div className="status-panel">
-            <div className="status-panel__copy">
-              <strong>{recovery?.summary.open_failure_alerts ?? 0}</strong>
-              <span>failure alerts</span>
-            </div>
+            <strong>{recovery?.summary.open_failure_alerts ?? 0}</strong>
+            <span>failure alerts</span>
           </div>
           <div className="status-panel">
-            <div className="status-panel__copy">
-              <strong>{portfolio?.summary.queued_provider_jobs ?? 0}</strong>
-              <span>queued jobs</span>
-            </div>
+            <strong>{queuedProviderJobs}</strong>
+            <span>queued jobs</span>
           </div>
           <div className="status-panel">
-            <div className="status-panel__copy">
-              <strong>{portfolio?.summary.projects_with_issues ?? 0}</strong>
-              <span>projects with issues</span>
-            </div>
+            <strong>{blockedTaskCount}</strong>
+            <span>blocked tasks</span>
           </div>
         </div>
       </header>
 
       {notice ? <div className="banner banner--info">{notice}</div> : null}
 
-      <section className="control-room__grid">
-        <aside className="control-room__agents surface-card surface-card--dense">
+      {pendingImportReview ? (
+        <article className="surface-card surface-card--dense onboarding-takeover">
           <div className="surface-card__header surface-card__header--tight">
             <div>
-              <span className="eyebrow">Agents</span>
-              <h2>Who is doing what</h2>
+              <span className="eyebrow">Import review</span>
+              <h2>Imported repo needs review before automation continues</h2>
+              <p>
+                MAAS found {onboardingWorkflowLabels.length || 0} workflow
+                {onboardingWorkflowLabels.length === 1 ? "" : "s"}, {onboardingCodeAreas.length || 0} repo area
+                {onboardingCodeAreas.length === 1 ? "" : "s"}, and {pendingGatedTasks} gated task
+                {pendingGatedTasks === 1 ? "" : "s"}.
+              </p>
             </div>
-            <button type="button" className="text-link" onClick={() => onNavigate("runs")}>
-              Runs
-            </button>
+            <span className="status-pill status-pill--warn">
+              {formatStatusLabel(overview?.onboarding?.review_task_status ?? overview?.onboarding?.review_status ?? "review_pending")}
+            </span>
           </div>
-          <div className="agent-rail">
-            {(roster?.agents ?? []).map((agent) => {
-              const context = buildAgentContext(agent, allTasks, tickerItems);
-              const actionKey = `agent:${agent.agent_id}`;
-              return (
-                <div key={agent.agent_id} className={`agent-rail__item agent-rail__item--${context.tone}`}>
-                  <div className="agent-rail__top">
-                    <div className="agent-rail__identity">
-                      <strong>{agent.display_name}</strong>
-                      {formatAgentRole(agent) ? <span>{formatAgentRole(agent)}</span> : null}
-                    </div>
-                    <span className={`status-pill status-pill--${statusTone(agent.status)}`}>{formatStatusLabel(agent.status)}</span>
-                  </div>
-                  <div className="agent-rail__body">
-                    <p>{context.subtitle}</p>
-                    <span>{context.detail}</span>
-                    <span>heartbeat {formatHeartbeat(agent.heartbeat_age_seconds)}</span>
-                  </div>
-                  <div className="agent-rail__actions">
-                    {agent.current_task_id ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--ghost"
-                        onClick={() => setSelectedTaskId(agent.current_task_id ?? null)}
-                      >
-                        Focus task
-                      </button>
-                    ) : null}
-                    {agent.status === "idle" ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--secondary"
-                        disabled={pendingActionKey === actionKey}
-                        onClick={() =>
-                          void runAction(
-                            actionKey,
-                            `Requested next task for ${agent.display_name}.`,
-                            () => assignNextTask(agent.agent_id),
-                            `Could not assign the next task to ${agent.display_name}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === actionKey ? "Working..." : "Assign next"}
-                      </button>
-                    ) : null}
-                    {agent.status === "error" ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--approve"
-                        disabled={pendingActionKey === actionKey}
-                        onClick={() =>
-                          void runAction(
-                            actionKey,
-                            `Recovered ${agent.display_name}.`,
-                            () => recoverAgent(agent.agent_id),
-                            `Recovery failed for ${agent.display_name}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === actionKey ? "Working..." : "Recover"}
-                      </button>
-                    ) : null}
-                  </div>
+          <div className="onboarding-takeover__grid">
+            <div className="onboarding-takeover__summary">
+              <div className="onboarding-takeover__chips">
+                {onboardingWorkflowLabels.slice(0, 4).map((label) => (
+                  <span key={label} className="status-chip">
+                    {label}
+                  </span>
+                ))}
+                {onboardingCodeAreas.slice(0, 4).map((area) => (
+                  <span key={area} className="status-chip status-chip--muted">
+                    {area}
+                  </span>
+                ))}
+              </div>
+              <p className="muted-copy">
+                {overview?.onboarding?.review_task_status === "planned"
+                  ? "First surface the review task, then inspect MAAS's imported understanding and approve it if it looks right."
+                  : "Focus the review task, confirm the imported understanding, then approve the import to release the gated tasks."}
+              </p>
+            </div>
+            <div className="onboarding-takeover__actions">
+              {overview?.onboarding?.review_task_status === "planned" ? (
+                <button
+                  type="button"
+                  className="hero-button hero-button--primary hero-button--compact"
+                  disabled={pendingActionKey === "brownfield-review:prepare"}
+                  onClick={() =>
+                    void runAction(
+                      "brownfield-review:prepare",
+                      "Import review is ready on the board.",
+                      () => runSupervisorPass(3),
+                      "Supervisor pass failed; the import review is still pending."
+                    )
+                  }
+                >
+                  {pendingActionKey === "brownfield-review:prepare" ? "Preparing..." : "Prepare review"}
+                </button>
+              ) : null}
+              {reviewTaskId ? (
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  onClick={() => openTaskInBoard(reviewTaskId)}
+                >
+                  Open review on Board
+                </button>
+              ) : null}
+              {overview?.onboarding?.review_task_status === "review" && reviewTaskId ? (
+                <button
+                  type="button"
+                  className="hero-button hero-button--primary hero-button--compact"
+                  disabled={pendingActionKey === "brownfield-review:approve"}
+                  onClick={() =>
+                    void runAction(
+                      "brownfield-review:approve",
+                      "Imported repo approved; gated work can now be scheduled.",
+                      () => reviewTask(reviewTaskId, "approve"),
+                      "Import approval failed; keep the review under operator control."
+                    )
+                  }
+                >
+                  {pendingActionKey === "brownfield-review:approve" ? "Approving..." : "Approve import"}
+                </button>
+              ) : null}
+              {currentProjectId ? (
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  disabled={pendingActionKey === "brownfield-rescan"}
+                  onClick={() =>
+                    void runAction(
+                      "brownfield-rescan",
+                      "Brownfield rescan completed.",
+                      () => rescanBrownfieldProject(currentProjectId),
+                      "Brownfield rescan failed."
+                    )
+                  }
+                >
+                  {pendingActionKey === "brownfield-rescan" ? "Rescanning..." : "Rescan import"}
+                </button>
+              ) : null}
+              {currentProjectId && overview?.onboarding?.repo_plan_state?.stale ? (
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  disabled={pendingActionKey === "repo-plan-refresh"}
+                  onClick={() =>
+                    void runAction(
+                      "repo-plan-refresh",
+                      "Repo-grounded plan refreshed.",
+                      () => refreshRepoPlan(currentProjectId),
+                      "Refreshing the repo-grounded plan failed."
+                    )
+                  }
+                >
+                  {pendingActionKey === "repo-plan-refresh" ? "Refreshing..." : "Refresh plan"}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </article>
+      ) : null}
+
+      <article className="surface-card surface-card--dense agent-roster-card">
+        <div className="surface-card__header surface-card__header--tight">
+          <div>
+            <span className="eyebrow">Agents</span>
+            <h2>Live agent roster</h2>
+            <p className="surface-card__copy">See who is idle, stalled, or already progressing without opening the Board.</p>
+          </div>
+          <button type="button" className="text-link" onClick={() => onNavigate("runs")}>
+            Execution
+          </button>
+        </div>
+        <div className="agent-roster">
+          {(roster?.agents ?? []).map((agent) => {
+            const context = buildAgentContext(agent, tickerItems);
+            const actionKey = `agent:${agent.agent_id}`;
+            const riskLabel = buildAgentRiskLabel(agent, context.tone);
+            return (
+              <div key={agent.agent_id} className={`agent-roster__row agent-roster__row--${context.tone}`}>
+                <div className="agent-roster__identity">
+                  <strong>{agent.display_name}</strong>
+                  <span>{formatAgentRole(agent) ?? "Agent"}</span>
                 </div>
-              );
-            })}
-          </div>
-        </aside>
+                <div className="agent-roster__context">
+                  <strong>{context.subtitle}</strong>
+                  <span>{context.detail}</span>
+                </div>
+                <div className="agent-roster__signals">
+                  <span className={`status-pill status-pill--${statusTone(agent.status)}`}>{formatStatusLabel(agent.status)}</span>
+                  <span className="agent-roster__heartbeat">heartbeat {formatHeartbeat(agent.heartbeat_age_seconds)}</span>
+                </div>
+                <div className="agent-roster__risk">
+                  <strong>{riskLabel}</strong>
+                </div>
+                <div className="agent-roster__actions">
+                  {agent.status === "idle" ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingActionKey === actionKey}
+                      onClick={() =>
+                        void runAction(
+                          actionKey,
+                          `Requested next task for ${agent.display_name}.`,
+                          () => assignNextTask(agent.agent_id),
+                          `Could not assign the next task to ${agent.display_name}.`
+                        )
+                      }
+                    >
+                      {pendingActionKey === actionKey ? "Working..." : "Assign next"}
+                    </button>
+                  ) : agent.status === "error" ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--approve"
+                      disabled={pendingActionKey === actionKey}
+                      onClick={() =>
+                        void runAction(
+                          actionKey,
+                          `Recovered ${agent.display_name}.`,
+                          () => recoverAgent(agent.agent_id),
+                          `Recovery failed for ${agent.display_name}.`
+                        )
+                      }
+                    >
+                      {pendingActionKey === actionKey ? "Working..." : "Recover"}
+                    </button>
+                  ) : agent.current_task_id ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--ghost"
+                      onClick={() => openTaskInBoard(agent.current_task_id ?? null)}
+                    >
+                      Open board
+                    </button>
+                  ) : (
+                    <span className="muted-copy">No action</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </article>
+
+      <section className="control-room__grid control-room__grid--supervision">
 
         <div className="control-room__center">
           <article className="surface-card surface-card--dense">
             <div className="surface-card__header surface-card__header--tight">
               <div>
-                <span className="eyebrow">Kanban</span>
-                <h2>Execution flow</h2>
-                <div className="board-queue-strip">
-                  {boardBacklogSummary.map((column) => (
-                    <span key={column.key} className="board-queue-pill">
-                      <strong>{column.count}</strong>
-                      <span>{column.title}</span>
-                    </span>
-                  ))}
-                </div>
+                <span className="eyebrow">Next move</span>
+                <h2>{recommendation.title}</h2>
+                <p className="surface-card__copy">{recommendation.detail}</p>
               </div>
-              <button type="button" className="text-link" onClick={() => onNavigate("work")}>
-                Work
-              </button>
+              <span className="status-chip">{attentionItems.length} queued decisions</span>
             </div>
-            <div
-              className={`compact-board ${boardIsFitted ? "compact-board--fitted" : ""}`}
-              style={
-                boardIsFitted
-                  ? { gridTemplateColumns: `repeat(${Math.max(boardFocusColumns.length, 1)}, minmax(0, 1fr))` }
-                  : undefined
-              }
-            >
-              {boardFocusColumns.map((column) => (
-                <section key={column.key} className={`compact-board__column compact-board__column--${columnTone(column.key)}`}>
-                  <header className="compact-board__column-header">
-                    <strong>{column.title}</strong>
-                    <span>{column.tasks.length}</span>
-                  </header>
-                  <div className="compact-board__cards">
-                    {column.tasks.length ? (
-                      column.tasks.slice(0, column.key === "planned" ? 6 : 10).map((task) => (
-                        <CompactBoardCard
-                          key={task.task_id}
-                          task={task}
-                          selected={selectedTask?.task_id === task.task_id}
-                          onSelect={() => setSelectedTaskId(task.task_id)}
-                        />
-                      ))
-                    ) : (
-                      <div className="compact-board__empty">
-                        <strong>No {column.title.toLowerCase()} tasks</strong>
-                        <span>The lane is clear right now.</span>
-                      </div>
-                    )}
-                  </div>
-                </section>
+            <div className="surface-card__actions">
+              <button
+                type="button"
+                className="hero-button hero-button--primary hero-button--compact"
+                disabled={pendingActionKey === "run" || pendingActionKey === "brownfield-review:prepare"}
+                onClick={() => void recommendation.primaryAction()}
+              >
+                {pendingActionKey === "run" || pendingActionKey === "brownfield-review:prepare"
+                  ? "Working..."
+                  : recommendation.primaryLabel}
+              </button>
+              <button
+                type="button"
+                className="hero-button hero-button--ghost hero-button--compact"
+                onClick={recommendation.secondaryAction}
+              >
+                {recommendation.secondaryLabel}
+              </button>
+              {cockpitActions.slice(0, 2).map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  onClick={action.run}
+                >
+                  {action.label}
+                </button>
               ))}
             </div>
           </article>
 
-          <article className="surface-card surface-card--dense">
-            <div className="surface-card__header surface-card__header--tight">
-              <div>
-                <span className="eyebrow">Inspector</span>
-                <h2>{selectedTask?.title ?? "No task selected"}</h2>
-              </div>
-              {selectedTask ? <span className={`status-pill status-pill--${statusTone(selectedTask.review_state ?? selectedTask.status)}`}>{formatStatusLabel(selectedTask.status)}</span> : null}
-            </div>
-            {selectedTask ? (
-              <div className="task-inspector">
-                <div className="task-inspector__primary">
-                  <div className="task-inspector__summary">
-                    <div>
-                      <span>Agent</span>
-                      <strong>{selectedTask.agent?.name ?? "Unassigned"}</strong>
-                    </div>
-                    <div>
-                      <span>Goal</span>
-                      <strong>{selectedTask.goal?.title ?? "Unlinked"}</strong>
-                    </div>
-                    <div>
-                      <span>Verification</span>
-                      <strong>{selectedTask.latest_verification_status ?? "none"}</strong>
-                    </div>
-                    <div>
-                      <span>Failures</span>
-                      <strong>{selectedTask.failure_count ?? 0}</strong>
-                    </div>
-                  </div>
-                  <p className="task-inspector__description">{selectedTask.description ?? "No task description captured yet."}</p>
-                  <div className="task-inspector__actions">
-                    {selectedTask.status === "review" ? (
-                      <>
-                        <button
-                          type="button"
-                          className="task-action task-action--approve"
-                          disabled={pendingActionKey === `review:${selectedTask.task_id}:approve`}
-                          onClick={() =>
-                            void runAction(
-                              `review:${selectedTask.task_id}:approve`,
-                              `Approved ${selectedTask.title}.`,
-                              () => reviewTask(selectedTask.task_id, "approve"),
-                              `Approve failed for ${selectedTask.title}.`
-                            )
-                          }
-                        >
-                          {pendingActionKey === `review:${selectedTask.task_id}:approve` ? "Working..." : "Approve"}
-                        </button>
-                        <button
-                          type="button"
-                          className="task-action task-action--reject"
-                          disabled={pendingActionKey === `review:${selectedTask.task_id}:reject`}
-                          onClick={() =>
-                            void runAction(
-                              `review:${selectedTask.task_id}:reject`,
-                              `Requested changes for ${selectedTask.title}.`,
-                              () => reviewTask(selectedTask.task_id, "reject"),
-                              `Reject failed for ${selectedTask.title}.`
-                            )
-                          }
-                        >
-                          {pendingActionKey === `review:${selectedTask.task_id}:reject` ? "Working..." : "Request changes"}
-                        </button>
-                      </>
-                    ) : null}
-                    {selectedTask.status === "blocked" &&
-                    ["session_failed", "stale_session"].includes(selectedTask.review_state ?? "") ? (
-                      <>
-                        <button
-                          type="button"
-                          className="task-action task-action--secondary"
-                          disabled={pendingActionKey === `recover:${selectedTask.task_id}`}
-                          onClick={() =>
-                            void runAction(
-                              `recover:${selectedTask.task_id}`,
-                              `Recovered ${selectedTask.title}.`,
-                              () => recoverTask(selectedTask.task_id),
-                              `Recover failed for ${selectedTask.title}.`
-                            )
-                          }
-                        >
-                          {pendingActionKey === `recover:${selectedTask.task_id}` ? "Working..." : "Recover"}
-                        </button>
-                        <button
-                          type="button"
-                          className="task-action task-action--approve"
-                          disabled={pendingActionKey === `recover-and-requeue:${selectedTask.task_id}`}
-                          onClick={() =>
-                            void runAction(
-                              `recover-and-requeue:${selectedTask.task_id}`,
-                              `Recovered and requeued ${selectedTask.title}.`,
-                              () => recoverAndRequeueTask(selectedTask.task_id),
-                              `Recover-and-requeue failed for ${selectedTask.title}.`
-                            )
-                          }
-                        >
-                          {pendingActionKey === `recover-and-requeue:${selectedTask.task_id}` ? "Working..." : "Recover + requeue"}
-                        </button>
-                      </>
-                    ) : null}
-                    {selectedTask.review_state === "needs_replan" ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--approve"
-                        disabled={pendingActionKey === `finish-replan:${selectedTask.task_id}`}
-                        onClick={() =>
-                          void runAction(
-                            `finish-replan:${selectedTask.task_id}`,
-                            `Returned ${selectedTask.title} to readiness evaluation.`,
-                            () => finishTaskReplan(selectedTask.task_id),
-                            `Finish-replan failed for ${selectedTask.title}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === `finish-replan:${selectedTask.task_id}` ? "Working..." : "Finish replan"}
-                      </button>
-                    ) : null}
-                    {selectedTask.review_state !== "needs_replan" &&
-                    selectedTask.status !== "in_progress" &&
-                    selectedTask.status !== "review" &&
-                    selectedTask.status !== "done" &&
-                    selectedTask.status !== "cancelled" ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--ghost"
-                        disabled={pendingActionKey === `mark-for-replan:${selectedTask.task_id}`}
-                        onClick={() =>
-                          void runAction(
-                            `mark-for-replan:${selectedTask.task_id}`,
-                            `Marked ${selectedTask.title} for replanning.`,
-                            () => markTaskForReplan(selectedTask.task_id),
-                            `Mark-for-replan failed for ${selectedTask.title}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === `mark-for-replan:${selectedTask.task_id}` ? "Working..." : "Mark for replan"}
-                      </button>
-                    ) : null}
-                    {selectedTask.has_verification_recipe ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--ghost"
-                        disabled={pendingActionKey === `verify:${selectedTask.task_id}`}
-                        onClick={() =>
-                          void runAction(
-                            `verify:${selectedTask.task_id}`,
-                            `Verification finished for ${selectedTask.title}.`,
-                            () => runTaskVerification(selectedTask.task_id),
-                            `Verification failed for ${selectedTask.title}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === `verify:${selectedTask.task_id}` ? "Working..." : "Run verification"}
-                      </button>
-                    ) : null}
-                    {selectedTask.git_workspace_supported && !selectedTask.git_workspace_prepared ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--ghost"
-                        disabled={pendingActionKey === `prepare:${selectedTask.task_id}`}
-                        onClick={() =>
-                          void runAction(
-                            `prepare:${selectedTask.task_id}`,
-                            `Prepared git workspace for ${selectedTask.title}.`,
-                            () => prepareTaskGitWorkspace(selectedTask.task_id),
-                            `Git workspace preparation failed for ${selectedTask.title}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === `prepare:${selectedTask.task_id}` ? "Working..." : "Prepare git"}
-                      </button>
-                    ) : null}
-                    {selectedTask.git_workspace_prepared ? (
-                      <button
-                        type="button"
-                        className="task-action task-action--ghost"
-                        disabled={pendingActionKey === `diff:${selectedTask.task_id}`}
-                        onClick={() =>
-                          void runAction(
-                            `diff:${selectedTask.task_id}`,
-                            `Refreshed git diff for ${selectedTask.title}.`,
-                            () => refreshTaskGitDiff(selectedTask.task_id),
-                            `Git diff refresh failed for ${selectedTask.title}.`
-                          )
-                        }
-                      >
-                        {pendingActionKey === `diff:${selectedTask.task_id}` ? "Working..." : "Refresh diff"}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="task-inspector__grid">
-                  <section className="inspector-panel">
-                    <div className="inspector-panel__header">
-                      <strong>Goal relationship</strong>
-                    </div>
-                    {goalPath.length ? (
-                      <div className="inspector-flow">
-                        <div className="inspector-flow__path">
-                          {goalPath.map((node) => (
-                            <span key={node.goal_id}>{node.title}</span>
-                          ))}
-                        </div>
-                        <div className="inspector-flow__list">
-                          {sameGoalTasks.slice(0, 6).map((task) => (
-                            <button key={task.task_id} type="button" className="inspector-chip" onClick={() => setSelectedTaskId(task.task_id)}>
-                              <strong>{task.title}</strong>
-                              <span>{task.status}</span>
-                            </button>
-                          ))}
-                          {!sameGoalTasks.length ? <span className="muted-copy">No sibling tasks in the visible board.</span> : null}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="muted-copy">No goal relationship is available for this task.</span>
-                    )}
-                  </section>
-
-                  <section className="inspector-panel">
-                    <div className="inspector-panel__header">
-                      <strong>Repo scope</strong>
-                    </div>
-                    <div className="inspector-copy-stack">
-                      <p>{formatList(selectedTask.scoped_paths)}</p>
-                      <p>{formatList(selectedTask.validation_commands)}</p>
-                      {repoPlanItems.length ? (
-                        <div className="inspector-flow__list">
-                          {repoPlanItems.map((item) => (
-                            <div key={item.synthesis_key} className="inspector-chip inspector-chip--static">
-                              <strong>{item.title}</strong>
-                              <span>{formatList(item.paths, 2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <span className="muted-copy">No repo-plan items matched this task scope.</span>
-                      )}
-                    </div>
-                  </section>
-
-                  <section className="inspector-panel">
-                    <div className="inspector-panel__header">
-                      <strong>Evidence</strong>
-                    </div>
-                    <div className="inspector-copy-stack">
-                      <p>
-                        Verification: {selectedTask.latest_verification_status ?? "none"}
-                        {selectedTask.latest_verification_at ? ` · ${formatTime(selectedTask.latest_verification_at)}` : ""}
-                      </p>
-                      <p>
-                        Git workspace:{" "}
-                        {selectedTask.git_workspace_prepared
-                          ? `${selectedTask.git_workspace_branch ?? "prepared"} · ${selectedTask.git_workspace_change_summary ?? "diff ready"}`
-                          : selectedTask.git_workspace_supported
-                            ? "supported, not prepared"
-                            : "not supported"}
-                      </p>
-                      {taskDiffArtifact?.preview?.content ? (
-                        <pre className="inspector-pre">{taskDiffArtifact.preview.content}</pre>
-                      ) : null}
-                      <div className="inspector-flow__list">
-                        {(taskArtifacts?.items ?? []).slice(0, 5).map((artifact) => (
-                          <div key={artifact.artifact_id} className="inspector-chip inspector-chip--static">
-                            <strong>{artifact.file_name}</strong>
-                            <span>{artifact.artifact_type} · {artifact.artifact_state}</span>
-                          </div>
-                        ))}
-                        {!taskArtifacts?.items.length ? <span className="muted-copy">No artifacts recorded for this task yet.</span> : null}
-                      </div>
-                    </div>
-                  </section>
-
-                  <section className="inspector-panel">
-                    <div className="inspector-panel__header">
-                      <strong>Recent history</strong>
-                    </div>
-                    <div className="ticker-list ticker-list--compact">
-                      {(taskTimeline?.events ?? []).slice(0, 6).map((event) => (
-                        <div key={event.event_id} className={`ticker-item ticker-item--${statusTone(event.severity)}`}>
-                          <div>
-                            <strong>{event.title}</strong>
-                            <p>{event.description}</p>
-                          </div>
-                          <span>{formatTime(event.created_at)}</span>
-                        </div>
-                      ))}
-                      {!taskTimeline?.events.length ? <span className="muted-copy">No task-specific history has been recorded yet.</span> : null}
-                    </div>
-                  </section>
-                </div>
-              </div>
-            ) : (
-              <div className="empty-state empty-state--compact">
-                <strong>No task is currently visible.</strong>
-                <p>Wait for the scheduler to surface work or open the workbench for the full board.</p>
-              </div>
-            )}
-          </article>
-        </div>
-
-        <aside className="control-room__ops">
           <article className="surface-card surface-card--dense">
             <div className="surface-card__header surface-card__header--tight">
               <div>
@@ -1313,7 +1001,7 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
               ) : (
                 <div className="empty-state empty-state--compact">
                   <strong>No urgent operator actions.</strong>
-                  <p>Keep an eye on the live feed and the board; nothing is escalated right now.</p>
+                  <p>Keep an eye on the live feed and system pressure; nothing is escalated right now.</p>
                 </div>
               )}
             </div>
@@ -1349,6 +1037,72 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
                   <p>The feed will populate as agents, providers, and recovery actions change system state.</p>
                 </div>
               )}
+            </div>
+          </article>
+        </div>
+
+        <aside className="control-room__ops">
+          <article className="surface-card surface-card--dense">
+            <div className="surface-card__header surface-card__header--tight">
+              <div>
+                <span className="eyebrow">System pressure</span>
+                <h2>What is building up</h2>
+              </div>
+            </div>
+            <div className="signal-stack">
+              {systemSignals.map((signal) => (
+                <div key={signal.label} className={`signal-row signal-row--${signal.tone}`}>
+                  <div>
+                    <strong>{signal.label}</strong>
+                    <p>{signal.detail}</p>
+                  </div>
+                  <span className="status-chip">{signal.value}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+
+          <article className="surface-card surface-card--dense">
+            <div className="surface-card__header surface-card__header--tight">
+              <div>
+                <span className="eyebrow">Quick routes</span>
+                <h2>Open the right surface</h2>
+              </div>
+            </div>
+            <div className="control-room__action-grid">
+              {cockpitActions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  onClick={action.run}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          </article>
+
+          <article className="surface-card surface-card--dense">
+            <div className="surface-card__header surface-card__header--tight">
+              <div>
+                <span className="eyebrow">Import state</span>
+                <h2>{pendingImportReview ? "Brownfield review is active" : "Project is clear to run"}</h2>
+              </div>
+            </div>
+            <div className="signal-stack">
+              <div className="signal-row">
+                <div>
+                  <strong>Workflows</strong>
+                  <p>{onboardingWorkflowLabels.length ? onboardingWorkflowLabels.join(", ") : "No imported workflows detected"}</p>
+                </div>
+              </div>
+              <div className="signal-row">
+                <div>
+                  <strong>Repo areas</strong>
+                  <p>{onboardingCodeAreas.length ? onboardingCodeAreas.join(", ") : "No imported repo areas recorded"}</p>
+                </div>
+              </div>
             </div>
           </article>
         </aside>

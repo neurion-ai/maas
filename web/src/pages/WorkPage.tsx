@@ -1,7 +1,6 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { BoardColumn } from "../components/BoardColumn";
 import { TaskInspector } from "../components/TaskInspector";
-import { StatCard } from "../components/StatCard";
 import {
   fetchBoard,
   finishTaskReplan,
@@ -18,23 +17,16 @@ import {
   setAgentState,
   setTaskRetryLimit
 } from "../lib/boardApi";
+import { consumePendingTaskFocus } from "../lib/taskFocus";
 import { fetchGoalTree, fetchOverview } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { BoardFiltersInput, BoardResponse, FilterOption, GoalTreeNode, GoalTreeResponse, OverviewResponse } from "../types";
-import { BoardPage } from "./BoardPage";
-import { GoalTreePage } from "./GoalTreePage";
 
 type WorkFocus = "all" | "execution" | "attention";
+type WorkViewTarget = "home" | "runs" | "incidents" | "projects";
 
-function formatTime(value?: string | null) {
-  if (!value) {
-    return "Not recorded";
-  }
-  return new Date(value).toLocaleString();
-}
-
-function formatList(items?: string[] | null) {
-  return (items ?? []).filter(Boolean).join(", ") || "None";
+interface WorkPageProps {
+  onNavigate: (view: WorkViewTarget) => void;
 }
 
 function findGoalPath(nodes: GoalTreeNode[], goalId?: string | null, trail: GoalTreeNode[] = []): GoalTreeNode[] | null {
@@ -68,42 +60,16 @@ function matchRepoPlanItems(task: NonNullable<BoardResponse>["columns"][number][
   });
 }
 
-function GoalTreePreview({ node }: { node: GoalTreeNode }) {
-  return (
-    <li className="goal-preview__item">
-      <div className="goal-preview__card">
-        <div className="goal-preview__header">
-          <strong>{node.title}</strong>
-          <span className="status-pill">{node.status}</span>
-        </div>
-        <p>{node.description}</p>
-        <div className="goal-preview__meta">
-          <span>{node.goal_type}</span>
-          <span>P{node.priority}</span>
-          <span>{Object.values(node.task_counts).reduce((sum, value) => sum + value, 0)} tasks</span>
-        </div>
-      </div>
-      {node.children.length ? (
-        <ul className="goal-preview">
-          {node.children.map((child) => (
-            <GoalTreePreview key={child.goal_id} node={child} />
-          ))}
-        </ul>
-      ) : null}
-    </li>
-  );
-}
-
-export function WorkPage() {
+export function WorkPage({ onNavigate }: WorkPageProps) {
   const [board, setBoard] = useState<BoardResponse | null>(null);
   const [goalTree, setGoalTree] = useState<GoalTreeResponse | null>(null);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [query, setQuery] = useState("");
   const [focus, setFocus] = useState<WorkFocus>("all");
-  const [advancedViewsOpen, setAdvancedViewsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [externalTaskFocusId, setExternalTaskFocusId] = useState<string | null>(() => consumePendingTaskFocus());
   const deferredQuery = useDeferredValue(query);
   const livePulse = useLivePulse();
 
@@ -159,6 +125,18 @@ export function WorkPage() {
   }, [livePulse]);
 
   const allTasks = useMemo(() => (board?.columns ?? []).flatMap((column) => column.tasks), [board]);
+  const pendingImportReview =
+    overview?.onboarding?.mode === "brownfield" &&
+    !!overview?.onboarding?.review_status &&
+    !["approved", "reviewed", "not_applicable"].includes(overview.onboarding.review_status);
+  const reviewTaskId = overview?.onboarding?.review_task_id ?? null;
+  const gatedBlockedTaskCount = useMemo(
+    () =>
+      (board?.columns ?? [])
+        .find((column) => column.key === "blocked")
+        ?.tasks.filter((task) => task.review_state === "awaiting_onboarding_approval").length ?? 0,
+    [board]
+  );
   const selectedTask =
     allTasks.find((task) => task.task_id === selectedTaskId) ??
     allTasks.find((task) => task.status === "in_progress") ??
@@ -171,10 +149,32 @@ export function WorkPage() {
     }
   }, [selectedTask, selectedTaskId]);
 
+  useEffect(() => {
+    if (!externalTaskFocusId || !allTasks.length) {
+      return;
+    }
+    const externallyFocusedTask = allTasks.find((task) => task.task_id === externalTaskFocusId);
+    if (externallyFocusedTask) {
+      setSelectedTaskId(externallyFocusedTask.task_id);
+      setExternalTaskFocusId(null);
+      return;
+    }
+    setSelectedTaskId(externalTaskFocusId);
+    setExternalTaskFocusId(null);
+  }, [allTasks, externalTaskFocusId]);
+
   const agentOptions = useMemo<FilterOption[]>(() => board?.filter_options?.agents ?? [], [board]);
   const visibleColumns = useMemo(() => {
+    const normalizedColumns = (board?.columns ?? []).map((column) =>
+      pendingImportReview && column.key === "blocked"
+        ? {
+            ...column,
+            tasks: column.tasks.filter((task) => task.review_state !== "awaiting_onboarding_approval")
+          }
+        : column
+    );
     const orderedKeys = ["ready", "in_progress", "review", "blocked", "planned"] as const;
-    const byKey = new Map((board?.columns ?? []).map((column) => [column.key, column] as const));
+    const byKey = new Map(normalizedColumns.map((column) => [column.key, column] as const));
     const prioritized = orderedKeys
       .map((key) => byKey.get(key))
       .filter((column): column is NonNullable<typeof board>["columns"][number] => Boolean(column));
@@ -182,7 +182,7 @@ export function WorkPage() {
       (column) => column.tasks.length > 0 || ["in_progress", "review", "blocked"].includes(column.key)
     );
     return visible.length ? visible : prioritized.slice(0, 3);
-  }, [board]);
+  }, [board, pendingImportReview]);
   const collapsedColumns = useMemo(
     () =>
       (board?.columns ?? [])
@@ -210,23 +210,17 @@ export function WorkPage() {
     }
   }
 
-  const repoPlanState = overview?.onboarding?.repo_plan_state ?? null;
-  const repoPlanPreview = overview?.onboarding?.repo_plan_preview ?? null;
-  const repoPlan = repoPlanState ?? repoPlanPreview;
-
   return (
     <section className="dashboard-page workbench-page">
       <header className="workbench-header surface-card surface-card--dense">
         <div className="workbench-header__copy">
-          <span className="eyebrow">Workbench</span>
-          <h1>Board-first execution</h1>
-          <p>Plan, inspect, and steer work from one board. Open a card to get full context and actions in the inspector.</p>
+          <span className="eyebrow">Board</span>
+          <h1>Execution workspace</h1>
+          <p>The board is the only place for task flow, task detail, and operator steering.</p>
           <div className="hero-meta">
             <span className="hero-meta__pill">{allTasks.length} visible tasks</span>
-            <span className="hero-meta__pill">{goalTree?.total_goals ?? 0} goals</span>
-            <span className="hero-meta__pill">
-              {overview?.onboarding?.repo_plan_state?.generated_task_count ?? overview?.onboarding?.repo_plan_preview?.generated_task_count ?? 0} repo-derived items
-            </span>
+            <span className="hero-meta__pill">{board?.summary.active_tasks ?? board?.summary.total_tasks ?? 0} active flow</span>
+            <span className="hero-meta__pill">{board?.summary.review_tasks ?? 0} in review</span>
           </div>
         </div>
         <div className="workbench-header__controls">
@@ -260,14 +254,43 @@ export function WorkPage() {
 
       {notice ? <div className="banner banner--info">{notice}</div> : null}
 
-      <section className="stats-grid stats-grid--dense">
-        <StatCard label="Ready to assign" value={board?.columns.find((column) => column.key === "ready")?.tasks.length ?? 0} />
-        <StatCard label="In progress" value={board?.summary.active_tasks ?? board?.summary.total_tasks ?? 0} />
-        <StatCard label="Blocked" value={board?.summary.blocked_tasks ?? 0} tone="warn" />
-        <StatCard label="In review" value={board?.summary.review_tasks ?? 0} tone="warn" />
-        <StatCard label="Active agents" value={board?.summary.active_agents ?? 0} tone="good" />
-        <StatCard label="Repo plan items" value={repoPlan?.generated_task_count ?? 0} />
-      </section>
+      {pendingImportReview ? (
+        <article className="surface-card surface-card--dense workbench-callout">
+          <div className="surface-card__header surface-card__header--tight">
+            <div>
+              <span className="eyebrow">Import review</span>
+              <h2>This board is partially gated by import review</h2>
+              <p>
+                {gatedBlockedTaskCount} blocked task{gatedBlockedTaskCount === 1 ? "" : "s"} are gated by brownfield onboarding.
+                Handle the release decision from Cockpit, not from individual blocked cards.
+              </p>
+            </div>
+            <span className="status-pill status-pill--warn">
+              {overview?.onboarding?.review_task_status
+                ? overview.onboarding.review_task_status.replaceAll("_", " ")
+                : "review pending"}
+            </span>
+          </div>
+          <div className="workbench-callout__actions">
+            <button
+              type="button"
+              className="hero-button hero-button--primary hero-button--compact"
+              onClick={() => onNavigate("home")}
+            >
+              Open cockpit
+            </button>
+            {reviewTaskId ? (
+              <button
+                type="button"
+                className="hero-button hero-button--ghost hero-button--compact"
+                onClick={() => setSelectedTaskId(reviewTaskId)}
+              >
+                Select review task
+              </button>
+            ) : null}
+          </div>
+        </article>
+      ) : null}
 
       <section className="workbench-layout">
         <div className="workbench-layout__board">
@@ -443,101 +466,6 @@ export function WorkPage() {
           </article>
         </aside>
       </section>
-
-      <section className="two-column-grid workbench-secondary">
-        <article className="surface-card">
-          <div className="surface-card__header">
-            <div>
-              <span className="eyebrow">Goal map</span>
-              <h2>Visible structure</h2>
-            </div>
-            <span className="status-chip">{goalTree?.total_goals ?? 0} goals</span>
-          </div>
-          {(goalTree?.roots ?? []).length ? (
-            <ul className="goal-preview">
-              {goalTree?.roots.map((root) => <GoalTreePreview key={root.goal_id} node={root} />)}
-            </ul>
-          ) : (
-            <div className="empty-state empty-state--compact">
-              <strong>No goals are visible yet.</strong>
-              <p>The board can still run, but goals make prioritization easier to understand.</p>
-            </div>
-          )}
-        </article>
-
-        <article className="surface-card">
-          <div className="surface-card__header">
-            <div>
-              <span className="eyebrow">Repo plan</span>
-              <h2>Imported codebase coverage</h2>
-            </div>
-            <span className="status-chip">
-              {repoPlan?.generated_task_count ?? 0} synthesized items
-            </span>
-          </div>
-          {repoPlan ? (
-            <div className="list-stack">
-              <div className="detail-grid detail-grid--compact">
-                <div>
-                  <span>Verification tasks</span>
-                  <strong>{repoPlan.verification_task_count}</strong>
-                </div>
-                <div>
-                  <span>Repo-area tasks</span>
-                  <strong>{repoPlan.repo_area_task_count}</strong>
-                </div>
-                {repoPlanState ? (
-                  <div>
-                    <span>Active tasks</span>
-                    <strong>{repoPlanState.active_task_count}</strong>
-                  </div>
-                ) : null}
-                {repoPlanState ? (
-                  <div>
-                    <span>Last refreshed</span>
-                    <strong>{formatTime(repoPlanState.last_refreshed_at)}</strong>
-                  </div>
-                ) : null}
-              </div>
-              {(repoPlan.items ?? []).slice(0, 8).map((item) => (
-                <div key={item.synthesis_key} className="list-row">
-                  <div>
-                    <strong>{item.title}</strong>
-                    <p>{item.source_label}</p>
-                    <p>{formatList(item.paths)}</p>
-                  </div>
-                  <div className="list-row__meta">
-                    <span className="status-pill">{item.task_kind}</span>
-                    {item.command ? <span>{item.command}</span> : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state empty-state--compact">
-              <strong>No repo-grounded plan data yet.</strong>
-              <p>Brownfield projects will show synthesized task coverage here after planning refreshes.</p>
-            </div>
-          )}
-        </article>
-      </section>
-
-      <details
-        className="advanced-pane"
-        onToggle={(event) => setAdvancedViewsOpen((event.currentTarget as HTMLDetailsElement).open)}
-      >
-        <summary>Advanced work views</summary>
-        {advancedViewsOpen ? (
-          <div className="advanced-pane__content">
-            <div className="embedded-page">
-              <BoardPage />
-            </div>
-            <div className="embedded-page">
-              <GoalTreePage />
-            </div>
-          </div>
-        ) : null}
-      </details>
     </section>
   );
 }

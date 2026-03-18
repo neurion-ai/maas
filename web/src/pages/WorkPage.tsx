@@ -81,6 +81,7 @@ export function WorkPage() {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [query, setQuery] = useState("");
   const [focus, setFocus] = useState<WorkFocus>("all");
+  const [advancedViewsOpen, setAdvancedViewsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -91,10 +92,6 @@ export function WorkPage() {
     const filters: BoardFiltersInput = {
       search: deferredQuery.trim() || undefined
     };
-    if (focus === "attention") {
-      filters.blockedOnly = true;
-      filters.reviewOnly = true;
-    }
     if (focus === "execution") {
       filters.priorityMin = 75;
     }
@@ -107,8 +104,15 @@ export function WorkPage() {
       fetchGoalTree(),
       fetchOverview()
     ]);
+    const visibleBoard =
+      focus === "attention"
+        ? {
+            ...boardPayload,
+            columns: boardPayload.columns.filter((column) => column.key === "blocked" || column.key === "review")
+          }
+        : boardPayload;
     startTransition(() => {
-      setBoard(boardPayload);
+      setBoard(visibleBoard);
       setGoalTree(goalTreePayload);
       setOverview(overviewPayload);
     });
@@ -507,16 +511,21 @@ export function WorkPage() {
         </article>
       </section>
 
-      <details className="advanced-pane">
+      <details
+        className="advanced-pane"
+        onToggle={(event) => setAdvancedViewsOpen((event.currentTarget as HTMLDetailsElement).open)}
+      >
         <summary>Advanced work views</summary>
-        <div className="advanced-pane__content">
-          <div className="embedded-page">
-            <BoardPage />
+        {advancedViewsOpen ? (
+          <div className="advanced-pane__content">
+            <div className="embedded-page">
+              <BoardPage />
+            </div>
+            <div className="embedded-page">
+              <GoalTreePage />
+            </div>
           </div>
-          <div className="embedded-page">
-            <GoalTreePage />
-          </div>
-        </div>
+        ) : null}
       </details>
     </section>
   );

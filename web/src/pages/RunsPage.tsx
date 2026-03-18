@@ -46,6 +46,7 @@ export function RunsPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactsResponse | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [advancedStudiosOpen, setAdvancedStudiosOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
@@ -397,22 +398,27 @@ export function RunsPage() {
         </article>
       </section>
 
-      <details className="advanced-pane">
+      <details
+        className="advanced-pane"
+        onToggle={(event) => setAdvancedStudiosOpen((event.currentTarget as HTMLDetailsElement).open)}
+      >
         <summary>Advanced runtime studios</summary>
-        <div className="advanced-pane__content">
-          <div className="embedded-page">
-            <ProvidersPage />
+        {advancedStudiosOpen ? (
+          <div className="advanced-pane__content">
+            <div className="embedded-page">
+              <ProvidersPage />
+            </div>
+            <div className="embedded-page">
+              <ArtifactsPage />
+            </div>
+            <div className="embedded-page">
+              <AgentRosterPage />
+            </div>
+            <div className="embedded-page">
+              <ActivityPage />
+            </div>
           </div>
-          <div className="embedded-page">
-            <ArtifactsPage />
-          </div>
-          <div className="embedded-page">
-            <AgentRosterPage />
-          </div>
-          <div className="embedded-page">
-            <ActivityPage />
-          </div>
-        </div>
+        ) : null}
       </details>
     </section>
   );

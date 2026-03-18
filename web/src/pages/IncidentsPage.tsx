@@ -129,6 +129,7 @@ export function IncidentsPage() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [escalations, setEscalations] = useState<EscalationItem[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [advancedStudiosOpen, setAdvancedStudiosOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
@@ -585,25 +586,30 @@ export function IncidentsPage() {
         </article>
       </section>
 
-      <details className="advanced-pane">
+      <details
+        className="advanced-pane"
+        onToggle={(event) => setAdvancedStudiosOpen((event.currentTarget as HTMLDetailsElement).open)}
+      >
         <summary>Advanced incident studios</summary>
-        <div className="advanced-pane__content">
-          <div className="embedded-page">
-            <RecoveryPage />
+        {advancedStudiosOpen ? (
+          <div className="advanced-pane__content">
+            <div className="embedded-page">
+              <RecoveryPage />
+            </div>
+            <div className="embedded-page">
+              <FailuresPage />
+            </div>
+            <div className="embedded-page">
+              <AlertsPage />
+            </div>
+            <div className="embedded-page">
+              <EscalationsPage />
+            </div>
+            <div className="embedded-page">
+              <TimelinePage />
+            </div>
           </div>
-          <div className="embedded-page">
-            <FailuresPage />
-          </div>
-          <div className="embedded-page">
-            <AlertsPage />
-          </div>
-          <div className="embedded-page">
-            <EscalationsPage />
-          </div>
-          <div className="embedded-page">
-            <TimelinePage />
-          </div>
-        </div>
+        ) : null}
       </details>
     </section>
   );

@@ -182,6 +182,25 @@ export function HomePage({ onNavigate }: HomePageProps) {
     }
   }
 
+  async function handleIncidentShortcut(
+    actionKey: string,
+    successMessage: string,
+    action: () => Promise<unknown>,
+    fallback: string
+  ) {
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await action();
+      await loadHome();
+      setNotice(successMessage);
+    } catch {
+      setNotice(fallback);
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   const recommendations = useMemo<Recommendation[]>(() => {
     const next: Recommendation[] = [];
 
@@ -242,7 +261,13 @@ export function HomePage({ onNavigate }: HomePageProps) {
         label: "Resolve the latest failure incident",
         summary: overview.recent_failures[0]?.summary ?? "A recent failure still needs operator attention.",
         actionLabel: failureAction.label,
-        action: () => runFailureOperatorAction(failureAction).then(loadHome)
+        action: () =>
+          handleIncidentShortcut(
+            "failure-action",
+            "Resolved the latest failure incident.",
+            () => runFailureOperatorAction(failureAction),
+            "Failure shortcut failed; keep the incident in the queue and try again from Incidents."
+          )
       });
     }
 
@@ -254,7 +279,13 @@ export function HomePage({ onNavigate }: HomePageProps) {
         label: "Clear repeated-failure pressure",
         summary: "One or more tasks are still tripping the repeated-failure threshold.",
         actionLabel: repeatedAction.label,
-        action: () => runAlertOperatorAction(repeatedAction).then(loadHome)
+        action: () =>
+          handleIncidentShortcut(
+            "repeated-failure",
+            "Resolved the repeated-failure incident.",
+            () => runAlertOperatorAction(repeatedAction),
+            "Repeated-failure shortcut failed; keep the incident visible and retry from Incidents."
+          )
       });
     }
 
@@ -433,9 +464,10 @@ export function HomePage({ onNavigate }: HomePageProps) {
                   <button
                     type="button"
                     className="hero-button hero-button--compact"
+                    disabled={pendingActionKey === item.id}
                     onClick={() => void item.action()}
                   >
-                    {item.actionLabel}
+                    {pendingActionKey === item.id ? "Working..." : item.actionLabel}
                   </button>
                 </div>
               ))

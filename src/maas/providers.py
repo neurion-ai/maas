@@ -8,6 +8,7 @@ import re
 from maas.config import DEFAULT_PROVIDER_SETTINGS
 from maas.ids import generate_id
 from maas.services.provider_jobs import default_provider_job_summary, fetch_provider_job_summaries, fetch_provider_jobs
+from maas.services.provider_workers import default_provider_worker_summary, fetch_provider_worker_summary, fetch_provider_workers
 from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
@@ -676,6 +677,12 @@ def fetch_provider_runtime_overview(connection=None, project_id=None):
         "providers": list_provider_status(connection=connection, project_id=project_id),
         "run_targets": _provider_run_targets(connection, project_id),
         "job_queue": fetch_provider_jobs(connection, project_id=project_id, limit=12),
+        "worker_summary": fetch_provider_worker_summary(connection, project_id=project_id)
+        if connection is not None
+        else default_provider_worker_summary(),
+        "worker_pool": fetch_provider_workers(connection, project_id=project_id, limit=12)
+        if connection is not None
+        else [],
     }
 
 

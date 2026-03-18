@@ -21,7 +21,8 @@
 - [x] `#93` stronger runner sandbox envelopes is implemented on `codex/session-runner-envelopes`
 - [x] `#94` policy-driven self-healing v2 is implemented on `codex/policy-driven-self-healing-v2`
 - [x] `#95` brownfield onboarding review v2 is implemented on `codex/brownfield-onboarding-review-v2`
-- [ ] `#96` remote executor or worker pool is the next unfinished step
+- [x] `#96` remote executor or worker pool is implemented on `codex/remote-executor-worker-pool`
+- [ ] `#97` cross-project scheduler fairness and capacity policy is the next unfinished step
 
 ## Extended Numbered Roadmap
 
@@ -40,7 +41,7 @@
 - [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
 - [x] `#94` Policy-driven self-healing v2
 - [x] `#95` Brownfield onboarding review v2
-- [ ] `#96` Remote executor or worker pool
+- [x] `#96` Remote executor or worker pool
 - [ ] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture

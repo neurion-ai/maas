@@ -4,13 +4,14 @@ import {
   fetchProviders,
   processProviderJob,
   queueProviderTask,
+  runProviderWorkerOnce,
   runProviderPreflight,
   runProviderTask,
   setProviderMode,
   setProviderSettings
 } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { ProviderJobItem, ProviderRunTarget, ProviderStatusItem, ProvidersResponse } from "../types";
+import type { ProviderJobItem, ProviderRunTarget, ProviderStatusItem, ProviderWorkerItem, ProvidersResponse } from "../types";
 
 function buildSettingsDrafts(
   providerItems: ProviderStatusItem[],
@@ -80,6 +81,7 @@ export function ProvidersPage() {
   const [pendingRun, setPendingRun] = useState<string | null>(null);
   const [pendingQueue, setPendingQueue] = useState<string | null>(null);
   const [pendingJobProcess, setPendingJobProcess] = useState<string | null>(null);
+  const [pendingWorkerRun, setPendingWorkerRun] = useState<string | null>(null);
   const [pendingMode, setPendingMode] = useState<string | null>(null);
   const [pendingSettings, setPendingSettings] = useState<string | null>(null);
   const [pendingPreflight, setPendingPreflight] = useState<string | null>(null);
@@ -112,6 +114,8 @@ export function ProvidersPage() {
   const runningJobs = items.reduce((sum, provider) => sum + (provider.job_summary?.running_jobs ?? 0), 0);
   const runTargets = providers?.run_targets ?? [];
   const queuedProviderJobs = providers?.job_queue ?? [];
+  const workerSummary = providers?.worker_summary;
+  const workerPool = providers?.worker_pool ?? [];
 
   async function reloadProviders(resetProviderId?: string) {
     const payload = await fetchProviders();
@@ -166,6 +170,25 @@ export function ProvidersPage() {
       setNotice(`Provider job processing failed for ${job.title ?? job.task_id}.`);
     } finally {
       setPendingJobProcess(null);
+    }
+  }
+
+  async function handleRunWorker(workerId: string, providerId?: string) {
+    const actionKey = `${workerId}:${providerId ?? "all"}`;
+    setPendingWorkerRun(actionKey);
+    setNotice(null);
+    try {
+      const payload = await runProviderWorkerOnce(workerId, providerId);
+      await reloadProviders();
+      if (payload.processed && payload.job) {
+        setNotice(`Worker ${payload.worker_id} processed ${payload.job.provider_id} job ${payload.job.job_id}.`);
+      } else {
+        setNotice(`Worker ${payload.worker_id} found no queued jobs to process.`);
+      }
+    } catch {
+      setNotice(`Worker run failed for ${workerId}.`);
+    } finally {
+      setPendingWorkerRun(null);
     }
   }
 
@@ -253,6 +276,9 @@ export function ProvidersPage() {
         <StatCard label="Provider runs" value={totalRuns} />
         <StatCard label="Queued jobs" value={queuedJobs} />
         <StatCard label="Running jobs" value={runningJobs} />
+        <StatCard label="Workers" value={workerSummary?.total_workers ?? 0} />
+        <StatCard label="Busy workers" value={workerSummary?.busy_workers ?? 0} tone="good" />
+        <StatCard label="Offline workers" value={workerSummary?.offline_workers ?? 0} tone="warn" />
       </section>
 
       <section className="overview-grid">
@@ -347,6 +373,65 @@ export function ProvidersPage() {
                     >
                       {pendingJobProcess === job.job_id ? "Processing..." : "Process now"}
                     </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Provider worker pool</h2>
+              <p>Detached workers claim queued provider jobs and execute them outside the request that queued the run.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            <div className="data-list__item">
+              <div>
+                <strong>Run worker pass</strong>
+                <p>Use the API helper to simulate a detached worker, or start `maas provider-worker --once/--interval-seconds` from the CLI.</p>
+              </div>
+              <div className="data-list__meta">
+                {items.map((provider) => {
+                  const workerId = `worker:${provider.id}`;
+                  const actionKey = `${workerId}:${provider.id}`;
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingWorkerRun === actionKey}
+                      onClick={() => void handleRunWorker(workerId, provider.id)}
+                    >
+                      {pendingWorkerRun === actionKey ? "Running..." : `Run ${provider.name} worker`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {workerPool.length === 0 ? <p>No provider workers have checked in yet.</p> : null}
+            {workerPool.map((worker: ProviderWorkerItem) => (
+              <div key={worker.worker_id} className="data-list__item">
+                <div>
+                  <strong>{worker.worker_id}</strong>
+                  <p>
+                    {worker.provider_id ?? "all providers"}
+                    {worker.project_name ? ` | ${worker.project_name}` : ""}
+                  </p>
+                  <p>
+                    Status: {worker.status}
+                    {worker.current_job_title ? ` | ${worker.current_job_title}` : ""}
+                    {typeof worker.heartbeat_age_seconds === "number"
+                      ? ` | heartbeat ${worker.heartbeat_age_seconds}s ago`
+                      : ""}
+                  </p>
+                  {worker.last_job_id ? (
+                    <p>
+                      Last job: {worker.last_job_id}
+                      {worker.last_job_status ? ` | ${worker.last_job_status}` : ""}
+                    </p>
                   ) : null}
                 </div>
               </div>

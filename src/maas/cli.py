@@ -19,6 +19,7 @@ from maas.services.provider_runtime import (
     queue_provider_task,
     run_provider_task,
 )
+from maas.services.provider_workers import run_provider_worker_once
 from maas.services.projects import (
     archive_project,
     create_project,
@@ -305,6 +306,14 @@ def build_parser():
     provider_job_process_next_parser.add_argument("--provider-id")
     provider_job_process_next_parser.add_argument("--actor-id", default="agent_allocator")
 
+    provider_worker_parser = subparsers.add_parser("provider-worker")
+    provider_worker_parser.add_argument("--project-root", default=".")
+    provider_worker_parser.add_argument("--worker-id", required=True)
+    provider_worker_parser.add_argument("--project-id")
+    provider_worker_parser.add_argument("--provider-id")
+    provider_worker_parser.add_argument("--once", action="store_true")
+    provider_worker_parser.add_argument("--interval-seconds", type=int, default=5)
+
     recovery_parser = subparsers.add_parser("recovery")
     recovery_subparsers = recovery_parser.add_subparsers(dest="recovery_command", required=True)
 
@@ -424,6 +433,26 @@ def command_orchestrator(args):
                 allocate_limit=args.allocate_limit,
                 provider_job_limit=args.provider_job_limit,
                 project_id=args.project_id,
+            )
+            print(json.dumps(findings, indent=2))
+        finally:
+            connection.close()
+        if args.once:
+            break
+        time.sleep(args.interval_seconds)
+
+
+def command_provider_worker(args):
+    paths = project_paths(args.project_root)
+    while True:
+        connection = connect(paths)
+        try:
+            findings = run_provider_worker_once(
+                connection,
+                paths,
+                worker_id=args.worker_id,
+                project_id=args.project_id,
+                provider_id=args.provider_id,
             )
             print(json.dumps(findings, indent=2))
         finally:
@@ -797,6 +826,8 @@ def main(argv=None):
         command_worker(args)
     elif args.command == "provider-job":
         command_provider_job(args)
+    elif args.command == "provider-worker":
+        command_provider_worker(args)
     elif args.command == "recovery":
         command_recovery(args)
     elif args.command == "lifecycle":

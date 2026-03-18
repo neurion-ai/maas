@@ -447,7 +447,14 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
     }
   ],
   run_targets: [],
-  job_queue: []
+  job_queue: [],
+  worker_summary: {
+    total_workers: 0,
+    idle_workers: 0,
+    busy_workers: 0,
+    offline_workers: 0
+  },
+  worker_pool: []
 };
 
 const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
@@ -866,6 +873,23 @@ export async function processProviderJob(jobId: string) {
     failure_kind?: string | null;
     failure_detail?: string | null;
   };
+}
+
+export async function runProviderWorkerOnce(workerId: string, providerId?: string) {
+  return postJson<{
+    processed: boolean;
+    worker_id: string;
+    job?: {
+      job_id: string;
+      status: string;
+      provider_id: string;
+      title?: string | null;
+    } | null;
+  }>("/api/provider-workers/actions/run-once", {
+    worker_id: workerId,
+    provider_id: providerId ?? null,
+    project_id: getSelectedProjectId()
+  });
 }
 
 export async function setProviderMode(providerId: string, mode: string) {

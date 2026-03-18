@@ -31,7 +31,8 @@ Current stacked development chain above `main`:
 - `#93` exists on `codex/session-runner-envelopes`
 - `#94` exists on `codex/policy-driven-self-healing-v2`
 - `#95` exists on `codex/brownfield-onboarding-review-v2`
-- `#96` is the next unfinished item in sequence
+- `#96` exists on `codex/remote-executor-worker-pool`
+- `#97` is the next unfinished item in sequence
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -86,7 +87,7 @@ Current stacked development chain above `main`:
   expand circuit breakers into richer automatic recover/defer/replan/DLQ decisions with explicit stop conditions.
 - [x] `#95` Brownfield onboarding review v2:
   let operators edit ignored paths, accepted workflows, and runbook commands before imported work is released.
-- [ ] `#96` Remote executor or worker pool:
+- [x] `#96` Remote executor or worker pool:
   add execution beyond direct local CLI runs by introducing queued remote workers.
 - [ ] `#97` Cross-project scheduler fairness and capacity policy:
   prevent one project from starving others once multi-project orchestration is always-on.

@@ -24,7 +24,8 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#93` is implemented on the stacked branch `codex/session-runner-envelopes`
 - [x] `#94` is implemented on the stacked branch `codex/policy-driven-self-healing-v2`
 - [x] `#95` is implemented on the stacked branch `codex/brownfield-onboarding-review-v2`
-- [ ] `#96` is the next unfinished item in the current stacked sequence
+- [x] `#96` is implemented on the stacked branch `codex/remote-executor-worker-pool`
+- [ ] `#97` is the next unfinished item in the current stacked sequence
 
 ## Extended Numbered Roadmap
 
@@ -43,7 +44,7 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
 - [x] `#94` Policy-driven self-healing v2
 - [x] `#95` Brownfield onboarding review v2
-- [ ] `#96` Remote executor or worker pool
+- [x] `#96` Remote executor or worker pool
 - [ ] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
@@ -189,7 +190,7 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
 - [x] `#94` Policy-driven self-healing v2
 - [x] `#95` Brownfield onboarding review v2
-- [ ] `#96` Remote executor or worker pool
+- [x] `#96` Remote executor or worker pool
 - [ ] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture

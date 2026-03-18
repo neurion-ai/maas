@@ -1068,14 +1068,14 @@ def queue_provider_task(connection, project_paths, provider_id, actor_id, projec
     return job
 
 
-def process_provider_job(connection, project_paths, job_id, actor_id):
+def process_provider_job(connection, project_paths, job_id, actor_id, worker_id=None):
     job = fetch_provider_job(connection, job_id, include_archived=False)
     if job is None:
         raise ValueError("Provider job not found")
     if job["status"] != "queued":
         raise ValueError("Provider job is not queued")
     ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", job["provider_id"])
-    running_job = start_provider_job(connection, job_id, worker_id=actor_id)
+    running_job = start_provider_job(connection, job_id, worker_id=worker_id or actor_id)
     if running_job is None:
         raise ValueError("Provider job is no longer queued")
     _activity_provider_job(
@@ -1085,7 +1085,11 @@ def process_provider_job(connection, project_paths, job_id, actor_id):
         running_job["task_id"],
         "provider_job_started",
         "{0} started queued provider job {1}.".format(actor_id, job_id),
-        {"job_id": job_id, "provider_id": running_job["provider_id"]},
+        {
+            "job_id": job_id,
+            "provider_id": running_job["provider_id"],
+            "worker_id": worker_id or actor_id,
+        },
     )
     _audit_provider_job(
         connection,
@@ -1144,16 +1148,24 @@ def process_provider_job(connection, project_paths, job_id, actor_id):
     return completed_job
 
 
-def process_next_provider_job(connection, project_paths, actor_id, project_id=None, provider_id=None):
-    resolved_project_id = resolve_project_id(connection, project_id)
-    if resolved_project_id is None:
-        raise ValueError("Project not found")
+def process_next_provider_job(connection, project_paths, actor_id, project_id=None, provider_id=None, worker_id=None):
     resource_id = provider_id or "provider_queue"
-    ensure_board_action_allowed(connection, actor_id, resolved_project_id, "process_provider_job", "provider", resource_id)
-    job_id = next_queued_provider_job_id(connection, project_id=resolved_project_id, provider_id=provider_id)
+    if project_id:
+        resolved_project_id = resolve_project_id(connection, project_id)
+        if resolved_project_id is None:
+            raise ValueError("Project not found")
+        ensure_board_action_allowed(connection, actor_id, resolved_project_id, "process_provider_job", "provider", resource_id)
+        job_id = next_queued_provider_job_id(connection, project_id=resolved_project_id, provider_id=provider_id)
+    else:
+        job_id = next_queued_provider_job_id(connection, project_id=None, provider_id=provider_id)
+        if job_id is not None:
+            job = fetch_provider_job(connection, job_id, include_archived=False)
+            if job is None:
+                return {"processed": False, "job": None}
+            ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", resource_id)
     if job_id is None:
         return {"processed": False, "job": None}
-    job = process_provider_job(connection, project_paths, job_id, actor_id)
+    job = process_provider_job(connection, project_paths, job_id, actor_id, worker_id=worker_id)
     return {"processed": True, "job": job}
 
 

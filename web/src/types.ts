@@ -795,6 +795,30 @@ export interface ProviderJobItem {
   failure_detail?: string | null;
 }
 
+export interface ProviderWorkerSummary {
+  total_workers: number;
+  idle_workers: number;
+  busy_workers: number;
+  offline_workers: number;
+}
+
+export interface ProviderWorkerItem {
+  worker_id: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  provider_id?: string | null;
+  status: "idle" | "busy" | "offline";
+  current_job_id?: string | null;
+  current_job_title?: string | null;
+  last_job_id?: string | null;
+  last_job_status?: string | null;
+  heartbeat_at?: string | null;
+  heartbeat_age_seconds?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ProviderRunTarget {
   project_id: string;
   task_id: string;
@@ -837,6 +861,8 @@ export interface ProvidersResponse {
   providers: ProviderStatusItem[];
   run_targets: ProviderRunTarget[];
   job_queue: ProviderJobItem[];
+  worker_summary?: ProviderWorkerSummary;
+  worker_pool?: ProviderWorkerItem[];
 }
 
 export interface RecoveryDelayPreviewItem {

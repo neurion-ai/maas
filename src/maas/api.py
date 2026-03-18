@@ -35,6 +35,7 @@ from maas.services.provider_runtime import (
     set_provider_mode,
     set_provider_settings,
 )
+from maas.services.provider_workers import run_provider_worker_once
 from maas.services.portfolio import fetch_portfolio
 from maas.services.projects import (
     archive_project,
@@ -200,6 +201,12 @@ class ProviderJobProcessRequest(BaseModel):
 
 class ProviderJobProcessNextRequest(BaseModel):
     actor_id: str
+    project_id: Optional[str] = None
+    provider_id: Optional[str] = None
+
+
+class ProviderWorkerRunRequest(BaseModel):
+    worker_id: str
     project_id: Optional[str] = None
     provider_id: Optional[str] = None
 
@@ -938,11 +945,27 @@ def create_app(project_root="."):
                 connection,
                 project_paths=paths,
                 actor_id=payload.actor_id,
-                project_id=_selected_project_id(connection, payload.project_id),
+                project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
                 provider_id=payload.provider_id,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/provider-workers/actions/run-once")
+    def provider_worker_run_once_action(payload: ProviderWorkerRunRequest):
+        connection = connect(paths)
+        try:
+            return run_provider_worker_once(
+                connection,
+                project_paths=paths,
+                worker_id=payload.worker_id,
+                project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
+                provider_id=payload.provider_id,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

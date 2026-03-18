@@ -280,10 +280,18 @@ def fail_provider_job(connection, job_id, error):
 
 
 def next_queued_provider_job_id(connection, project_id=None, provider_id=None):
-    resolved_project_id = resolve_project_id(connection, project_id)
-    if resolved_project_id is None:
-        return None
-    where_clause, params = _provider_job_rows_query(status="queued", provider_id=provider_id)
+    if project_id is not None:
+        resolved_project_id = resolve_project_id(connection, project_id)
+        if resolved_project_id is None:
+            return None
+        where_clause, params = _provider_job_rows_query(status="queued", provider_id=provider_id)
+        parameters = tuple([resolved_project_id] + params)
+    else:
+        where_clause = "provider_job_queue.status = 'queued'"
+        parameters = ()
+        if provider_id:
+            where_clause += " AND provider_job_queue.provider_id = ?"
+            parameters = (provider_id,)
     row = connection.execute(
         """
         SELECT provider_job_queue.job_id
@@ -294,6 +302,6 @@ def next_queued_provider_job_id(connection, project_id=None, provider_id=None):
         ORDER BY provider_job_queue.created_at ASC, provider_job_queue.rowid ASC
         LIMIT 1
         """.format(where_clause=where_clause),
-        tuple([resolved_project_id] + params),
+        parameters,
     ).fetchone()
     return row["job_id"] if row is not None else None

@@ -290,6 +290,31 @@ lint = "imported:lint"
             self.assertEqual(project_row["provider_capacity"]["queue_mode"], "draining")
             self.assertEqual(project_row["provider_capacity"]["max_running_jobs"], 1)
 
+    def test_update_risk_policy_persists_and_is_visible_in_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-risk-policy",
+                json={
+                    "actor_id": "agent_allocator",
+                    "priority_threshold": 95,
+                    "sensitive_path_prefixes": ["src/payments", "infra"],
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["risk_policy"],
+                {"priority_threshold": 95, "sensitive_path_prefixes": ["src/payments", "infra"]},
+            )
+
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["risk_policy"]["priority_threshold"], 95)
+            self.assertEqual(project_row["risk_policy"]["sensitive_path_prefixes"], ["src/payments", "infra"])
+
     def test_refresh_repo_plan_endpoint_preserves_progressed_synthesized_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._create_brownfield_repo(tmpdir)

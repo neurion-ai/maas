@@ -186,6 +186,10 @@ export interface PortfolioProject {
     at_capacity: boolean;
     can_start_jobs: boolean;
   };
+  risk_policy: {
+    priority_threshold: number;
+    sensitive_path_prefixes: string[];
+  };
   at_scheduler_capacity: boolean;
 }
 

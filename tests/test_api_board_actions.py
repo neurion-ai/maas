@@ -53,6 +53,25 @@ lint = "example:main"
         finally:
             connection.close()
 
+    def _update_risk_policy(self, project_root, priority_threshold=90, sensitive_path_prefixes=None):
+        connection = connect(project_paths(project_root))
+        try:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects LIMIT 1"
+            ).fetchone()
+            config = json.loads(project["config_json"] or "{}")
+            config["risk_policy"] = {
+                "priority_threshold": priority_threshold,
+                "sensitive_path_prefixes": sensitive_path_prefixes or [],
+            }
+            connection.execute(
+                "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                (json.dumps(config), project["project_id"]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
     def test_board_filters_and_review_action(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="API Test", description="API board actions", project_type="custom")
@@ -110,6 +129,229 @@ lint = "example:main"
             self.assertEqual(len(matching_cards), 1)
             self.assertEqual(matching_cards[0]["status"], "planned")
             self.assertEqual(matching_cards[0]["review_state"], "changes_requested")
+
+    def test_risky_reassign_routes_to_escalation_instead_of_executing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Risk Reassign Test", description="risk reassign", project_type="custom")
+            self._update_risk_policy(tmpdir, priority_threshold=90)
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    WHERE status = 'planned'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                target_agent_id = connection.execute(
+                    """
+                    SELECT agent_id
+                    FROM agents
+                    WHERE project_id = ? AND role = 'builder'
+                    LIMIT 1
+                    """,
+                    (task["project_id"],),
+                ).fetchone()["agent_id"]
+                connection.execute(
+                    "UPDATE tasks SET priority = 95 WHERE task_id = ?",
+                    (task["task_id"],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/tasks/{task['task_id']}/actions/reassign",
+                json={"actor_id": "agent_allocator", "agent_id": target_agent_id},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "escalated")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                updated_task = connection.execute(
+                    "SELECT status, assigned_agent_id FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+                escalation = connection.execute(
+                    """
+                    SELECT action_type, resource_type, resource_id, payload_json, status
+                    FROM escalation_queue
+                    WHERE resource_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_task["status"], "planned")
+            self.assertEqual(updated_task["assigned_agent_id"], task["assigned_agent_id"])
+            self.assertEqual(escalation["action_type"], "reassign_task")
+            self.assertEqual(escalation["resource_type"], "task")
+            self.assertEqual(escalation["status"], "open")
+            self.assertEqual(json.loads(escalation["payload_json"])["agent_id"], target_agent_id)
+
+    def test_risky_halt_routes_to_escalation_for_sensitive_task_scope(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Risk Halt Test", description="risk halt", project_type="custom")
+            self._update_risk_policy(tmpdir, priority_threshold=100, sensitive_path_prefixes=["src/payments"])
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE status = 'planned'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {
+                                    "type": "source_path_exists",
+                                    "paths": ["src/payments/checkout.py"],
+                                }
+                            ]
+                        ),
+                        task["task_id"],
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/tasks/{task['task_id']}/actions/halt",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "escalated")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                updated_task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_task["status"], "planned")
+            self.assertIsNone(updated_task["review_state"])
+
+    def test_risky_pause_agent_routes_to_escalation_using_current_task_scope(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Risk Pause Agent Test", description="risk pause", project_type="custom")
+            self._update_risk_policy(tmpdir, priority_threshold=100, sensitive_path_prefixes=["src/runtime"])
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                agent = connection.execute(
+                    """
+                    SELECT agent_id, project_id
+                    FROM agents
+                    WHERE role = 'builder'
+                    LIMIT 1
+                    """
+                ).fetchone()
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ? AND status = 'ready'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (agent["project_id"],),
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress',
+                        assigned_agent_id = ?,
+                        acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        agent["agent_id"],
+                        json.dumps(
+                            [
+                                {
+                                    "type": "source_path_exists",
+                                    "paths": ["src/runtime/runner.py"],
+                                }
+                            ]
+                        ),
+                        task["task_id"],
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'running',
+                        current_task_id = ?
+                    WHERE agent_id = ?
+                    """,
+                    (task["task_id"], agent["agent_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/agents/{agent['agent_id']}/actions/pause",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "escalated")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                updated_agent = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = ?",
+                    (agent["agent_id"],),
+                ).fetchone()
+                updated_task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+                escalation = connection.execute(
+                    """
+                    SELECT action_type, resource_type, resource_id, status
+                    FROM escalation_queue
+                    WHERE resource_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (agent["agent_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_agent["status"], "running")
+            self.assertEqual(updated_agent["current_task_id"], task["task_id"])
+            self.assertEqual(updated_task["status"], "in_progress")
+            self.assertIsNone(updated_task["review_state"])
+            self.assertEqual(escalation["action_type"], "pause_agent")
+            self.assertEqual(escalation["resource_type"], "agent")
+            self.assertEqual(escalation["status"], "open")
 
     def test_approving_brownfield_review_releases_gated_tasks_and_resolves_alert(self):
         with tempfile.TemporaryDirectory() as tmpdir:

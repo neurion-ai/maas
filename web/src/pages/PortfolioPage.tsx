@@ -5,7 +5,8 @@ import {
   processProviderJob,
   runOrchestratorPass,
   updateEscalationStatus,
-  updateProjectProviderCapacity
+  updateProjectProviderCapacity,
+  updateProjectRiskPolicy
 } from "../lib/controlRoomApi";
 import { setSelectedProjectId } from "../lib/projectScope";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -30,6 +31,7 @@ export function PortfolioPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [runningOrchestrator, setRunningOrchestrator] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
+  const [riskDrafts, setRiskDrafts] = useState<Record<string, { priorityThreshold: number; sensitivePaths: string }>>({});
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -40,6 +42,18 @@ export function PortfolioPage() {
         const payload = await fetchPortfolio();
         if (mounted) {
           setPortfolio(payload);
+          setRiskDrafts((current) => {
+            const next = { ...current };
+            payload.projects.forEach((project) => {
+              if (!next[project.project_id]) {
+                next[project.project_id] = {
+                  priorityThreshold: project.risk_policy.priority_threshold,
+                  sensitivePaths: project.risk_policy.sensitive_path_prefixes.join(", ")
+                };
+              }
+            });
+            return next;
+          });
         }
       } catch {
         if (mounted) {
@@ -123,6 +137,32 @@ export function PortfolioPage() {
     }
   }
 
+  async function handleUpdateRiskPolicy(projectId: string) {
+    const actionKey = `risk-policy:${projectId}`;
+    const draft = riskDrafts[projectId];
+    if (!draft) {
+      return;
+    }
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const sensitivePathPrefixes = draft.sensitivePaths
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      await updateProjectRiskPolicy(projectId, {
+        priority_threshold: draft.priorityThreshold,
+        sensitive_path_prefixes: sensitivePathPrefixes
+      });
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Updated risk routing policy for ${projectId}.`);
+    } catch {
+      setNotice("Risk routing policy update failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -194,6 +234,12 @@ export function PortfolioPage() {
                   {project.provider_capacity.running_jobs} running / {project.provider_capacity.queued_jobs} queued
                   {project.provider_capacity.at_capacity ? " · at capacity" : ""}
                 </p>
+                <p>
+                  Risk routing at priority {project.risk_policy.priority_threshold}
+                  {project.risk_policy.sensitive_path_prefixes.length
+                    ? ` · sensitive paths: ${project.risk_policy.sensitive_path_prefixes.join(", ")}`
+                    : " · no sensitive path prefixes"}
+                </p>
               </div>
               <div className="data-list__meta">
                 <span>{project.task_count} tasks</span>
@@ -236,6 +282,56 @@ export function PortfolioPage() {
                     ))}
                   </select>
                 </label>
+                <label className="task-inline-control">
+                  <span>Risk threshold</span>
+                  <select
+                    value={String(riskDrafts[project.project_id]?.priorityThreshold ?? project.risk_policy.priority_threshold)}
+                    disabled={pendingActionKey === `risk-policy:${project.project_id}`}
+                    onChange={(event) =>
+                      setRiskDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          priorityThreshold: Number(event.target.value),
+                          sensitivePaths:
+                            current[project.project_id]?.sensitivePaths ??
+                            project.risk_policy.sensitive_path_prefixes.join(", ")
+                        }
+                      }))
+                    }
+                  >
+                    {[70, 80, 90, 95, 100, 101].map((value) => (
+                      <option key={value} value={value}>
+                        {value === 101 ? "disabled" : value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="task-inline-control">
+                  <span>Sensitive paths</span>
+                  <input
+                    type="text"
+                    value={riskDrafts[project.project_id]?.sensitivePaths ?? project.risk_policy.sensitive_path_prefixes.join(", ")}
+                    disabled={pendingActionKey === `risk-policy:${project.project_id}`}
+                    onChange={(event) =>
+                      setRiskDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          priorityThreshold:
+                            current[project.project_id]?.priorityThreshold ?? project.risk_policy.priority_threshold,
+                          sensitivePaths: event.target.value
+                        }
+                      }))
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="task-action task-action--secondary"
+                  disabled={pendingActionKey === `risk-policy:${project.project_id}`}
+                  onClick={() => void handleUpdateRiskPolicy(project.project_id)}
+                >
+                  Save risk policy
+                </button>
                 <button
                   type="button"
                   className="task-action task-action--secondary"

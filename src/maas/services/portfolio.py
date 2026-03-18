@@ -6,6 +6,7 @@ from maas.providers import list_provider_status
 from maas.services.failure_memory import repeated_failure_task_count
 from maas.services.projects import list_projects
 from maas.services.queue_capacity import queue_capacity_snapshot
+from maas.services.risk_policy import risk_policy_from_row
 from maas.services.scheduler_policy import scheduler_policy_from_row
 
 
@@ -287,6 +288,7 @@ def fetch_portfolio(connection):
         ).fetchone()
         scheduler_policy = scheduler_policy_from_row(project_row)
         provider_capacity = queue_capacity_snapshot(connection, project_id)
+        risk_policy = risk_policy_from_row(project_row)
         item = {
             **project,
             "blocked_tasks": blocked_counts.get(project_id, 0),
@@ -301,6 +303,7 @@ def fetch_portfolio(connection):
             "provider_readiness": provider_readiness,
             "scheduler_policy": scheduler_policy,
             "provider_capacity": provider_capacity,
+            "risk_policy": risk_policy,
             "at_scheduler_capacity": active_session_counts.get(project_id, 0) >= scheduler_policy["max_active_sessions"],
         }
         item["health"] = _health_status(project, item)

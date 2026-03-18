@@ -17,6 +17,12 @@ from maas.services.recovery_policy import (
     retry_deadline,
 )
 from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.risk_policy import (
+    evaluate_agent_action_risk,
+    evaluate_task_action_risk,
+    fetch_project_risk_policy,
+    request_risk_escalation,
+)
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import (
     resolve_brownfield_onboarding_alerts,
@@ -231,6 +237,46 @@ def _activity(connection, project_id, agent_id, task_id, action, description, se
         """,
         (generate_id("act"), project_id, agent_id, task_id, action, description, severity),
     )
+
+
+def _maybe_route_task_action_to_escalation(connection, task, actor_id, action_type, payload=None):
+    risk_policy = fetch_project_risk_policy(connection, task["project_id"])
+    risk = evaluate_task_action_risk(connection, task, policy=risk_policy)
+    if not risk["requires_approval"]:
+        return None
+    result = request_risk_escalation(
+        connection,
+        project_id=task["project_id"],
+        actor_id=actor_id,
+        action_type=action_type,
+        resource_type="task",
+        resource_id=task["task_id"],
+        payload=payload,
+        risk=risk,
+    )
+    result["task_id"] = task["task_id"]
+    return result
+
+
+def _maybe_route_agent_action_to_escalation(connection, agent, actor_id, action_type):
+    risk_policy = fetch_project_risk_policy(connection, agent["project_id"])
+    risk = evaluate_agent_action_risk(connection, agent, policy=risk_policy)
+    if not risk["requires_approval"]:
+        return None
+    result = request_risk_escalation(
+        connection,
+        project_id=agent["project_id"],
+        actor_id=actor_id,
+        action_type=action_type,
+        resource_type="agent",
+        resource_id=agent["agent_id"],
+        payload={},
+        risk=risk,
+    )
+    result["agent_id"] = agent["agent_id"]
+    if risk.get("task_id"):
+        result["task_id"] = risk["task_id"]
+    return result
 
 
 def _mark_task_for_replan_internal(
@@ -460,7 +506,7 @@ def review_task(connection, task_id, actor_id, decision):
 def halt_task(connection, task_id, actor_id):
     task = connection.execute(
         """
-        SELECT task_id, project_id, assigned_agent_id, status
+        SELECT task_id, project_id, assigned_agent_id, status, priority, acceptance_criteria_json
         FROM tasks
         WHERE task_id = ?
         """,
@@ -471,6 +517,9 @@ def halt_task(connection, task_id, actor_id):
     ensure_board_action_allowed(connection, actor_id, task["project_id"], "halt_task", "task", task_id)
     if task["status"] in ("done", "cancelled"):
         raise ValueError("Task cannot be halted from status {0}".format(task["status"]))
+    escalated = _maybe_route_task_action_to_escalation(connection, task, actor_id, "halt_task")
+    if escalated is not None:
+        return escalated
 
     connection.execute(
         """
@@ -1535,7 +1584,11 @@ def reprioritize_task(connection, task_id, actor_id, priority):
 
 def reassign_task(connection, task_id, actor_id, agent_id):
     task = connection.execute(
-        "SELECT task_id, project_id, status, assigned_agent_id FROM tasks WHERE task_id = ?",
+        """
+        SELECT task_id, project_id, status, assigned_agent_id, priority, acceptance_criteria_json
+        FROM tasks
+        WHERE task_id = ?
+        """,
         (task_id,),
     ).fetchone()
     if task is None:
@@ -1549,6 +1602,15 @@ def reassign_task(connection, task_id, actor_id, agent_id):
     ).fetchone()
     if agent is None:
         raise ValueError("Agent not found")
+    escalated = _maybe_route_task_action_to_escalation(
+        connection,
+        task,
+        actor_id,
+        "reassign_task",
+        payload={"agent_id": agent_id},
+    )
+    if escalated is not None:
+        return escalated
     connection.execute(
         """
         UPDATE tasks
@@ -1604,6 +1666,9 @@ def pause_agent(connection, agent_id, actor_id):
     if agent is None:
         raise ValueError("Agent not found")
     ensure_board_action_allowed(connection, actor_id, agent["project_id"], "pause_agent", "agent", agent_id)
+    escalated = _maybe_route_agent_action_to_escalation(connection, agent, actor_id, "pause_agent")
+    if escalated is not None:
+        return escalated
     connection.execute(
         """
         UPDATE agents
@@ -1651,6 +1716,9 @@ def resume_agent(connection, agent_id, actor_id):
     if agent is None:
         raise ValueError("Agent not found")
     ensure_board_action_allowed(connection, actor_id, agent["project_id"], "resume_agent", "agent", agent_id)
+    escalated = _maybe_route_agent_action_to_escalation(connection, agent, actor_id, "resume_agent")
+    if escalated is not None:
+        return escalated
     connection.execute(
         """
         UPDATE agents

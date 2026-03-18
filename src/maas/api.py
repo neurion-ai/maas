@@ -51,6 +51,7 @@ from maas.services.queue_capacity import update_project_queue_capacity_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.risk_policy import update_project_risk_policy
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
@@ -267,6 +268,12 @@ class ProjectQueueCapacityRequest(BaseModel):
     max_running_jobs: int
 
 
+class ProjectRiskPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    priority_threshold: int
+    sensitive_path_prefixes: List[str] = []
+
+
 def _parse_limit(value, default):
     if value is None:
         return default
@@ -425,6 +432,24 @@ def create_app(project_root="."):
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-risk-policy")
+    def projects_update_risk_policy(project_id: str, payload: ProjectRiskPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_risk_policy(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "priority_threshold": payload.priority_threshold,
+                    "sensitive_path_prefixes": payload.sensitive_path_prefixes,
+                },
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

@@ -34,6 +34,7 @@ from maas.services.recovery_policy import fetch_project_recovery_overview, updat
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.risk_policy import update_project_risk_policy
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.steering import (
@@ -146,6 +147,13 @@ def build_parser():
     project_provider_capacity_parser.add_argument("--actor-id", default="agent_allocator")
     project_provider_capacity_parser.add_argument("--queue-mode", choices=("running", "draining", "paused"), required=True)
     project_provider_capacity_parser.add_argument("--max-running-jobs", type=int, required=True)
+
+    project_risk_policy_parser = project_subparsers.add_parser("set-risk-policy")
+    project_risk_policy_parser.add_argument("--project-root", default=".")
+    project_risk_policy_parser.add_argument("--project-id", required=True)
+    project_risk_policy_parser.add_argument("--actor-id", default="agent_allocator")
+    project_risk_policy_parser.add_argument("--priority-threshold", type=int, required=True)
+    project_risk_policy_parser.add_argument("--sensitive-path-prefix", action="append", default=[])
 
     project_refresh_repo_plan_parser = project_subparsers.add_parser("refresh-repo-plan")
     project_refresh_repo_plan_parser.add_argument("--project-root", default=".")
@@ -589,6 +597,21 @@ def command_project(args):
                         policy={
                             "queue_mode": args.queue_mode,
                             "max_running_jobs": args.max_running_jobs,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-risk-policy":
+            print(
+                json.dumps(
+                    update_project_risk_policy(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "priority_threshold": args.priority_threshold,
+                            "sensitive_path_prefixes": args.sensitive_path_prefix,
                         },
                     ),
                     indent=2,

@@ -3,7 +3,7 @@
 import json
 
 from maas.ids import generate_id
-from maas.services.security import ensure_board_action_allowed
+from maas.services.security import ensure_board_action_allowed, resolve_board_actor
 from maas.services.steering import halt_task, pause_agent, reassign_task, resume_agent
 
 
@@ -16,14 +16,7 @@ SUPPORTED_ESCALATION_ACTIONS = {
 
 
 def _ensure_requester_exists(connection, project_id, actor_id):
-    row = connection.execute(
-        """
-        SELECT agent_id
-        FROM agents
-        WHERE project_id = ? AND agent_id = ?
-        """,
-        (project_id, actor_id),
-    ).fetchone()
+    row = resolve_board_actor(connection, actor_id, project_id)
     if row is None:
         raise ValueError("Escalation requester not found")
     return row
@@ -126,7 +119,7 @@ def _ensure_reassignment_target_exists(connection, project_id, payload):
 
 
 def request_escalation(connection, project_id, actor_id, action_type, resource_type, resource_id, reason, payload=None):
-    _ensure_requester_exists(connection, project_id, actor_id)
+    requester = _ensure_requester_exists(connection, project_id, actor_id)
     payload = payload or {}
     _validate_request(action_type, resource_type, payload)
     _ensure_resource_exists(connection, project_id, resource_type, resource_id)
@@ -144,7 +137,7 @@ def request_escalation(connection, project_id, actor_id, action_type, resource_t
         (
             escalation_id,
             project_id,
-            actor_id,
+            requester["agent_id"],
             action_type,
             resource_type,
             resource_id,

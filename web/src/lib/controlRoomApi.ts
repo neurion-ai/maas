@@ -650,6 +650,17 @@ export async function updateProjectProviderCapacity(
   });
 }
 
+export async function updateProjectRiskPolicy(
+  projectId: string,
+  payload: { priority_threshold: number; sensitive_path_prefixes: string[] }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-risk-policy`, {
+    actor_id: "agent_allocator",
+    priority_threshold: payload.priority_threshold,
+    sensitive_path_prefixes: payload.sensitive_path_prefixes
+  });
+}
+
 export async function refreshRepoPlan(projectId: string) {
   return postJson(`/api/projects/${projectId}/actions/refresh-repo-plan`, {
     actor_id: "agent_allocator"

@@ -120,8 +120,12 @@ export function BoardPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
-      await setAgentState(nextAgentId, action);
-      setNotice(`Agent ${action} requested for ${nextAgentId}.`);
+      const payload = await setAgentState(nextAgentId, action);
+      setNotice(
+        payload?.status === "escalated"
+          ? `Agent ${action} routed to escalation ${payload.escalation_id}.`
+          : `Agent ${action} requested for ${nextAgentId}.`
+      );
       await loadBoard();
     } catch {
       setNotice("Agent steering is not available yet on this backend.");
@@ -150,8 +154,12 @@ export function BoardPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
-      await reassignTask(taskId, nextAgentId);
-      setNotice(`Task ${taskId} reassigned to ${nextAgentId}.`);
+      const payload = await reassignTask(taskId, nextAgentId);
+      setNotice(
+        payload?.status === "escalated"
+          ? `Task ${taskId} reassignment routed to escalation ${payload.escalation_id}.`
+          : `Task ${taskId} reassigned to ${nextAgentId}.`
+      );
       await loadBoard();
     } catch {
       setNotice("Task reassignment failed; keep the current board snapshot under review.");
@@ -165,8 +173,12 @@ export function BoardPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
-      await haltTask(taskId);
-      setNotice(`Task ${taskId} halted.`);
+      const payload = await haltTask(taskId);
+      setNotice(
+        payload?.status === "escalated"
+          ? `Task ${taskId} halt routed to escalation ${payload.escalation_id}.`
+          : `Task ${taskId} halted.`
+      );
       await loadBoard();
     } catch {
       setNotice("Task halt failed; keep the current board snapshot under review.");

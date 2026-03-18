@@ -121,6 +121,10 @@ def build_default_project_config(
             "queue_mode": "running",
             "max_running_jobs": 2,
         },
+        "risk_policy": {
+            "priority_threshold": 101,
+            "sensitive_path_prefixes": [],
+        },
     }
 
 

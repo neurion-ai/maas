@@ -245,7 +245,7 @@ function buildBoardQuery(filters: BoardFiltersInput) {
   return query.toString();
 }
 
-async function postJson(path: string, body: Record<string, string | number | null>) {
+async function postJson(path: string, body: Record<string, string | number | string[] | null>) {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -257,6 +257,7 @@ async function postJson(path: string, body: Record<string, string | number | nul
   if (!response.ok) {
     throw new Error(`Unexpected status: ${response.status}`);
   }
+  return response.json();
 }
 
 export async function fetchBoard(filters: BoardFiltersInput = {}, signal?: AbortSignal): Promise<BoardResponse> {

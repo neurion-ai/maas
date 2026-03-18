@@ -1,6 +1,6 @@
 """FastAPI application for MAAS."""
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,18 +21,46 @@ from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
+from maas.services.git_workspaces import capture_task_git_diff, fetch_task_git_workspace, prepare_task_git_workspace
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
+from maas.services.notifications import (
+    fetch_notification_outbox,
+    process_next_notification,
+    process_notification,
+    update_project_notification_policy,
+)
+from maas.services.orchestrator import run_orchestrator_once
 from maas.services.provider_runtime import (
+    process_next_provider_job,
+    process_provider_job,
     provider_runtime_overview,
+    provider_job_queue,
+    queue_provider_task,
     run_provider_preflight,
     run_provider_task,
     set_provider_mode,
     set_provider_settings,
 )
-from maas.services.projects import archive_project, create_project, list_projects, resolve_project_id, restore_project
+from maas.services.provider_workers import run_provider_worker_once
+from maas.services.portfolio import fetch_portfolio
+from maas.services.projects import (
+    archive_project,
+    create_project,
+    list_projects,
+    rescan_brownfield_project,
+    resolve_project_id,
+    restore_project,
+    update_brownfield_onboarding_review,
+)
+from maas.services.queue_capacity import update_project_queue_capacity_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
+from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
+from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.risk_policy import update_project_risk_policy
+from maas.services.runtime_quotas import update_project_runtime_quotas
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
     dismiss_quarantine_entry,
@@ -47,6 +75,7 @@ from maas.services.steering import (
     recover_agent,
     recover_task,
     release_task_retry_backoff,
+    reset_task_circuit_breaker,
     reset_task_retry_state,
     reopen_quarantine_entry,
     restore_and_requeue_quarantine_entry,
@@ -59,6 +88,8 @@ from maas.services.steering import (
     review_task,
 )
 from maas.supervisor import run_supervisor_once
+from maas.services.timeline import fetch_incident_timeline
+from maas.services.verification import fetch_verification_runs, run_task_verification
 
 
 class LifecycleHeartbeatRequest(BaseModel):
@@ -134,10 +165,18 @@ class AssignTaskRequest(BaseModel):
 class AllocateTasksRequest(BaseModel):
     actor_id: str = "system_allocator"
     limit: int = None
+    project_id: Optional[str] = None
 
 
 class SupervisorRunRequest(BaseModel):
     allocate_limit: int = None
+    project_id: Optional[str] = None
+
+
+class OrchestratorRunRequest(BaseModel):
+    allocate_limit: int = None
+    provider_job_limit: int = 2
+    project_id: Optional[str] = None
 
 
 class EscalationRequestPayload(BaseModel):
@@ -160,6 +199,35 @@ class ProviderRunRequest(BaseModel):
     agent_id: str
     task_id: str
     artifact_path: Optional[str] = None
+
+
+class ProviderQueueRequest(BaseModel):
+    actor_id: str
+    project_id: str
+    agent_id: str
+    task_id: str
+    artifact_path: Optional[str] = None
+
+
+class ProviderJobProcessRequest(BaseModel):
+    actor_id: str
+
+
+class ProviderJobProcessNextRequest(BaseModel):
+    actor_id: str
+    project_id: Optional[str] = None
+    provider_id: Optional[str] = None
+
+
+class ProviderWorkerRunRequest(BaseModel):
+    worker_id: str
+    project_id: Optional[str] = None
+    provider_id: Optional[str] = None
+
+
+class NotificationProcessRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    project_id: Optional[str] = None
 
 
 class ProviderModeRequest(BaseModel):
@@ -192,6 +260,46 @@ class ProjectCreateRequest(BaseModel):
     project_type: str = "custom"
     mode: str = "auto"
     source_root: Optional[str] = None
+
+
+class ProjectOnboardingReviewUpdateRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    ignored_paths: List[str] = []
+    accepted_workflow_labels: Optional[List[str]] = None
+    accepted_runbook_labels: Optional[List[str]] = None
+
+
+class ProjectSchedulerPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    fair_share_weight: int
+    max_active_sessions: int
+
+
+class ProjectQueueCapacityRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    queue_mode: str
+    max_running_jobs: int
+
+
+class ProjectRiskPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    priority_threshold: int
+    sensitive_path_prefixes: List[str] = []
+
+
+class ProjectRuntimeQuotasRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    daily_run_limit: int
+    daily_live_run_limit: int
+    daily_runtime_seconds_limit: int
+    max_task_session_attempts: int
+
+
+class ProjectNotificationPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    webhook_urls: List[str] = []
+    minimum_severity: str
+    enabled_events: List[str] = []
 
 
 def _parse_limit(value, default):
@@ -284,6 +392,141 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return restore_project(connection, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/rescan-brownfield")
+    def projects_rescan_brownfield(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return rescan_brownfield_project(connection, paths, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-onboarding-review")
+    def projects_update_onboarding_review(project_id: str, payload: ProjectOnboardingReviewUpdateRequest):
+        connection = connect(paths)
+        try:
+            return update_brownfield_onboarding_review(
+                connection,
+                paths,
+                project_id,
+                payload.actor_id,
+                {
+                    "ignored_paths": payload.ignored_paths,
+                    "accepted_workflow_labels": payload.accepted_workflow_labels,
+                    "accepted_runbook_labels": payload.accepted_runbook_labels,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-scheduler-policy")
+    def projects_update_scheduler_policy(project_id: str, payload: ProjectSchedulerPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_scheduler_policy(
+                connection,
+                project_id,
+                payload.actor_id,
+                {
+                    "fair_share_weight": payload.fair_share_weight,
+                    "max_active_sessions": payload.max_active_sessions,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-provider-capacity")
+    def projects_update_provider_capacity(project_id: str, payload: ProjectQueueCapacityRequest):
+        connection = connect(paths)
+        try:
+            return update_project_queue_capacity_policy(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "queue_mode": payload.queue_mode,
+                    "max_running_jobs": payload.max_running_jobs,
+                },
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-risk-policy")
+    def projects_update_risk_policy(project_id: str, payload: ProjectRiskPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_risk_policy(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "priority_threshold": payload.priority_threshold,
+                    "sensitive_path_prefixes": payload.sensitive_path_prefixes,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-runtime-quotas")
+    def projects_update_runtime_quotas(project_id: str, payload: ProjectRuntimeQuotasRequest):
+        connection = connect(paths)
+        try:
+            return update_project_runtime_quotas(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "daily_run_limit": payload.daily_run_limit,
+                    "daily_live_run_limit": payload.daily_live_run_limit,
+                    "daily_runtime_seconds_limit": payload.daily_runtime_seconds_limit,
+                    "max_task_session_attempts": payload.max_task_session_attempts,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-notification-policy")
+    def projects_update_notification_policy(project_id: str, payload: ProjectNotificationPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_notification_policy(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "webhook_urls": payload.webhook_urls,
+                    "minimum_severity": payload.minimum_severity,
+                    "enabled_events": payload.enabled_events,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/refresh-repo-plan")
+    def projects_refresh_repo_plan(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return refresh_repo_grounded_plan(connection, project_id, payload.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -385,10 +628,10 @@ def create_app(project_root="."):
             connection.close()
 
     @app.get("/api/tasks/ready")
-    def tasks_ready():
+    def tasks_ready(project_id: str = None):
         connection = connect(paths)
         try:
-            return {"tasks": resolve_ready_tasks(connection)}
+            return {"tasks": resolve_ready_tasks(connection, project_id=_selected_project_id(connection, project_id))}
         finally:
             connection.close()
 
@@ -413,6 +656,100 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
+        finally:
+            connection.close()
+
+    @app.get("/api/portfolio")
+    def portfolio():
+        connection = connect(paths)
+        try:
+            return fetch_portfolio(connection)
+        finally:
+            connection.close()
+
+    @app.get("/api/notifications")
+    def notifications(project_id: str = None, status: str = None, limit: str = None):
+        parsed_limit = _parse_limit(limit, 20)
+        connection = connect(paths)
+        try:
+            return {
+                "notifications": fetch_notification_outbox(
+                    connection,
+                    project_id=_selected_project_id(connection, project_id) if project_id else None,
+                    status=status,
+                    limit=parsed_limit,
+                    include_archived=False,
+                )
+            }
+        finally:
+            connection.close()
+
+    @app.get("/api/timeline")
+    def timeline(
+        project_id: str = None,
+        task_id: str = None,
+        session_id: str = None,
+        agent_id: str = None,
+        resource_type: str = None,
+        resource_id: str = None,
+        order: str = "desc",
+        limit: str = None,
+    ):
+        parsed_limit = _parse_limit(limit, 100)
+        if order not in {"asc", "desc"}:
+            raise HTTPException(status_code=400, detail="order must be 'asc' or 'desc'")
+        connection = connect(paths)
+        try:
+            return fetch_incident_timeline(
+                connection,
+                project_id=_selected_project_id(connection, project_id),
+                task_id=task_id,
+                session_id=session_id,
+                agent_id=agent_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                limit=parsed_limit,
+                order=order,
+            )
+        finally:
+            connection.close()
+
+    @app.post("/api/orchestrator/run")
+    def orchestrator_run(payload: OrchestratorRunRequest):
+        connection = connect(paths)
+        try:
+            selected_project_id = _selected_project_id(connection, payload.project_id) if payload.project_id else None
+            return run_orchestrator_once(
+                connection,
+                paths,
+                allocate_limit=payload.allocate_limit,
+                provider_job_limit=payload.provider_job_limit,
+                project_id=selected_project_id,
+            )
+        finally:
+            connection.close()
+
+    @app.get("/api/repo/tree")
+    def repo_tree(path: str = "", project_id: str = None):
+        connection = connect(paths)
+        try:
+            return fetch_repo_tree(connection, project_id=_selected_project_id(connection, project_id), path=path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.get("/api/repo/file")
+    def repo_file(path: str, project_id: str = None):
+        connection = connect(paths)
+        try:
+            return fetch_repo_file_preview(connection, project_id=_selected_project_id(connection, project_id), path=path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 
@@ -468,6 +805,28 @@ def create_app(project_root="."):
                 limit=int(limit),
                 project_id=_selected_project_id(connection, project_id),
             )
+        finally:
+            connection.close()
+
+    @app.get("/api/verifications")
+    def verifications(limit=20, task_id: str = None, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id) if project_id is not None else None
+            return {"runs": fetch_verification_runs(connection, project_id=scoped_project_id, task_id=task_id, limit=int(limit))}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.get("/api/tasks/{task_id}/git-workspace")
+    def task_git_workspace(task_id: str):
+        connection = connect(paths)
+        try:
+            workspace = fetch_task_git_workspace(connection, task_id)
+            if workspace is None:
+                raise HTTPException(status_code=404, detail="git workspace not prepared")
+            return workspace
         finally:
             connection.close()
 
@@ -673,6 +1032,23 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/provider-jobs")
+    def provider_jobs(project_id: str = None, provider_id: str = None, status: str = None, limit: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return {
+                "jobs": provider_job_queue(
+                    connection,
+                    project_id=scoped_project_id,
+                    provider_id=provider_id,
+                    status=status,
+                    limit=_parse_limit(limit, 20),
+                )
+            }
+        finally:
+            connection.close()
+
     @app.get("/api/recovery-policy")
     def recovery_policy(project_id: str = None):
         connection = connect(paths)
@@ -741,6 +1117,109 @@ def create_app(project_root="."):
                 task_id=payload.task_id,
                 provider_type=provider_id,
                 artifact_path=payload.artifact_path,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/providers/{provider_id}/actions/queue-task")
+    def provider_queue_task_action(provider_id: str, payload: ProviderQueueRequest):
+        connection = connect(paths)
+        try:
+            return queue_provider_task(
+                connection,
+                project_paths=paths,
+                provider_id=provider_id,
+                actor_id=payload.actor_id,
+                project_id=payload.project_id,
+                agent_id=payload.agent_id,
+                task_id=payload.task_id,
+                artifact_path=payload.artifact_path,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/provider-jobs/{job_id}/actions/process")
+    def provider_process_job_action(job_id: str, payload: ProviderJobProcessRequest):
+        connection = connect(paths)
+        try:
+            return process_provider_job(
+                connection,
+                project_paths=paths,
+                job_id=job_id,
+                actor_id=payload.actor_id,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/provider-jobs/actions/process-next")
+    def provider_process_next_job_action(payload: ProviderJobProcessNextRequest):
+        connection = connect(paths)
+        try:
+            return process_next_provider_job(
+                connection,
+                project_paths=paths,
+                actor_id=payload.actor_id,
+                project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
+                provider_id=payload.provider_id,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/provider-workers/actions/run-once")
+    def provider_worker_run_once_action(payload: ProviderWorkerRunRequest):
+        connection = connect(paths)
+        try:
+            return run_provider_worker_once(
+                connection,
+                project_paths=paths,
+                worker_id=payload.worker_id,
+                project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
+                provider_id=payload.provider_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/notifications/{notification_id}/actions/process")
+    def notification_process_action(notification_id: str, payload: NotificationProcessRequest):
+        connection = connect(paths)
+        try:
+            result = process_notification(connection, notification_id, payload.actor_id)
+            if result is None:
+                raise HTTPException(status_code=404, detail="notification not found")
+            return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/notifications/actions/process-next")
+    def notification_process_next_action(payload: NotificationProcessRequest):
+        connection = connect(paths)
+        try:
+            return process_next_notification(
+                connection,
+                payload.actor_id,
+                project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
@@ -918,6 +1397,42 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.post("/api/tasks/{task_id}/actions/run-verification")
+    def task_run_verification_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return run_task_verification(connection, paths, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/prepare-git-workspace")
+    def task_prepare_git_workspace_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return prepare_task_git_workspace(connection, paths, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/refresh-git-diff")
+    def task_refresh_git_diff_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return capture_task_git_diff(connection, paths, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.post("/api/tasks/{task_id}/actions/halt")
     def task_halt_action(task_id: str, payload: AgentActionRequest):
         connection = connect(paths)
@@ -1014,6 +1529,18 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.post("/api/tasks/{task_id}/actions/reset-circuit-breaker")
+    def task_reset_circuit_breaker_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return reset_task_circuit_breaker(connection, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.post("/api/tasks/{task_id}/actions/resolve-repeated-failures")
     def task_resolve_repeated_failures_action(task_id: str, payload: AgentActionRequest):
         connection = connect(paths)
@@ -1027,10 +1554,14 @@ def create_app(project_root="."):
             connection.close()
 
     @app.post("/api/tasks/actions/refresh-ready")
-    def task_refresh_ready_action():
+    def task_refresh_ready_action(project_id: str = None):
         connection = connect(paths)
         try:
-            return {"changed": refresh_ready_tasks(connection), "tasks": resolve_ready_tasks(connection)}
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return {
+                "changed": refresh_ready_tasks(connection, project_id=scoped_project_id),
+                "tasks": resolve_ready_tasks(connection, project_id=scoped_project_id),
+            }
         finally:
             connection.close()
 
@@ -1048,7 +1579,13 @@ def create_app(project_root="."):
     def task_allocate_ready_action(payload: AllocateTasksRequest):
         connection = connect(paths)
         try:
-            return allocate_ready_tasks(connection, actor_id=payload.actor_id, limit=payload.limit)
+            scoped_project_id = _selected_project_id(connection, payload.project_id)
+            return allocate_ready_tasks(
+                connection,
+                actor_id=payload.actor_id,
+                limit=payload.limit,
+                project_id=scoped_project_id,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -1083,7 +1620,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             limit = None if payload is None else payload.allocate_limit
-            return run_supervisor_once(connection, allocate_limit=limit, project_paths=paths)
+            scoped_project_id = None if payload is None else _selected_project_id(connection, payload.project_id)
+            return run_supervisor_once(connection, allocate_limit=limit, project_paths=paths, project_id=scoped_project_id)
         finally:
             connection.close()
 

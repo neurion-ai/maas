@@ -3,13 +3,25 @@
 import json
 
 from maas.ids import generate_id
-from maas.services.bootstrap import BROWNFIELD_PENDING_REVIEW_STATE, BROWNFIELD_REVIEW_TASK_TITLE
+from maas.services.bootstrap import (
+    BROWNFIELD_PENDING_REVIEW_STATE,
+    BROWNFIELD_REVIEW_TASK_TITLE,
+    default_onboarding_review_overrides,
+    normalize_onboarding_review_overrides,
+)
 from maas.services.artifacts import artifact_scope_rows, purge_artifact_scope
 from maas.services.dead_letter import resolve_dead_letter_entries_for_task
 from maas.services.recovery_policy import (
     fetch_project_recovery_policy,
     recover_and_requeue_cooldown_seconds,
     retry_deadline,
+)
+from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.risk_policy import (
+    evaluate_agent_action_risk,
+    evaluate_task_action_risk,
+    fetch_project_risk_policy,
+    request_risk_escalation,
 )
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import (
@@ -74,34 +86,127 @@ def _set_project_onboarding_review_state(connection, project_id, actor_id, statu
     _save_project_config(connection, project_id, config)
 
 
-def _release_brownfield_onboarding_tasks(connection, project_id):
-    released_rows = connection.execute(
-        """
-        SELECT task_id
-        FROM tasks
-        WHERE project_id = ?
-          AND status = 'blocked'
-          AND review_state = ?
-        """,
-        (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
-    ).fetchall()
-    if not released_rows:
+def _task_source_paths(task):
+    try:
+        criteria = json.loads(task["acceptance_criteria_json"] or "[]")
+    except ValueError:
         return []
+    paths = []
+    for criterion in criteria:
+        if not isinstance(criterion, dict) or criterion.get("type") != "source_path_exists":
+            continue
+        for path in criterion.get("paths") or []:
+            if isinstance(path, str) and path not in paths:
+                paths.append(path)
+    return paths
 
-    connection.execute(
-        """
-        UPDATE tasks
-        SET status = 'planned',
-            review_state = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE project_id = ?
-          AND status = 'blocked'
-          AND review_state = ?
-        """,
-        (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
+
+def _task_paths_all_ignored(task, ignored_paths):
+    if not ignored_paths:
+        return False
+    scoped_paths = _task_source_paths(task)
+    if not scoped_paths:
+        return False
+    return all(
+        any(path == ignored or path.startswith(ignored + "/") for ignored in ignored_paths)
+        for path in scoped_paths
     )
-    refresh_ready_tasks(connection, commit=False)
-    return [row["task_id"] for row in released_rows]
+
+
+def _workflow_review_task_label(task, discovery_summary):
+    prefix = "Validate imported workflow: "
+    if not task["title"].startswith(prefix):
+        return None
+    task_name = task["title"][len(prefix) :].strip()
+    task_paths = set(_task_source_paths(task))
+    exact_match = None
+    fallback_match = None
+    for item in discovery_summary.get("workflow_details") or []:
+        label = item.get("label")
+        if not isinstance(label, str):
+            continue
+        _, _, workflow_name = label.partition(":")
+        if workflow_name != task_name:
+            continue
+        item_path = item.get("path")
+        if item_path and task_paths and item_path in task_paths:
+            exact_match = label
+            break
+        if fallback_match is None:
+            fallback_match = label
+    return exact_match or fallback_match
+
+
+def _load_onboarding_review_decisions(connection, project_id):
+    config = _load_project_config(connection, project_id)
+    onboarding = dict(config.get("onboarding") or {})
+    discovery_summary = onboarding.get("discovery_summary") or {}
+    review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(discovery_summary)
+    return discovery_summary, normalize_onboarding_review_overrides(discovery_summary, review_overrides)
+
+
+def _release_brownfield_onboarding_tasks(connection, project_id):
+    discovery_summary, review_overrides = _load_onboarding_review_decisions(connection, project_id)
+    gated_rows = [
+        dict(row)
+        for row in connection.execute(
+            """
+            SELECT task_id, title, acceptance_criteria_json
+            FROM tasks
+            WHERE project_id = ?
+              AND status = 'blocked'
+              AND review_state = ?
+            """,
+            (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
+        ).fetchall()
+    ]
+    if not gated_rows:
+        return {"released_task_ids": [], "ignored_task_ids": []}
+
+    accepted_workflow_labels = set(review_overrides.get("accepted_workflow_labels") or [])
+    ignored_paths = list(review_overrides.get("ignored_paths") or [])
+    released_task_ids = []
+    ignored_task_ids = []
+    for task in gated_rows:
+        workflow_label = _workflow_review_task_label(task, discovery_summary)
+        should_ignore = False
+        if workflow_label is not None and workflow_label not in accepted_workflow_labels:
+            should_ignore = True
+        elif _task_paths_all_ignored(task, ignored_paths):
+            should_ignore = True
+
+        if should_ignore:
+            ignored_task_ids.append(task["task_id"])
+        else:
+            released_task_ids.append(task["task_id"])
+
+    if released_task_ids:
+        placeholders = ", ".join(["?"] * len(released_task_ids))
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'planned',
+                review_state = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id IN ({0})
+            """.format(placeholders),
+            tuple(released_task_ids),
+        )
+    if ignored_task_ids:
+        placeholders = ", ".join(["?"] * len(ignored_task_ids))
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'cancelled',
+                review_state = 'ignored_onboarding_scope',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id IN ({0})
+            """.format(placeholders),
+            tuple(ignored_task_ids),
+        )
+    if released_task_ids:
+        refresh_ready_tasks(connection, commit=False)
+    return {"released_task_ids": released_task_ids, "ignored_task_ids": ignored_task_ids}
 
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
@@ -132,6 +237,126 @@ def _activity(connection, project_id, agent_id, task_id, action, description, se
         """,
         (generate_id("act"), project_id, agent_id, task_id, action, description, severity),
     )
+
+
+def _maybe_route_task_action_to_escalation(connection, task, actor_id, action_type, payload=None):
+    risk_policy = fetch_project_risk_policy(connection, task["project_id"])
+    risk = evaluate_task_action_risk(connection, task, policy=risk_policy)
+    if not risk["requires_approval"]:
+        return None
+    result = request_risk_escalation(
+        connection,
+        project_id=task["project_id"],
+        actor_id=actor_id,
+        action_type=action_type,
+        resource_type="task",
+        resource_id=task["task_id"],
+        payload=payload,
+        risk=risk,
+    )
+    result["task_id"] = task["task_id"]
+    return result
+
+
+def _maybe_route_agent_action_to_escalation(connection, agent, actor_id, action_type):
+    risk_policy = fetch_project_risk_policy(connection, agent["project_id"])
+    risk = evaluate_agent_action_risk(connection, agent, policy=risk_policy)
+    if not risk["requires_approval"]:
+        return None
+    result = request_risk_escalation(
+        connection,
+        project_id=agent["project_id"],
+        actor_id=actor_id,
+        action_type=action_type,
+        resource_type="agent",
+        resource_id=agent["agent_id"],
+        payload={},
+        risk=risk,
+    )
+    result["agent_id"] = agent["agent_id"]
+    if risk.get("task_id"):
+        result["task_id"] = risk["task_id"]
+    return result
+
+
+def _mark_task_for_replan_internal(
+    connection,
+    task,
+    actor_id,
+    audit_action,
+    activity_action,
+    activity_description,
+    resolution_reason,
+):
+    if task["assigned_agent_id"]:
+        revoke_task_capabilities(
+            connection,
+            task["project_id"],
+            task["task_id"],
+            agent_id=task["assigned_agent_id"],
+            reason=resolution_reason,
+            revoked_by=actor_id,
+        )
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'blocked',
+            assigned_agent_id = NULL,
+            review_state = 'needs_replan',
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task["task_id"],),
+    )
+    resolved_dead_letter_entries = resolve_dead_letter_entries_for_task(
+        connection,
+        task["project_id"],
+        task["task_id"],
+        resolution_reason,
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        audit_action,
+        "task",
+        task["task_id"],
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "previous_agent_id": task["assigned_agent_id"],
+            "previous_next_retry_at": task["next_retry_at"],
+            "previous_next_retry_reason": task["next_retry_reason"],
+            "resolved_dead_letter_entries": resolved_dead_letter_entries,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task["task_id"],
+        activity_action,
+        activity_description,
+        severity="warning",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task["task_id"],
+        actor_id,
+        resolution_reason=resolution_reason,
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        task["project_id"],
+        task["task_id"],
+        actor_id,
+        reason=resolution_reason,
+    )
+    return {"task_id": task["task_id"], "status": "blocked", "review_state": "needs_replan"}
 
 
 def _load_purgeable_artifact_scope(connection, project_paths, actor_id, task_id=None, session_id=None):
@@ -195,19 +420,29 @@ def review_task(connection, task_id, actor_id, decision):
             """,
             (task_id,),
         )
-        released_task_ids = _release_brownfield_onboarding_tasks(connection, task["project_id"])
+        release_result = _release_brownfield_onboarding_tasks(connection, task["project_id"])
         _set_project_onboarding_review_state(connection, task["project_id"], actor_id, "approved", task_id=task_id)
+        repo_plan_result = refresh_repo_grounded_plan(
+            connection,
+            task["project_id"],
+            actor_id,
+            commit=False,
+            enforce_permissions=False,
+        )
         resolved_alert_ids = resolve_brownfield_onboarding_alerts(
             connection,
             task["project_id"],
             actor_id,
             reason="brownfield_onboarding_approved",
         )
-        description = "Brownfield onboarding approved; imported work released for scheduling."
+        description = "Brownfield onboarding approved; imported work released and repo-grounded planning refreshed."
         audit_detail.update(
             {
                 "brownfield_onboarding": True,
-                "released_task_ids": released_task_ids,
+                "released_task_ids": release_result["released_task_ids"],
+                "ignored_task_ids": release_result["ignored_task_ids"],
+                "repo_plan_created_task_ids": repo_plan_result["created_task_ids"],
+                "repo_plan_updated_task_ids": repo_plan_result["updated_task_ids"],
                 "resolved_alert_ids": resolved_alert_ids,
             }
         )
@@ -271,7 +506,7 @@ def review_task(connection, task_id, actor_id, decision):
 def halt_task(connection, task_id, actor_id):
     task = connection.execute(
         """
-        SELECT task_id, project_id, assigned_agent_id, status
+        SELECT task_id, project_id, assigned_agent_id, status, priority, acceptance_criteria_json
         FROM tasks
         WHERE task_id = ?
         """,
@@ -282,6 +517,9 @@ def halt_task(connection, task_id, actor_id):
     ensure_board_action_allowed(connection, actor_id, task["project_id"], "halt_task", "task", task_id)
     if task["status"] in ("done", "cancelled"):
         raise ValueError("Task cannot be halted from status {0}".format(task["status"]))
+    escalated = _maybe_route_task_action_to_escalation(connection, task, actor_id, "halt_task")
+    if escalated is not None:
+        return escalated
 
     connection.execute(
         """
@@ -583,6 +821,101 @@ def reset_task_retry_state(connection, task_id, actor_id):
     }
 
 
+def reset_task_circuit_breaker(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, review_state, retry_count
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "reset_task_circuit_breaker", "task", task_id)
+    if task["status"] != "blocked" or task["review_state"] != "circuit_breaker_open":
+        raise ValueError("Task does not currently have an open circuit breaker")
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'planned',
+            review_state = NULL,
+            assigned_agent_id = NULL,
+            retry_count = 0,
+            last_retry_at = NULL,
+            last_retry_reason = NULL,
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    refreshed = refresh_ready_tasks(connection, commit=False)
+    task_after = connection.execute(
+        """
+        SELECT status, review_state, retry_count, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    resolved_dlq_entries = resolve_dead_letter_entries_for_task(
+        connection,
+        task["project_id"],
+        task_id,
+        "circuit_breaker_reset",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        resolution_reason="circuit_breaker_reset",
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        reason="circuit_breaker_reset",
+        activity_description="Task failure alerts resolved after circuit breaker reset.",
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "reset_task_circuit_breaker",
+        "task",
+        task_id,
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "previous_retry_count": task["retry_count"],
+            "resolved_dead_letter_entries": resolved_dlq_entries,
+            "ready_changes": refreshed,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "circuit_breaker_reset",
+        "Task circuit breaker reset by operator and returned to readiness evaluation.",
+    )
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": task_after["status"],
+        "review_state": task_after["review_state"],
+        "retry_count": task_after["retry_count"],
+        "next_retry_at": task_after["next_retry_at"],
+        "next_retry_reason": task_after["next_retry_reason"],
+    }
+
+
 def mark_task_for_replan(connection, task_id, actor_id):
     task = connection.execute(
         """
@@ -625,69 +958,17 @@ def mark_task_for_replan(connection, task_id, actor_id):
     if active_session is not None:
         raise ValueError("Task cannot be marked for replanning while a session is active")
 
-    if task["assigned_agent_id"]:
-        revoke_task_capabilities(
-            connection,
-            task["project_id"],
-            task_id,
-            agent_id=task["assigned_agent_id"],
-            reason="task_marked_for_replan",
-            revoked_by=actor_id,
-        )
-
-    connection.execute(
-        """
-        UPDATE tasks
-        SET status = 'blocked',
-            assigned_agent_id = NULL,
-            review_state = 'needs_replan',
-            next_retry_at = NULL,
-            next_retry_reason = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE task_id = ?
-        """,
-        (task_id,),
-    )
-    _audit(
+    result = _mark_task_for_replan_internal(
         connection,
-        task["project_id"],
+        task,
         actor_id,
-        "mark_task_for_replan",
-        "task",
-        task_id,
-        {
-            "previous_status": task["status"],
-            "previous_review_state": task["review_state"],
-            "previous_agent_id": task["assigned_agent_id"],
-            "previous_next_retry_at": task["next_retry_at"],
-            "previous_next_retry_reason": task["next_retry_reason"],
-        },
-    )
-    _activity(
-        connection,
-        task["project_id"],
-        task["assigned_agent_id"],
-        task_id,
-        "marked_for_replan",
-        "Task removed from retry/recovery flow and marked for manual replanning.",
-        severity="warning",
-    )
-    resolve_repeated_failure_alerts(
-        connection,
-        task["project_id"],
-        task_id,
-        actor_id,
+        audit_action="mark_task_for_replan",
+        activity_action="marked_for_replan",
+        activity_description="Task removed from retry/recovery flow and marked for manual replanning.",
         resolution_reason="task_marked_for_replan",
     )
-    resolve_task_session_failed_alerts(
-        connection,
-        task["project_id"],
-        task_id,
-        actor_id,
-        reason="task_marked_for_replan",
-    )
     connection.commit()
-    return {"task_id": task_id, "status": "blocked", "review_state": "needs_replan"}
+    return result
 
 
 def finish_task_replan(connection, task_id, actor_id):
@@ -1303,7 +1584,11 @@ def reprioritize_task(connection, task_id, actor_id, priority):
 
 def reassign_task(connection, task_id, actor_id, agent_id):
     task = connection.execute(
-        "SELECT task_id, project_id, status, assigned_agent_id FROM tasks WHERE task_id = ?",
+        """
+        SELECT task_id, project_id, status, assigned_agent_id, priority, acceptance_criteria_json
+        FROM tasks
+        WHERE task_id = ?
+        """,
         (task_id,),
     ).fetchone()
     if task is None:
@@ -1317,6 +1602,15 @@ def reassign_task(connection, task_id, actor_id, agent_id):
     ).fetchone()
     if agent is None:
         raise ValueError("Agent not found")
+    escalated = _maybe_route_task_action_to_escalation(
+        connection,
+        task,
+        actor_id,
+        "reassign_task",
+        payload={"agent_id": agent_id},
+    )
+    if escalated is not None:
+        return escalated
     connection.execute(
         """
         UPDATE tasks
@@ -1372,6 +1666,9 @@ def pause_agent(connection, agent_id, actor_id):
     if agent is None:
         raise ValueError("Agent not found")
     ensure_board_action_allowed(connection, actor_id, agent["project_id"], "pause_agent", "agent", agent_id)
+    escalated = _maybe_route_agent_action_to_escalation(connection, agent, actor_id, "pause_agent")
+    if escalated is not None:
+        return escalated
     connection.execute(
         """
         UPDATE agents
@@ -1419,6 +1716,9 @@ def resume_agent(connection, agent_id, actor_id):
     if agent is None:
         raise ValueError("Agent not found")
     ensure_board_action_allowed(connection, actor_id, agent["project_id"], "resume_agent", "agent", agent_id)
+    escalated = _maybe_route_agent_action_to_escalation(connection, agent, actor_id, "resume_agent")
+    if escalated is not None:
+        return escalated
     connection.execute(
         """
         UPDATE agents

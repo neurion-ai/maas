@@ -7,6 +7,8 @@ import re
 
 from maas.config import DEFAULT_PROVIDER_SETTINGS
 from maas.ids import generate_id
+from maas.services.provider_jobs import default_provider_job_summary, fetch_provider_job_summaries, fetch_provider_jobs
+from maas.services.provider_workers import default_provider_worker_summary, fetch_provider_worker_summary, fetch_provider_workers
 from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
@@ -72,7 +74,7 @@ PROVIDER_RUNTIME_RULES = {
     "claude_code": {
         "available_execution_modes": ["local_simulation", "claude_cli"],
         "live_mode": "claude_cli",
-        "runtime_controls": ["cli_command", "timeout_seconds", "permission_mode", "model"],
+        "runtime_controls": ["cli_command", "timeout_seconds", "permission_mode", "model", "job_limit_per_pass", "queue_paused"],
         "notes": {
             "configured": "Local Claude Code CLI integration enabled by project config.",
             "misconfigured": "Claude Code runtime configuration is invalid; task execution is blocked until fixed.",
@@ -81,7 +83,7 @@ PROVIDER_RUNTIME_RULES = {
     "openai_codex": {
         "available_execution_modes": ["local_simulation", "codex_cli"],
         "live_mode": "codex_cli",
-        "runtime_controls": ["cli_command", "timeout_seconds", "sandbox", "model"],
+        "runtime_controls": ["cli_command", "timeout_seconds", "sandbox", "model", "job_limit_per_pass", "queue_paused"],
         "notes": {
             "configured": "Local Codex CLI integration enabled by project config.",
             "misconfigured": "OpenAI Codex runtime configuration is invalid; task execution is blocked until fixed.",
@@ -90,7 +92,7 @@ PROVIDER_RUNTIME_RULES = {
     "python_script": {
         "available_execution_modes": ["local_simulation"],
         "live_mode": None,
-        "runtime_controls": [],
+        "runtime_controls": ["job_limit_per_pass", "queue_paused"],
         "notes": {
             "configured": "Reference local runtime with normalized runtime phase reporting.",
             "misconfigured": "Python Script runtime configuration is invalid; task execution is blocked until fixed.",
@@ -217,6 +219,36 @@ def _normalize_codex_sandbox(provider_name, value, warnings):
     return sandbox
 
 
+def _normalize_job_limit_per_pass(provider_name, value, warnings):
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        warnings.append("{0} job_limit_per_pass must be a non-negative integer.".format(provider_name))
+        return None
+    if limit < 0:
+        warnings.append("{0} job_limit_per_pass must be zero or greater.".format(provider_name))
+        return None
+    return limit
+
+
+def _normalize_queue_paused(provider_name, value, warnings):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value)
+        warnings.append("{0} queue_paused must be a boolean.".format(provider_name))
+        return False
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off", ""}:
+            return False
+    warnings.append("{0} queue_paused must be a boolean.".format(provider_name))
+    return False
+
+
 def _provider_guardrails(provider_id):
     guardrails = [
         "CLI commands are restricted to executable names, not arbitrary paths.",
@@ -254,11 +286,24 @@ def _resolve_provider_status(provider, config):
     warnings = []
     raw_mode = _normalize_string_setting(provider["name"], "mode", merged_settings.get("mode"), warnings) or "local_simulation"
     configured_mode = "local_simulation" if raw_mode in ("simulated", "local_simulation") else raw_mode
+    merged_settings["job_limit_per_pass"] = _normalize_job_limit_per_pass(
+        provider["name"],
+        merged_settings.get("job_limit_per_pass"),
+        warnings,
+    )
+    merged_settings["queue_paused"] = _normalize_queue_paused(
+        provider["name"],
+        merged_settings.get("queue_paused"),
+        warnings,
+    )
 
     provider["available_execution_modes"] = list(rules["available_execution_modes"])
     provider["configured_execution_mode"] = configured_mode
     provider["effective_execution_mode"] = provider["execution_mode"]
-    provider["runtime_controls"] = {}
+    provider["runtime_controls"] = {
+        "job_limit_per_pass": merged_settings.get("job_limit_per_pass"),
+        "queue_paused": merged_settings.get("queue_paused"),
+    }
     provider["configurable_runtime_controls"] = {
         key: merged_settings.get(key, "")
         for key in rules["runtime_controls"]
@@ -631,6 +676,13 @@ def fetch_provider_runtime_overview(connection=None, project_id=None):
     return {
         "providers": list_provider_status(connection=connection, project_id=project_id),
         "run_targets": _provider_run_targets(connection, project_id),
+        "job_queue": fetch_provider_jobs(connection, project_id=project_id, limit=12),
+        "worker_summary": fetch_provider_worker_summary(connection, project_id=project_id)
+        if connection is not None
+        else default_provider_worker_summary(),
+        "worker_pool": fetch_provider_workers(connection, project_id=project_id, limit=12)
+        if connection is not None
+        else [],
     }
 
 
@@ -699,6 +751,30 @@ def _normalize_provider_setting_value(provider_name, setting_name, value):
         if timeout_value <= 0:
             raise ValueError("{0} timeout_seconds must be greater than zero.".format(provider_name))
         return timeout_value
+
+    if setting_name == "job_limit_per_pass":
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("{0} job_limit_per_pass must be a non-negative integer.".format(provider_name))
+        if limit < 0:
+            raise ValueError("{0} job_limit_per_pass must be zero or greater.".format(provider_name))
+        return limit
+
+    if setting_name == "queue_paused":
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            if value in (0, 1):
+                return bool(value)
+            raise ValueError("{0} queue_paused must be a boolean.".format(provider_name))
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off", ""}:
+                return False
+        raise ValueError("{0} queue_paused must be a boolean.".format(provider_name))
 
     if setting_name == "cli_command":
         if value is None or not isinstance(value, str):
@@ -838,6 +914,7 @@ def list_provider_status(connection=None, project_id=None):
     provider_config = _project_provider_config(connection, project_id)
     run_history = _provider_run_history(connection, project_id)
     preflight_history = _provider_preflight_history(connection, project_id)
+    job_summaries = fetch_provider_job_summaries(connection, project_id)
     providers = []
     for provider in list_providers():
         resolved_provider, _ = _resolve_provider_status(provider, provider_config.get(provider["id"]) or {})
@@ -860,5 +937,6 @@ def list_provider_status(connection=None, project_id=None):
         )
         resolved_provider["recent_runs"] = run_history.get("recent_runs", {}).get(provider["id"], [])
         resolved_provider["latest_preflight"] = preflight_history.get(provider["id"])
+        resolved_provider["job_summary"] = job_summaries.get(provider["id"], default_provider_job_summary())
         providers.append(resolved_provider)
     return providers

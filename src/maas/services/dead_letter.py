@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.notifications import queue_notification_event
 
 
 def upsert_dead_letter_entry(connection, project_id, task_id, reason, detail=None, failure_id=None):
@@ -41,6 +42,17 @@ def upsert_dead_letter_entry(connection, project_id, task_id, reason, detail=Non
         """,
         (dlq_id, project_id, task_id, failure_id, reason, detail_json),
     )
+    queue_notification_event(
+        connection,
+        project_id,
+        event_type="dead_letter_opened",
+        severity="warning",
+        title="Dead-letter entry opened",
+        body="Task {0} entered the dead-letter queue for reason {1}.".format(task_id, reason),
+        resource_type="task",
+        resource_id=task_id,
+        payload={"dlq_id": dlq_id, "reason": reason, "detail": detail or {}, "failure_id": failure_id},
+    )
     return dlq_id
 
 
@@ -73,9 +85,8 @@ def resolve_dead_letter_entries_for_task(connection, project_id, task_id, resolu
     return [row["dlq_id"] for row in rows]
 
 
-def fetch_dead_letter_queue(connection, project_id, limit=8):
-    rows = connection.execute(
-        """
+def fetch_dead_letter_queue(connection, project_id, limit=8, reason=None):
+    query = """
         SELECT
             dead_letter_queue.dlq_id,
             dead_letter_queue.project_id,
@@ -105,11 +116,14 @@ def fetch_dead_letter_queue(connection, project_id, limit=8):
         LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
         WHERE dead_letter_queue.project_id = ?
           AND dead_letter_queue.status = 'open'
-        ORDER BY dead_letter_queue.created_at DESC
-        LIMIT ?
-        """,
-        (project_id, limit),
-    ).fetchall()
+    """
+    parameters = [project_id]
+    if reason is not None:
+        query += "\n  AND dead_letter_queue.reason = ?"
+        parameters.append(reason)
+    query += "\n        ORDER BY dead_letter_queue.created_at DESC\n        LIMIT ?"
+    parameters.append(limit)
+    rows = connection.execute(query, tuple(parameters)).fetchall()
     items = []
     for row in rows:
         item = dict(row)

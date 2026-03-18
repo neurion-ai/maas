@@ -11,7 +11,7 @@ from maas.services.bootstrap import bootstrap_project
 from maas.ids import generate_id
 from maas.services.alerts import fetch_alerts
 from maas.services.lifecycle import end_session, heartbeat, produce_artifact
-from maas.services.projects import resolve_project_id
+from maas.services.projects import create_project, resolve_project_id
 from maas.supervisor import run_supervisor_once
 
 
@@ -81,6 +81,78 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(planned_task["assigned_agent_id"], "agent_researcher")
             self.assertEqual(ready_task["status"], "assigned")
             self.assertEqual(ready_task["assigned_agent_id"], "agent_allocator")
+
+    def test_supervisor_prioritizes_projects_with_less_scheduler_pressure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Supervisor Fairness Test", description="Supervisor fairness test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]
+                second_project_id = second_project["project_id"]
+                project_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (primary_project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["scheduler"] = {"fair_share_weight": 1, "max_active_sessions": 2}
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), primary_project_id),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=1, project_paths=result["paths"])
+            finally:
+                connection.close()
+
+            self.assertEqual(supervisor_result["assigned_count"], 1)
+            self.assertEqual(supervisor_result["allocations"][0]["project_id"], second_project_id)
+            self.assertEqual([item["project_id"] for item in supervisor_result["project_runs"]][:2], [second_project_id, primary_project_id])
+
+    def test_supervisor_skips_allocation_when_project_hits_scheduler_capacity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Supervisor Capacity Test", description="Supervisor capacity test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]
+                second_project_id = second_project["project_id"]
+                project_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (primary_project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["scheduler"] = {"fair_share_weight": 1, "max_active_sessions": 1}
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), primary_project_id),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=1, project_paths=result["paths"])
+            finally:
+                connection.close()
+
+            primary_run = next(item for item in supervisor_result["project_runs"] if item["project_id"] == primary_project_id)
+            self.assertEqual(primary_run["allocation_skipped_reason"], "max_active_sessions")
+            self.assertEqual(supervisor_result["allocations"][0]["project_id"], second_project_id)
 
     def test_supervisor_marks_stale_sessions_and_agents(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -435,6 +507,89 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(dead_letter["status"], "open")
             self.assertEqual(json.loads(dead_letter["detail_json"])["failure_type"], "session_timed_out")
 
+    def test_supervisor_opens_circuit_breaker_when_timeout_retry_budget_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Circuit Breaker Test",
+                description="Supervisor circuit breaker test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_timeout_sessions=True,
+                    auto_dlq_retry_exhausted_tasks=True,
+                    auto_open_task_circuit_breakers=True,
+                    max_timed_out_retries=1,
+                    timed_out_retry_cooldown_seconds=60,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letters = connection.execute(
+                    """
+                    SELECT reason, status, detail_json
+                    FROM dead_letter_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (task_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertFalse(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertTrue(supervisor_result["stale_sessions"][0]["dead_lettered"])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "circuit_breaker_open")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_timed_out")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual([item["reason"] for item in dead_letters], ["retry_budget_exhausted", "circuit_breaker_open"])
+            self.assertEqual(dead_letters[0]["status"], "open")
+            self.assertEqual(dead_letters[1]["status"], "open")
+            self.assertEqual(json.loads(dead_letters[0]["detail_json"])["failure_type"], "session_timed_out")
+            self.assertEqual(
+                json.loads(dead_letters[1]["detail_json"]),
+                {
+                    "trigger": "retry_budget_exhausted",
+                    "failure_count": None,
+                    "threshold": 3,
+                    "retry_limit": 1,
+                    "retry_count": 1,
+                },
+            )
+
     def test_supervisor_auto_recovers_safe_blocked_failed_task_when_policy_allows(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(
@@ -586,6 +741,71 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(task["retry_count"], 1)
             self.assertEqual(task["last_retry_reason"], "blocked_task_auto_recovered")
 
+    def test_supervisor_auto_routes_clear_circuit_breaker_to_replan_when_policy_allows(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Auto Replan Test",
+                description="Auto route circuit breaker to replanning",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                self._update_recovery_config(
+                    connection,
+                    project_id=project_id,
+                    auto_retry_timeout_sessions=False,
+                    auto_route_circuit_breakers_to_replan=True,
+                    circuit_breaker_replan_after_seconds=0,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_supervisor_auto_replan', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                task = connection.execute(
+                    "SELECT status, review_state, next_retry_at FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT status, resolution_note
+                    FROM dead_letter_queue
+                    WHERE dlq_id = 'dlq_supervisor_auto_replan'
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(supervisor_result["auto_replanned_tasks"]), 1)
+            self.assertEqual(supervisor_result["auto_replanned_tasks"][0]["task_id"], task_id)
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "needs_replan")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "auto_marked_for_replan")
+
     def test_recover_action_can_requeue_stale_session_task_without_resetting_agent_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(
@@ -715,6 +935,96 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertIn("ready_changes", payload)
             self.assertIn("allocations", payload)
             self.assertEqual(payload["assigned_count"], 1)
+            self.assertIn("project_runs", payload)
+            self.assertEqual(len(payload["project_runs"]), 1)
+
+    def test_supervisor_api_can_scope_run_to_selected_project(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Scoped API Test",
+                description="Supervisor scoped API test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project_id = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]["project_id"]
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/supervisor/run",
+                json={"allocate_limit": 2, "project_id": primary_project_id},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            connection = connect(result["paths"])
+            try:
+                primary_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (primary_project_id,),
+                ).fetchone()["count"]
+                second_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (second_project_id,),
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+
+            self.assertEqual(payload["assigned_count"], 2)
+            self.assertEqual([item["project_id"] for item in payload["project_runs"]], [primary_project_id])
+            self.assertGreater(primary_assigned, 0)
+            self.assertEqual(second_assigned, 0)
+
+    def test_supervisor_default_run_iterates_all_active_projects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Multi Project Test",
+                description="Supervisor multi project test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project_id = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]["project_id"]
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=4, project_paths=result["paths"])
+                primary_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (primary_project_id,),
+                ).fetchone()["count"]
+                second_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (second_project_id,),
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+
+            project_ids = [item["project_id"] for item in supervisor_result["project_runs"]]
+            self.assertEqual(set(project_ids), {primary_project_id, second_project_id})
+            self.assertEqual(supervisor_result["assigned_count"], 4)
+            self.assertGreater(primary_assigned, 0)
+            self.assertGreater(second_assigned, 0)
 
     def test_stale_session_does_not_clobber_agent_with_other_active_session(self):
         with tempfile.TemporaryDirectory() as tmpdir:

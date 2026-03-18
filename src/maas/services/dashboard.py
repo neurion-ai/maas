@@ -3,9 +3,11 @@
 from datetime import datetime
 import json
 
+from maas.services.bootstrap import apply_onboarding_review_overrides, default_onboarding_review_overrides
 from maas.services.escalations import fetch_escalations
 from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_repeated_failure_tasks, repeated_failure_task_count
 from maas.services.projects import resolve_project
+from maas.services.repo_plan import build_repo_plan_preview
 
 
 BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
@@ -43,17 +45,28 @@ def _derive_onboarding_state(connection, project_row):
     config = _load_project_config(project_row["config_json"])
     onboarding = dict(config.get("onboarding") or {})
     mode = onboarding.get("mode") or "greenfield"
+    raw_summary = onboarding.get("discovery_summary") or {}
+    review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(raw_summary)
+    discovery_summary = apply_onboarding_review_overrides(raw_summary, review_overrides)
+    repo_plan_preview = build_repo_plan_preview(discovery_summary)
+    repo_plan_state = onboarding.get("repo_plan") or None
 
     if mode != "brownfield":
         return {
             "mode": mode,
             "review_status": onboarding.get("review_status") or "not_applicable",
             "review_required": False,
-            "discovery_summary": onboarding.get("discovery_summary") or {},
+            "discovery_summary": discovery_summary,
+            "review_overrides": review_overrides,
+            "repo_plan_preview": repo_plan_preview,
+            "repo_plan_state": repo_plan_state,
             "review_task_id": None,
             "review_task_status": None,
             "review_task_review_state": None,
             "pending_gated_tasks": 0,
+            "last_scanned_at": onboarding.get("last_scanned_at"),
+            "last_scanned_by": onboarding.get("last_scanned_by"),
+            "drift_summary": onboarding.get("drift_summary"),
             "reviewed_by": onboarding.get("reviewed_by"),
             "reviewed_at": onboarding.get("reviewed_at"),
         }
@@ -94,11 +107,17 @@ def _derive_onboarding_state(connection, project_row):
         "mode": "brownfield",
         "review_status": review_status,
         "review_required": review_status != "approved",
-        "discovery_summary": onboarding.get("discovery_summary") or {},
+        "discovery_summary": discovery_summary,
+        "review_overrides": review_overrides,
+        "repo_plan_preview": repo_plan_preview,
+        "repo_plan_state": repo_plan_state,
         "review_task_id": review_task["task_id"] if review_task else onboarding.get("review_task_id"),
         "review_task_status": review_task["status"] if review_task else None,
         "review_task_review_state": review_task["review_state"] if review_task else None,
         "pending_gated_tasks": pending_gated_tasks,
+        "last_scanned_at": onboarding.get("last_scanned_at"),
+        "last_scanned_by": onboarding.get("last_scanned_by"),
+        "drift_summary": onboarding.get("drift_summary"),
         "reviewed_by": onboarding.get("reviewed_by"),
         "reviewed_at": onboarding.get("reviewed_at"),
     }

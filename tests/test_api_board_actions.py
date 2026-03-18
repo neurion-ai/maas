@@ -53,6 +53,25 @@ lint = "example:main"
         finally:
             connection.close()
 
+    def _update_risk_policy(self, project_root, priority_threshold=90, sensitive_path_prefixes=None):
+        connection = connect(project_paths(project_root))
+        try:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects LIMIT 1"
+            ).fetchone()
+            config = json.loads(project["config_json"] or "{}")
+            config["risk_policy"] = {
+                "priority_threshold": priority_threshold,
+                "sensitive_path_prefixes": sensitive_path_prefixes or [],
+            }
+            connection.execute(
+                "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                (json.dumps(config), project["project_id"]),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
     def test_board_filters_and_review_action(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="API Test", description="API board actions", project_type="custom")
@@ -111,6 +130,229 @@ lint = "example:main"
             self.assertEqual(matching_cards[0]["status"], "planned")
             self.assertEqual(matching_cards[0]["review_state"], "changes_requested")
 
+    def test_risky_reassign_routes_to_escalation_instead_of_executing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Risk Reassign Test", description="risk reassign", project_type="custom")
+            self._update_risk_policy(tmpdir, priority_threshold=90)
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    WHERE status = 'planned'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                target_agent_id = connection.execute(
+                    """
+                    SELECT agent_id
+                    FROM agents
+                    WHERE project_id = ? AND role = 'builder'
+                    LIMIT 1
+                    """,
+                    (task["project_id"],),
+                ).fetchone()["agent_id"]
+                connection.execute(
+                    "UPDATE tasks SET priority = 95 WHERE task_id = ?",
+                    (task["task_id"],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/tasks/{task['task_id']}/actions/reassign",
+                json={"actor_id": "agent_allocator", "agent_id": target_agent_id},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "escalated")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                updated_task = connection.execute(
+                    "SELECT status, assigned_agent_id FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+                escalation = connection.execute(
+                    """
+                    SELECT action_type, resource_type, resource_id, payload_json, status
+                    FROM escalation_queue
+                    WHERE resource_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_task["status"], "planned")
+            self.assertEqual(updated_task["assigned_agent_id"], task["assigned_agent_id"])
+            self.assertEqual(escalation["action_type"], "reassign_task")
+            self.assertEqual(escalation["resource_type"], "task")
+            self.assertEqual(escalation["status"], "open")
+            self.assertEqual(json.loads(escalation["payload_json"])["agent_id"], target_agent_id)
+
+    def test_risky_halt_routes_to_escalation_for_sensitive_task_scope(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Risk Halt Test", description="risk halt", project_type="custom")
+            self._update_risk_policy(tmpdir, priority_threshold=100, sensitive_path_prefixes=["src/payments"])
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE status = 'planned'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {
+                                    "type": "source_path_exists",
+                                    "paths": ["src/payments/checkout.py"],
+                                }
+                            ]
+                        ),
+                        task["task_id"],
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/tasks/{task['task_id']}/actions/halt",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "escalated")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                updated_task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_task["status"], "planned")
+            self.assertIsNone(updated_task["review_state"])
+
+    def test_risky_pause_agent_routes_to_escalation_using_current_task_scope(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Risk Pause Agent Test", description="risk pause", project_type="custom")
+            self._update_risk_policy(tmpdir, priority_threshold=100, sensitive_path_prefixes=["src/runtime"])
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                agent = connection.execute(
+                    """
+                    SELECT agent_id, project_id
+                    FROM agents
+                    WHERE role = 'builder'
+                    LIMIT 1
+                    """
+                ).fetchone()
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ? AND status = 'ready'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (agent["project_id"],),
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress',
+                        assigned_agent_id = ?,
+                        acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        agent["agent_id"],
+                        json.dumps(
+                            [
+                                {
+                                    "type": "source_path_exists",
+                                    "paths": ["src/runtime/runner.py"],
+                                }
+                            ]
+                        ),
+                        task["task_id"],
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'running',
+                        current_task_id = ?
+                    WHERE agent_id = ?
+                    """,
+                    (task["task_id"], agent["agent_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/agents/{agent['agent_id']}/actions/pause",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "escalated")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                updated_agent = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = ?",
+                    (agent["agent_id"],),
+                ).fetchone()
+                updated_task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+                escalation = connection.execute(
+                    """
+                    SELECT action_type, resource_type, resource_id, status
+                    FROM escalation_queue
+                    WHERE resource_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (agent["agent_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(updated_agent["status"], "running")
+            self.assertEqual(updated_agent["current_task_id"], task["task_id"])
+            self.assertEqual(updated_task["status"], "in_progress")
+            self.assertIsNone(updated_task["review_state"])
+            self.assertEqual(escalation["action_type"], "pause_agent")
+            self.assertEqual(escalation["resource_type"], "agent")
+            self.assertEqual(escalation["status"], "open")
+
     def test_approving_brownfield_review_releases_gated_tasks_and_resolves_alert(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._seed_brownfield_repo(tmpdir)
@@ -148,6 +390,13 @@ lint = "example:main"
                     WHERE title = 'Brownfield onboarding review pending' AND status != 'resolved'
                     """
                 ).fetchone()["count"]
+                repo_plan_tasks = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM tasks
+                    WHERE synthesis_origin = 'repo_grounded_plan'
+                    """
+                ).fetchone()["count"]
                 ready_or_planned = connection.execute(
                     """
                     SELECT COUNT(*) AS count
@@ -160,9 +409,11 @@ lint = "example:main"
                 connection.close()
 
             self.assertEqual(config["onboarding"]["review_status"], "approved")
+            self.assertGreater(repo_plan_tasks, 0)
+            self.assertEqual(config["onboarding"]["repo_plan"]["generated_task_count"], repo_plan_tasks)
             self.assertEqual(released_tasks, 0)
             self.assertEqual(open_alerts, 0)
-            self.assertEqual(ready_or_planned, 6)
+            self.assertEqual(ready_or_planned, 6 + repo_plan_tasks)
 
     def test_rejecting_brownfield_review_keeps_imported_tasks_gated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -210,6 +461,58 @@ lint = "example:main"
             self.assertEqual(updated_review_task["review_state"], "changes_requested")
             self.assertEqual(config["onboarding"]["review_status"], "changes_requested")
             self.assertEqual(gated_tasks, 6)
+
+    def test_approving_brownfield_review_cancels_ignored_imported_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._seed_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Scoped Approval Test", description="brownfield scoped review", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["onboarding"]["review_overrides"] = {
+                    "ignored_paths": ["tests"],
+                    "accepted_workflow_labels": ["python_script:lint"],
+                    "accepted_runbook_labels": ["python_script:lint"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            review_payload = client.get("/api/board", params={"search": "Review imported project understanding"}).json()
+            review_task = [
+                task
+                for column in review_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Review imported project understanding"
+            ][0]
+
+            response = client.post(
+                f"/api/tasks/{review_task['task_id']}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_statuses = {
+                    row["title"]: (row["status"], row["review_state"])
+                    for row in connection.execute(
+                        "SELECT title, status, review_state FROM tasks"
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual(task_statuses["Validate imported workflow: test"], ("cancelled", "ignored_onboarding_scope"))
+            self.assertEqual(task_statuses["Map imported test surface: tests"], ("cancelled", "ignored_onboarding_scope"))
+            self.assertEqual(task_statuses["Validate imported workflow: lint"][1], None)
 
     def test_pause_resume_and_reprioritize_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -523,6 +826,108 @@ lint = "example:main"
             self.assertEqual(response.status_code, 400)
             self.assertIn("no retry state", response.json()["detail"])
 
+    def test_reset_circuit_breaker_clears_block_and_resolves_incidents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Reset Circuit Breaker Test", description="Reset circuit breaker", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_at = CURRENT_TIMESTAMP,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_reset_circuit_breaker', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES
+                        ('alert_reset_circuit_failure', ?, 'warning', 'Task session failed', ?, 'open'),
+                        ('alert_reset_circuit_repeated', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        f"Task {task_id} failed in session sess_reset_circuit. Failure.",
+                        project_id,
+                        f"Task {task_id} (Wire the scheduler and board read model) has failed 3 times. Latest failure: Failure",
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/tasks/{task_id}/actions/reset-circuit-breaker",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ready")
+            self.assertIsNone(payload["review_state"])
+            self.assertEqual(payload["retry_count"], 0)
+            self.assertIsNone(payload["next_retry_at"])
+            self.assertIsNone(payload["next_retry_reason"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT status, resolution_note
+                    FROM dead_letter_queue
+                    WHERE dlq_id = 'dlq_reset_circuit_breaker'
+                    """
+                ).fetchone()
+                alerts = connection.execute(
+                    """
+                    SELECT title, status
+                    FROM alerts
+                    WHERE alert_id IN ('alert_reset_circuit_failure', 'alert_reset_circuit_repeated')
+                    ORDER BY alert_id
+                    """
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "ready")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 0)
+            self.assertIsNone(task["last_retry_reason"])
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "circuit_breaker_reset")
+            self.assertEqual([(row["title"], row["status"]) for row in alerts], [
+                ("Task session failed", "resolved"),
+                ("Repeated task failures", "resolved"),
+            ])
+
     def test_mark_for_replan_and_finish_replan_move_task_through_replanning_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Replan Task Test", description="Replan task steering", project_type="custom")
@@ -607,6 +1012,57 @@ lint = "example:main"
             self.assertIsNone(task_after_finish["review_state"])
             self.assertEqual(dead_letter["status"], "resolved")
             self.assertEqual(dead_letter["resolution_note"], "replan_finished")
+
+    def test_mark_for_replan_resolves_open_dead_letter_entries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Replan Task Test", description="Replan task steering", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_mark_replan', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/tasks/{task_id}/actions/mark-for-replan",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                dead_letter = connection.execute(
+                    "SELECT status, resolution_note FROM dead_letter_queue WHERE dlq_id = 'dlq_mark_replan'"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "task_marked_for_replan")
 
     def test_mark_for_replan_allows_tasks_waiting_only_on_next_retry_deadline(self):
         with tempfile.TemporaryDirectory() as tmpdir:

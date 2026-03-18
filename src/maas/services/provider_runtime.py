@@ -1,10 +1,13 @@
 """Provider adapter execution helpers."""
 
+from datetime import datetime, timezone
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 
+from maas.ids import generate_id
 from maas.providers import (
     fetch_provider_runtime_overview,
     get_provider_runtime_settings,
@@ -12,8 +15,20 @@ from maas.providers import (
     update_provider_mode,
     update_provider_settings,
 )
+from maas.services.provider_jobs import (
+    complete_provider_job,
+    fail_provider_job,
+    fetch_provider_job,
+    fetch_provider_jobs,
+    find_open_provider_job,
+    insert_provider_job,
+    next_queued_provider_job_id,
+    start_provider_job,
+)
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
-from maas.services.projects import resolve_project_id
+from maas.services.projects import resolve_project, resolve_project_id
+from maas.services.queue_capacity import can_start_provider_jobs
+from maas.services.runtime_quotas import ensure_runtime_quotas_allow_provider_run
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -136,9 +151,52 @@ def _provider_activity_details(provider, phase, **extra):
     return details
 
 
-def _runtime_env(project_paths, provider):
-    runtime_tmp_dir = os.path.join(project_paths.runtime_dir, "tmp")
+def _project_runtime_context(connection, project_paths, project_id):
+    project = resolve_project(connection, project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    source_root = os.path.abspath(project["source_root"] or project_paths.root)
+    if not os.path.isdir(source_root):
+        raise ValueError("Project source root is not available for provider runtime.")
+    project_paths.ensure_project_workspace(project["project_id"])
+    runtime_dir = project_paths.project_runtime_dir(project["project_id"])
+    runtime_tmp_dir = project_paths.project_runtime_tmp_dir(project["project_id"])
     os.makedirs(runtime_tmp_dir, exist_ok=True)
+    return {
+        "project_id": project["project_id"],
+        "source_root": source_root,
+        "project_runtime_dir": runtime_dir,
+        "runtime_dir": runtime_dir,
+        "runtime_tmp_dir": runtime_tmp_dir,
+    }
+
+
+def _create_runtime_envelope(project_paths, runtime_context, provider_id, purpose, envelope_id=None, session_id=None):
+    resolved_envelope_id = envelope_id or session_id or generate_id("run")
+    envelope = project_paths.ensure_runtime_envelope(runtime_context["project_id"], resolved_envelope_id)
+    manifest = {
+        "envelope_id": resolved_envelope_id,
+        "purpose": purpose,
+        "provider_id": provider_id,
+        "project_id": runtime_context["project_id"],
+        "session_id": session_id,
+        "source_root": runtime_context["source_root"],
+        "project_runtime_root": runtime_context["project_runtime_dir"],
+        "runtime_root": envelope["root"],
+        "home_dir": envelope["home_dir"],
+        "tmp_dir": envelope["tmp_dir"],
+        "cache_dir": envelope["cache_dir"],
+        "config_dir": envelope["config_dir"],
+        "data_dir": envelope["data_dir"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with open(envelope["manifest_path"], "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+    envelope["manifest"] = manifest
+    return envelope
+
+
+def _runtime_env(project_paths, provider, runtime_context, runtime_envelope=None):
     env = {}
     for key in SAFE_RUNTIME_ENV_KEYS:
         value = os.environ.get(key)
@@ -148,12 +206,29 @@ def _runtime_env(project_paths, provider):
         value = os.environ.get(key)
         if value:
             env[key] = value
-    env["MAAS_PROJECT_ROOT"] = project_paths.root
-    env["MAAS_RUNTIME_ROOT"] = project_paths.runtime_dir
+    env["MAAS_PROJECT_ID"] = runtime_context["project_id"]
+    env["MAAS_PROJECT_ROOT"] = runtime_context["source_root"]
+    env["MAAS_PROJECT_RUNTIME_ROOT"] = runtime_context["project_runtime_dir"]
     env["MAAS_ARTIFACT_ROOT"] = project_paths.artifacts_dir
-    env["TMPDIR"] = runtime_tmp_dir
-    env["TMP"] = runtime_tmp_dir
-    env["TEMP"] = runtime_tmp_dir
+    if runtime_envelope is None:
+        runtime_envelope = {
+            "root": runtime_context["runtime_dir"],
+            "home_dir": runtime_context["runtime_dir"],
+            "tmp_dir": runtime_context["runtime_tmp_dir"],
+            "cache_dir": runtime_context["runtime_dir"],
+            "config_dir": runtime_context["runtime_dir"],
+            "data_dir": runtime_context["runtime_dir"],
+            "manifest_path": "",
+        }
+    env["MAAS_RUNTIME_ROOT"] = runtime_envelope["root"]
+    env["MAAS_RUNTIME_MANIFEST"] = runtime_envelope.get("manifest_path") or ""
+    env["HOME"] = runtime_envelope["home_dir"]
+    env["XDG_CACHE_HOME"] = runtime_envelope["cache_dir"]
+    env["XDG_CONFIG_HOME"] = runtime_envelope["config_dir"]
+    env["XDG_DATA_HOME"] = runtime_envelope["data_dir"]
+    env["TMPDIR"] = runtime_envelope["tmp_dir"]
+    env["TMP"] = runtime_envelope["tmp_dir"]
+    env["TEMP"] = runtime_envelope["tmp_dir"]
     return env
 
 
@@ -201,6 +276,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
     scoped_project_id = resolve_project_id(connection, project_id)
     if scoped_project_id is None:
         raise ValueError("Project not found")
+    runtime_context = _project_runtime_context(connection, project_paths, scoped_project_id)
     ensure_board_action_allowed(connection, actor_id, scoped_project_id, "check_provider_runtime", "provider", provider_id)
     providers = list_provider_status(connection=connection, project_id=scoped_project_id)
     provider = next((item for item in providers if item["id"] == provider_id), None)
@@ -256,7 +332,14 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
             "issues": [],
         }
 
-    runtime_env = _runtime_env(project_paths, {"id": provider_id})
+    runtime_envelope = _create_runtime_envelope(
+        project_paths,
+        runtime_context,
+        provider_id,
+        purpose="preflight",
+        envelope_id=generate_id("run"),
+    )
+    runtime_env = _runtime_env(project_paths, {"id": provider_id}, runtime_context, runtime_envelope=runtime_envelope)
     missing_env = [key for key in PROVIDER_REQUIRED_ENV_KEYS.get(provider_id, ()) if not runtime_env.get(key)]
     command = _provider_preflight_command(provider_id, provider_settings)
     issues = []
@@ -293,7 +376,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
     try:
         result = subprocess.run(
             command,
-            cwd=project_paths.root,
+            cwd=runtime_context["source_root"],
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -411,7 +494,79 @@ def _task_prompt(connection, task_id):
     return "Task: {0}\n\nReturn a concise completion summary.".format(row["title"])
 
 
-def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
+def _provider_run_target(connection, project_id, task_id, agent_id):
+    return connection.execute(
+        """
+        SELECT
+            tasks.project_id,
+            tasks.task_id,
+            tasks.title,
+            tasks.status,
+            tasks.priority,
+            tasks.review_state,
+            tasks.assigned_agent_id AS agent_id
+        FROM tasks
+        WHERE tasks.project_id = ?
+          AND tasks.task_id = ?
+          AND tasks.assigned_agent_id = ?
+          AND tasks.status IN ('planned', 'ready', 'assigned')
+          AND (
+              tasks.next_retry_at IS NULL
+              OR datetime(tasks.next_retry_at) <= CURRENT_TIMESTAMP
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM task_capability_grants grants
+              WHERE grants.project_id = tasks.project_id
+                AND grants.task_id = tasks.task_id
+                AND grants.agent_id = tasks.assigned_agent_id
+                AND grants.capability = 'execute'
+                AND grants.revoked_at IS NULL
+          )
+        """,
+        (project_id, task_id, agent_id),
+    ).fetchone()
+
+
+def _audit_provider_job(connection, project_id, actor_id, action_type, job_id, detail):
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, ?, 'provider_job', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            action_type,
+            job_id,
+            json.dumps(detail),
+        ),
+    )
+
+
+def _activity_provider_job(connection, project_id, agent_id, task_id, action, description, details, severity="info"):
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, ?, 'runtime', ?, ?, ?)
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            agent_id,
+            task_id,
+            action,
+            description,
+            json.dumps(details),
+            severity,
+        ),
+    )
+
+
+def _codex_cli_command(runtime_context, provider_settings, prompt, output_path):
     command = [
         provider_settings.get("cli_command") or "codex",
         "exec",
@@ -421,7 +576,7 @@ def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
         "--color",
         "never",
         "-C",
-        project_paths.root,
+        runtime_context["source_root"],
         "-o",
         output_path,
     ]
@@ -432,17 +587,21 @@ def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
     return command
 
 
-def _codex_cli_activity_details(project_paths, provider_settings, task_prompt):
-    command = _codex_cli_command(project_paths, provider_settings, task_prompt, "<runtime-output>")
+def _codex_cli_activity_details(runtime_context, provider_settings, task_prompt, runtime_envelope):
+    command = _codex_cli_command(runtime_context, provider_settings, task_prompt, "<runtime-output>")
     return {
         "command": command,
         "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
         "external_runtime": "codex_cli",
-        "environment_scope": "sanitized",
+        "environment_scope": "session_envelope",
+        "runtime_root": runtime_envelope["root"],
+        "project_runtime_root": runtime_context["project_runtime_dir"],
+        "runtime_manifest_path": runtime_envelope["manifest_path"],
+        "project_root": runtime_context["source_root"],
     }
 
 
-def _claude_cli_command(project_paths, provider_settings, prompt):
+def _claude_cli_command(runtime_context, provider_settings, prompt):
     command = [
         provider_settings.get("cli_command") or "claude",
         "-p",
@@ -453,39 +612,48 @@ def _claude_cli_command(project_paths, provider_settings, prompt):
     model = (provider_settings.get("model") or "").strip()
     if model:
         command.extend(["--model", model])
-    command.extend(["--add-dir", project_paths.root])
+    command.extend(["--add-dir", runtime_context["source_root"]])
     command.append(prompt)
     return command
 
 
-def _claude_cli_activity_details(project_paths, provider_settings, task_prompt):
-    command = _claude_cli_command(project_paths, provider_settings, task_prompt)
+def _claude_cli_activity_details(runtime_context, provider_settings, task_prompt, runtime_envelope):
+    command = _claude_cli_command(runtime_context, provider_settings, task_prompt)
     return {
         "command": command,
         "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
         "external_runtime": "claude_cli",
-        "environment_scope": "sanitized",
+        "environment_scope": "session_envelope",
+        "runtime_root": runtime_envelope["root"],
+        "project_runtime_root": runtime_context["project_runtime_dir"],
+        "runtime_manifest_path": runtime_envelope["manifest_path"],
+        "project_root": runtime_context["source_root"],
     }
 
 
-def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
+def _run_openai_codex_cli(project_paths, runtime_context, runtime_envelope, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
-    runtime_env = _runtime_env(project_paths, {"id": "openai_codex"})
-    os.makedirs(project_paths.runtime_dir, exist_ok=True)
+    runtime_env = _runtime_env(
+        project_paths,
+        {"id": "openai_codex"},
+        runtime_context,
+        runtime_envelope=runtime_envelope,
+    )
+    os.makedirs(runtime_envelope["root"], exist_ok=True)
     with tempfile.NamedTemporaryFile(
         prefix="openai-codex-",
         suffix=".txt",
-        dir=project_paths.runtime_dir,
+        dir=runtime_envelope["root"],
         delete=False,
     ) as handle:
         output_path = handle.name
 
-    command = _codex_cli_command(project_paths, provider_settings, task_prompt, output_path)
+    command = _codex_cli_command(runtime_context, provider_settings, task_prompt, output_path)
     try:
         try:
             result = subprocess.run(
                 command,
-                cwd=project_paths.root,
+                cwd=runtime_context["source_root"],
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
@@ -531,14 +699,19 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
             os.remove(output_path)
 
 
-def _run_claude_code_cli(project_paths, provider_settings, task_prompt):
+def _run_claude_code_cli(project_paths, runtime_context, runtime_envelope, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
-    runtime_env = _runtime_env(project_paths, {"id": "claude_code"})
-    command = _claude_cli_command(project_paths, provider_settings, task_prompt)
+    runtime_env = _runtime_env(
+        project_paths,
+        {"id": "claude_code"},
+        runtime_context,
+        runtime_envelope=runtime_envelope,
+    )
+    command = _claude_cli_command(runtime_context, provider_settings, task_prompt)
     try:
         result = subprocess.run(
             command,
-            cwd=project_paths.root,
+            cwd=runtime_context["source_root"],
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -616,6 +789,7 @@ def _codex_cli_artifact_payload(provider, task_id, external_result):
 
 
 def run_provider_task(connection, project_paths, project_id, agent_id, task_id, provider_type, artifact_path=None):
+    runtime_context = _project_runtime_context(connection, project_paths, project_id)
     provider, provider_settings = get_provider_runtime_settings(
         provider_type,
         connection=connection,
@@ -625,17 +799,10 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         raise ValueError("; ".join(provider["config_warnings"]) or "Provider configuration is invalid.")
     task_title = _task_title(connection, task_id)
     effective_mode = provider.get("effective_execution_mode") or provider["execution_mode"]
+    ensure_runtime_quotas_allow_provider_run(connection, project_id, task_id, effective_mode)
     claude_cli_enabled = effective_mode == "claude_cli"
     codex_cli_enabled = effective_mode == "codex_cli"
-    if claude_cli_enabled:
-        task_prompt = _task_prompt(connection, task_id)
-        extra_activity_details = _claude_cli_activity_details(project_paths, provider_settings, task_prompt)
-    elif codex_cli_enabled:
-        task_prompt = _task_prompt(connection, task_id)
-        extra_activity_details = _codex_cli_activity_details(project_paths, provider_settings, task_prompt)
-    else:
-        task_prompt = None
-        extra_activity_details = {}
+    task_prompt = _task_prompt(connection, task_id) if (claude_cli_enabled or codex_cli_enabled) else None
 
     artifact_full_path = _resolve_artifact_path(project_paths, provider_type, task_id, artifact_path)
     artifact_existed_before_run = os.path.exists(artifact_full_path)
@@ -653,6 +820,27 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         provider_type=provider_type,
         status_message="{0} adapter started".format(provider["name"]),
     )
+    runtime_envelope = _create_runtime_envelope(
+        project_paths,
+        runtime_context,
+        provider_type,
+        purpose="task_run",
+        session_id=session_id,
+    )
+    extra_activity_details = {
+        "environment_scope": "session_envelope",
+        "runtime_root": runtime_envelope["root"],
+        "project_runtime_root": runtime_context["project_runtime_dir"],
+        "runtime_manifest_path": runtime_envelope["manifest_path"],
+    }
+    if claude_cli_enabled:
+        extra_activity_details.update(
+            _claude_cli_activity_details(runtime_context, provider_settings, task_prompt, runtime_envelope)
+        )
+    elif codex_cli_enabled:
+        extra_activity_details.update(
+            _codex_cli_activity_details(runtime_context, provider_settings, task_prompt, runtime_envelope)
+        )
     try:
         _log_provider_phase(
             connection,
@@ -701,10 +889,22 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             **extra_activity_details
         )
         if claude_cli_enabled:
-            external_result = _run_claude_code_cli(project_paths, provider_settings, task_prompt)
+            external_result = _run_claude_code_cli(
+                project_paths,
+                runtime_context,
+                runtime_envelope,
+                provider_settings,
+                task_prompt,
+            )
             artifact_payload = _claude_cli_artifact_payload(provider, task_id, external_result)
         elif codex_cli_enabled:
-            external_result = _run_openai_codex_cli(project_paths, provider_settings, task_prompt)
+            external_result = _run_openai_codex_cli(
+                project_paths,
+                runtime_context,
+                runtime_envelope,
+                provider_settings,
+                task_prompt,
+            )
             artifact_payload = _codex_cli_artifact_payload(provider, task_id, external_result)
         else:
             artifact_payload = _provider_artifact_payload(provider, task_title, task_id)
@@ -727,6 +927,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
                 "lifecycle_version": provider["lifecycle_version"],
                 "lifecycle_phases": provider["lifecycle_phases"],
                 "configured_execution_mode": provider["configured_execution_mode"],
+                "runtime_manifest_path": runtime_envelope["manifest_path"],
             },
         )
         heartbeat(connection, session_id, 90, "{0} adapter recorded the runtime artifact".format(provider["name"]))
@@ -815,6 +1016,193 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             "artifact_type": artifact_payload["artifact_type"],
         },
     }
+
+
+def queue_provider_task(connection, project_paths, provider_id, actor_id, project_id, agent_id, task_id, artifact_path=None):
+    resolved_project_id = resolve_project_id(connection, project_id)
+    if resolved_project_id is None:
+        raise ValueError("Project not found")
+    ensure_board_action_allowed(connection, actor_id, resolved_project_id, "queue_provider_task", "provider", provider_id)
+    provider, _provider_settings = get_provider_runtime_settings(
+        provider_id,
+        connection=connection,
+        project_id=resolved_project_id,
+    )
+    if not provider["is_runnable"]:
+        raise ValueError("; ".join(provider["config_warnings"]) or "Provider configuration is invalid.")
+    target = _provider_run_target(connection, resolved_project_id, task_id, agent_id)
+    if target is None:
+        raise ValueError("Task is not eligible for provider queueing.")
+    effective_mode = provider.get("effective_execution_mode") or provider["execution_mode"]
+    ensure_runtime_quotas_allow_provider_run(connection, resolved_project_id, task_id, effective_mode)
+    existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
+    if existing is not None:
+        raise ValueError("A queued or running provider job already exists for this task and provider.")
+    job = insert_provider_job(
+        connection,
+        resolved_project_id,
+        provider_id,
+        task_id,
+        agent_id,
+        queued_by=actor_id,
+        artifact_path=artifact_path,
+    )
+    _activity_provider_job(
+        connection,
+        resolved_project_id,
+        agent_id,
+        task_id,
+        "provider_job_queued",
+        "{0} queued a provider job for {1}.".format(actor_id, provider["name"]),
+        {
+            "job_id": job["job_id"],
+            "provider_id": provider_id,
+            "provider_name": provider["name"],
+            "artifact_path": artifact_path,
+        },
+    )
+    _audit_provider_job(
+        connection,
+        resolved_project_id,
+        actor_id,
+        "queue_provider_task",
+        job["job_id"],
+        {"provider_id": provider_id, "task_id": task_id, "agent_id": agent_id, "artifact_path": artifact_path},
+    )
+    connection.commit()
+    return job
+
+
+def process_provider_job(connection, project_paths, job_id, actor_id, worker_id=None):
+    job = fetch_provider_job(connection, job_id, include_archived=False)
+    if job is None:
+        raise ValueError("Provider job not found")
+    if job["status"] != "queued":
+        raise ValueError("Provider job is not queued")
+    ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", job["provider_id"])
+    running_job = start_provider_job(connection, job_id, worker_id=worker_id or actor_id)
+    if running_job is None:
+        raise ValueError("Provider job is no longer queued")
+    _activity_provider_job(
+        connection,
+        running_job["project_id"],
+        running_job["agent_id"],
+        running_job["task_id"],
+        "provider_job_started",
+        "{0} started queued provider job {1}.".format(actor_id, job_id),
+        {
+            "job_id": job_id,
+            "provider_id": running_job["provider_id"],
+            "worker_id": worker_id or actor_id,
+        },
+    )
+    _audit_provider_job(
+        connection,
+        running_job["project_id"],
+        actor_id,
+        "process_provider_job",
+        job_id,
+        {"provider_id": running_job["provider_id"], "task_id": running_job["task_id"]},
+    )
+    connection.commit()
+    try:
+        result = run_provider_task(
+            connection,
+            project_paths=project_paths,
+            project_id=running_job["project_id"],
+            agent_id=running_job["agent_id"],
+            task_id=running_job["task_id"],
+            provider_type=running_job["provider_id"],
+            artifact_path=running_job["artifact_path"],
+        )
+    except Exception as exc:
+        error = {
+            "failure_kind": getattr(exc, "kind", "runtime_error"),
+            "failure_detail": str(exc),
+        }
+        failed_job = fail_provider_job(connection, job_id, error)
+        _activity_provider_job(
+            connection,
+            failed_job["project_id"],
+            failed_job["agent_id"],
+            failed_job["task_id"],
+            "provider_job_failed",
+            "Queued provider job failed during execution.",
+            {"job_id": job_id, **error},
+            severity="error",
+        )
+        connection.commit()
+        return failed_job
+
+    completed_job = complete_provider_job(connection, job_id, result)
+    _activity_provider_job(
+        connection,
+        completed_job["project_id"],
+        completed_job["agent_id"],
+        completed_job["task_id"],
+        "provider_job_completed",
+        "Queued provider job completed successfully.",
+        {
+            "job_id": job_id,
+            "session_id": completed_job["session_id"],
+            "artifact_id": completed_job["artifact_id"],
+            "execution_mode": completed_job["execution_mode"],
+        },
+    )
+    connection.commit()
+    return completed_job
+
+
+def _next_startable_provider_job_id(connection, provider_id=None):
+    parameters = []
+    provider_clause = ""
+    if provider_id:
+        provider_clause = "AND provider_job_queue.provider_id = ?"
+        parameters.append(provider_id)
+    rows = connection.execute(
+        """
+        SELECT provider_job_queue.job_id, provider_job_queue.project_id
+        FROM provider_job_queue
+        JOIN projects ON projects.project_id = provider_job_queue.project_id
+        WHERE provider_job_queue.status = 'queued'
+          AND projects.state = 'active'
+          {provider_clause}
+        ORDER BY provider_job_queue.created_at ASC, provider_job_queue.rowid ASC
+        """.format(provider_clause=provider_clause),
+        tuple(parameters),
+    ).fetchall()
+    for row in rows:
+        can_start, _snapshot = can_start_provider_jobs(connection, row["project_id"])
+        if can_start:
+            return row["job_id"], row["project_id"]
+    return None, None
+
+
+def process_next_provider_job(connection, project_paths, actor_id, project_id=None, provider_id=None, worker_id=None):
+    resource_id = provider_id or "provider_queue"
+    if project_id:
+        resolved_project_id = resolve_project_id(connection, project_id)
+        if resolved_project_id is None:
+            raise ValueError("Project not found")
+        ensure_board_action_allowed(connection, actor_id, resolved_project_id, "process_provider_job", "provider", resource_id)
+        can_start, _snapshot = can_start_provider_jobs(connection, resolved_project_id)
+        if not can_start:
+            return {"processed": False, "job": None}
+        job_id = next_queued_provider_job_id(connection, project_id=resolved_project_id, provider_id=provider_id)
+    else:
+        job_id, job_project_id = _next_startable_provider_job_id(connection, provider_id=provider_id)
+        if job_id is not None:
+            if job_project_id is None:
+                return {"processed": False, "job": None}
+            ensure_board_action_allowed(connection, actor_id, job_project_id, "process_provider_job", "provider", resource_id)
+    if job_id is None:
+        return {"processed": False, "job": None}
+    job = process_provider_job(connection, project_paths, job_id, actor_id, worker_id=worker_id)
+    return {"processed": True, "job": job}
+
+
+def provider_job_queue(connection, project_id=None, provider_id=None, status=None, limit=20):
+    return fetch_provider_jobs(connection, project_id=project_id, provider_id=provider_id, status=status, limit=limit)
 
 
 def list_provider_runtime_status(connection=None, project_id=None):

@@ -37,5 +37,46 @@ class ProjectPaths(object):
     def project_discovery_path(self, project_id):
         return os.path.join(self.project_workspace(project_id), "project-discovery.json")
 
+    def project_runtime_dir(self, project_id):
+        return os.path.join(self.project_workspace(project_id), "runtime")
+
+    def project_git_worktrees_dir(self, project_id):
+        return os.path.join(self.project_workspace(project_id), "git-workspaces")
+
+    def task_git_worktree(self, project_id, task_id):
+        return os.path.join(self.project_git_worktrees_dir(project_id), task_id)
+
+    def project_runtime_tmp_dir(self, project_id):
+        return os.path.join(self.project_runtime_dir(project_id), "tmp")
+
+    def project_runtime_envelopes_dir(self, project_id):
+        return os.path.join(self.project_runtime_dir(project_id), "envelopes")
+
+    def runtime_envelope_root(self, project_id, envelope_id):
+        return os.path.join(self.project_runtime_envelopes_dir(project_id), envelope_id)
+
+    def runtime_envelope_manifest_path(self, project_id, envelope_id):
+        return os.path.join(self.runtime_envelope_root(project_id, envelope_id), "manifest.json")
+
+    def ensure_runtime_envelope(self, project_id, envelope_id):
+        root = self.runtime_envelope_root(project_id, envelope_id)
+        directories = {
+            "root": root,
+            "home_dir": os.path.join(root, "home"),
+            "tmp_dir": os.path.join(root, "tmp"),
+            "cache_dir": os.path.join(root, "cache"),
+            "config_dir": os.path.join(root, "config"),
+            "data_dir": os.path.join(root, "data"),
+            "manifest_path": self.runtime_envelope_manifest_path(project_id, envelope_id),
+        }
+        os.makedirs(self.project_runtime_envelopes_dir(project_id), exist_ok=True)
+        for key, path in directories.items():
+            if key == "manifest_path":
+                continue
+            os.makedirs(path, exist_ok=True)
+        return directories
+
     def ensure_project_workspace(self, project_id):
         os.makedirs(self.project_workspace(project_id), exist_ok=True)
+        os.makedirs(self.project_runtime_dir(project_id), exist_ok=True)
+        os.makedirs(self.project_git_worktrees_dir(project_id), exist_ok=True)

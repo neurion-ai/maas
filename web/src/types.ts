@@ -52,6 +52,19 @@ export interface BoardTask {
   scheduler_factors?: SchedulerFactor[];
   replan_strategy?: string | null;
   replan_summary?: string | null;
+  scoped_paths?: string[];
+  validation_commands?: string[];
+  has_verification_recipe?: boolean;
+  latest_verification_status?: string | null;
+  latest_verification_at?: string | null;
+  latest_verification_command?: string | null;
+  git_workspace_supported?: boolean;
+  git_workspace_prepared?: boolean;
+  git_workspace_branch?: string | null;
+  git_workspace_dirty_files?: number;
+  git_workspace_change_summary?: string | null;
+  git_workspace_last_diff_at?: string | null;
+  git_workspace_diff_artifact_id?: string | null;
 }
 
 export interface BoardColumn {
@@ -131,6 +144,93 @@ export interface ProjectsResponse {
   projects: ProjectSummary[];
 }
 
+export interface PortfolioProject {
+  project_id: string;
+  name: string;
+  description: string;
+  project_type: string;
+  created_at: string;
+  updated_at?: string;
+  state: "active" | "archived";
+  archived_at?: string | null;
+  source_root?: string;
+  onboarding_mode?: string;
+  task_count: number;
+  agent_count: number;
+  open_alert_count: number;
+  blocked_tasks: number;
+  in_progress_tasks: number;
+  open_alerts: number;
+  critical_alerts: number;
+  active_sessions: number;
+  running_agents: number;
+  open_quarantine_entries: number;
+  dead_letter_entries: number;
+  repeated_failure_tasks: number;
+  health: "healthy" | "warn" | "critical" | "archived";
+  provider_readiness: {
+    total: number;
+    ready: number;
+    issues: number;
+    unknown: number;
+  };
+  scheduler_policy: {
+    fair_share_weight: number;
+    max_active_sessions: number;
+  };
+  provider_capacity: {
+    queue_mode: "running" | "draining" | "paused";
+    max_running_jobs: number;
+    queued_jobs: number;
+    running_jobs: number;
+    at_capacity: boolean;
+    can_start_jobs: boolean;
+  };
+  risk_policy: {
+    priority_threshold: number;
+    sensitive_path_prefixes: string[];
+  };
+  runtime_quotas: {
+    daily_run_limit: number;
+    daily_live_run_limit: number;
+    daily_runtime_seconds_limit: number;
+    max_task_session_attempts: number;
+    runs_today: number;
+    live_runs_today: number;
+    runtime_seconds_today: number;
+  };
+  notification_policy?: {
+    webhook_urls?: string[];
+    minimum_severity?: string;
+    enabled_events?: string[];
+  };
+  at_scheduler_capacity: boolean;
+}
+
+export interface PortfolioResponse {
+  summary: {
+    active_projects: number;
+    archived_projects: number;
+    open_alerts: number;
+    blocked_tasks: number;
+    active_sessions: number;
+    recovery_pressure: number;
+    projects_with_issues: number;
+    open_escalations: number;
+    queued_provider_jobs: number;
+    queued_notifications: number;
+    failed_notifications: number;
+  };
+  projects: PortfolioProject[];
+  command_center: {
+    open_escalations: EscalationItem[];
+    urgent_alerts: AlertItem[];
+    open_dead_letter_entries: DeadLetterQueueItem[];
+    queued_provider_jobs: ProviderJobItem[];
+    notification_deliveries: NotificationItem[];
+  };
+}
+
 export interface ProjectCreateRequest {
   actor_id: string;
   name: string;
@@ -155,10 +255,43 @@ export interface ProjectActionResponse {
   state: "active" | "archived";
 }
 
+export interface RepoTreeEntry {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  size?: number | null;
+  extension?: string | null;
+  previewable: boolean;
+}
+
+export interface RepoTreeResponse {
+  path: string;
+  parent_path?: string | null;
+  source_root: string;
+  entries: RepoTreeEntry[];
+}
+
+export interface RepoFileResponse {
+  path: string;
+  name: string;
+  parent_path?: string | null;
+  size: number;
+  extension?: string | null;
+  previewable: boolean;
+  content_kind: "text" | "json" | "binary";
+  content?: string | null;
+  truncated: boolean;
+}
+
 export interface OverviewOnboarding {
   mode: string;
   review_status: string;
   review_required: boolean;
+  review_overrides?: {
+    ignored_paths: string[];
+    accepted_workflow_labels: string[];
+    accepted_runbook_labels: string[];
+  };
   discovery_summary: {
     primary_language?: string;
     total_files?: number;
@@ -169,6 +302,15 @@ export interface OverviewOnboarding {
       path?: string;
       detail?: string;
     }>;
+    runbook_commands?: Array<{
+      label: string;
+      kind: string;
+      name?: string;
+      path?: string;
+      command?: string | null;
+      detail?: string;
+      review_note?: string;
+    }>;
     repo_areas?: string[];
     codebase_map?: Array<{
       name: string;
@@ -177,12 +319,67 @@ export interface OverviewOnboarding {
       primary_language: string;
       file_count: number;
       summary?: string;
+      sample_files?: string[];
     }>;
   };
+  repo_plan_preview?: {
+    generated_task_count: number;
+    verification_task_count: number;
+    repo_area_task_count: number;
+    sample_paths: string[];
+    items: Array<{
+      synthesis_key: string;
+      task_kind: string;
+      title: string;
+      source_label: string;
+      paths: string[];
+      command?: string | null;
+    }>;
+  } | null;
+  repo_plan_state?: {
+    generated_task_count: number;
+    verification_task_count: number;
+    repo_area_task_count: number;
+    sample_paths: string[];
+    items: Array<{
+      synthesis_key: string;
+      task_kind: string;
+      title: string;
+      source_label: string;
+      paths: string[];
+      command?: string | null;
+    }>;
+    active_task_count: number;
+    created_count: number;
+    updated_count: number;
+    cancelled_count: number;
+    stale: boolean;
+    last_refreshed_at?: string | null;
+    last_refreshed_by?: string | null;
+  } | null;
   review_task_id?: string | null;
   review_task_status?: string | null;
   review_task_review_state?: string | null;
   pending_gated_tasks: number;
+  last_scanned_at?: string | null;
+  last_scanned_by?: string | null;
+  drift_summary?: {
+    detected?: boolean;
+    scanned_at?: string;
+    summary?: string;
+    changes?: string[];
+    file_count_delta?: number;
+    primary_language_before?: string | null;
+    primary_language_after?: string | null;
+    workflow_labels_added?: string[];
+    workflow_labels_removed?: string[];
+    repo_areas_added?: string[];
+    repo_areas_removed?: string[];
+    package_managers_added?: string[];
+    package_managers_removed?: string[];
+    codebase_map_added?: string[];
+    codebase_map_removed?: string[];
+  } | null;
   reviewed_by?: string | null;
   reviewed_at?: string | null;
 }
@@ -223,6 +420,39 @@ export interface ActivityItem {
   created_at: string;
   agent_id?: string | null;
   task_id?: string | null;
+}
+
+export interface TimelineEvent {
+  event_id: string;
+  source: string;
+  event_type: string;
+  title: string;
+  description: string;
+  severity: string;
+  created_at: string;
+  task_id?: string | null;
+  session_id?: string | null;
+  agent_id?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  details?: Record<string, unknown>;
+}
+
+export interface TimelineResponse {
+  filters: {
+    task_id?: string | null;
+    session_id?: string | null;
+    agent_id?: string | null;
+    resource_type?: string | null;
+    resource_id?: string | null;
+    limit: number;
+    order: "asc" | "desc";
+  };
+  summary: {
+    total_events: number;
+    sources: Record<string, number>;
+  };
+  events: TimelineEvent[];
 }
 
 export interface ArtifactFacetCount {
@@ -536,6 +766,7 @@ export interface AgentRosterResponse {
 export interface AlertItem {
   alert_id: string;
   project_id?: string;
+  project_name?: string;
   severity: string;
   title: string;
   description: string;
@@ -567,6 +798,7 @@ export interface AlertsResponse {
 export interface EscalationItem {
   escalation_id: string;
   project_id?: string;
+  project_name?: string;
   requested_by: string;
   requester_name?: string | null;
   action_type: string;
@@ -592,12 +824,35 @@ export interface EscalationsResponse {
   };
 }
 
+export interface NotificationItem {
+  notification_id: string;
+  project_id: string;
+  project_name?: string | null;
+  target_url: string;
+  event_type: string;
+  severity: string;
+  title: string;
+  body: string;
+  payload: Record<string, unknown>;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  status: string;
+  attempts: number;
+  last_error?: string | null;
+  last_response_code?: number | null;
+  created_at: string;
+  updated_at?: string | null;
+  sent_at?: string | null;
+}
+
 export interface ProviderRuntimeControls {
   cli_command?: string;
   timeout_seconds?: number;
   permission_mode?: string;
   sandbox?: string;
   model?: string;
+  job_limit_per_pass?: number;
+  queue_paused?: boolean;
 }
 
 export interface ProviderEditableRuntimeControls {
@@ -606,6 +861,8 @@ export interface ProviderEditableRuntimeControls {
   permission_mode?: string;
   sandbox?: string;
   model?: string;
+  job_limit_per_pass?: number | string;
+  queue_paused?: boolean | string;
 }
 
 export interface ProviderRunSummary {
@@ -649,6 +906,64 @@ export interface ProviderPreflightItem {
   external_runtime?: string | null;
 }
 
+export interface ProviderJobSummary {
+  queued_jobs: number;
+  running_jobs: number;
+  completed_jobs: number;
+  failed_jobs: number;
+  cancelled_jobs: number;
+  last_job_at?: string | null;
+}
+
+export interface ProviderJobItem {
+  job_id: string;
+  project_id: string;
+  project_name?: string | null;
+  provider_id: string;
+  task_id: string;
+  title?: string | null;
+  goal_title?: string | null;
+  agent_id: string;
+  agent_name?: string | null;
+  status: string;
+  queued_by: string;
+  worker_id?: string | null;
+  artifact_path?: string | null;
+  session_id?: string | null;
+  artifact_id?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+  execution_mode?: string | null;
+  failure_kind?: string | null;
+  failure_detail?: string | null;
+}
+
+export interface ProviderWorkerSummary {
+  total_workers: number;
+  idle_workers: number;
+  busy_workers: number;
+  offline_workers: number;
+}
+
+export interface ProviderWorkerItem {
+  worker_id: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  provider_id?: string | null;
+  status: "idle" | "busy" | "offline";
+  current_job_id?: string | null;
+  current_job_title?: string | null;
+  last_job_id?: string | null;
+  last_job_status?: string | null;
+  heartbeat_at?: string | null;
+  heartbeat_age_seconds?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 export interface ProviderRunTarget {
   project_id: string;
   task_id: string;
@@ -681,6 +996,7 @@ export interface ProviderStatusItem {
   guardrails?: string[];
   is_runnable?: boolean;
   run_summary?: ProviderRunSummary;
+  job_summary?: ProviderJobSummary;
   recent_runs?: ProviderRunItem[];
   latest_preflight?: ProviderPreflightItem | null;
   notes: string;
@@ -689,6 +1005,9 @@ export interface ProviderStatusItem {
 export interface ProvidersResponse {
   providers: ProviderStatusItem[];
   run_targets: ProviderRunTarget[];
+  job_queue: ProviderJobItem[];
+  worker_summary?: ProviderWorkerSummary;
+  worker_pool?: ProviderWorkerItem[];
 }
 
 export interface RecoveryDelayPreviewItem {
@@ -701,6 +1020,10 @@ export interface RecoveryPolicySettings {
   auto_retry_failed_sessions: boolean;
   auto_recover_blocked_tasks: boolean;
   auto_dlq_retry_exhausted_tasks: boolean;
+  auto_open_task_circuit_breakers: boolean;
+  auto_route_circuit_breakers_to_replan: boolean;
+  circuit_breaker_failure_threshold: number;
+  circuit_breaker_replan_after_seconds: number;
   max_timed_out_retries: number;
   max_failed_session_retries: number;
   timed_out_retry_cooldown_seconds: number;
@@ -730,11 +1053,21 @@ export interface RecoveryTaskItem {
   latest_failure_at?: string | null;
   replan_strategy?: string | null;
   replan_summary?: string | null;
+  circuit_breaker_detail?: {
+    trigger?: string;
+    failure_count?: number;
+    threshold?: number;
+    retry_limit?: number;
+    retry_count?: number;
+  };
+  circuit_breaker_opened_at?: string | null;
+  auto_replan_reason?: string | null;
 }
 
 export interface DeadLetterQueueItem {
   dlq_id: string;
   project_id: string;
+  project_name?: string | null;
   task_id: string;
   failure_id?: string | null;
   reason: string;
@@ -769,11 +1102,14 @@ export interface RecoveryPolicyResponse {
   summary: {
     retry_backoff_tasks: number;
     needs_replan_tasks: number;
+    circuit_breaker_tasks: number;
     replanning_candidates: number;
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
     auto_recovery_candidates: number;
+    auto_replan_candidates: number;
     open_dead_letter_entries: number;
+    open_circuit_breakers: number;
     tasks_with_retry_overrides: number;
     open_quarantine_entries: number;
     open_failure_alerts: number;
@@ -787,10 +1123,12 @@ export interface RecoveryPolicyResponse {
   };
   task_retry_overrides: RecoveryTaskItem[];
   auto_recovery_candidates: RecoveryTaskItem[];
+  auto_replan_candidates: RecoveryTaskItem[];
   recoverable_blocked_tasks: RecoveryTaskItem[];
   task_retry_history: RecoveryTaskItem[];
   replanning_candidates: RecoveryTaskItem[];
   needs_replan_tasks: RecoveryTaskItem[];
+  circuit_breaker_tasks: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
   dead_letter_entries: DeadLetterQueueItem[];
   open_quarantine_entries: QuarantineQueueItem[];
@@ -834,6 +1172,29 @@ export interface SupervisorAllocation {
   already_assigned?: boolean;
 }
 
+export interface SupervisorProjectRun {
+  project_id: string;
+  ready_changes: SupervisorReadyChange[];
+  allocations: SupervisorAllocation[];
+  assigned_count: number;
+  auto_recovered_tasks: Array<{
+    task_id: string;
+    status: string;
+    review_state?: string | null;
+    next_retry_at?: string | null;
+    next_retry_reason?: string | null;
+  }>;
+  stale_sessions: Array<{
+    session_id: string;
+    task_id: string;
+    repeated_failure_alert?: {
+      alert_id: string;
+      task_id: string;
+      failure_count: number;
+    } | null;
+  }>;
+}
+
 export interface SupervisorRunResponse {
   ready_changes: SupervisorReadyChange[];
   allocations: SupervisorAllocation[];
@@ -854,4 +1215,21 @@ export interface SupervisorRunResponse {
       failure_count: number;
     } | null;
   }>;
+  project_runs: SupervisorProjectRun[];
+}
+
+export interface OrchestratorProjectRun extends SupervisorProjectRun {
+  provider_jobs_processed: number;
+  processed_jobs: Array<{
+    job_id: string;
+    provider_id: string;
+    status: string;
+    task_id: string;
+    project_id: string;
+  }>;
+}
+
+export interface OrchestratorRunResponse extends SupervisorRunResponse {
+  provider_jobs_processed: number;
+  project_runs: OrchestratorProjectRun[];
 }

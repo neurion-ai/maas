@@ -1,3 +1,6 @@
+import json
+import os
+import subprocess
 import tempfile
 import unittest
 
@@ -5,7 +8,16 @@ from maas.db import connect
 from maas.ids import generate_id
 from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
+from maas.services.git_workspaces import capture_task_git_diff, prepare_task_git_workspace
 from maas.services.scheduler import refresh_ready_tasks
+
+
+def _init_git_repo(root):
+    subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "MAAS Tests"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 class BoardReadModelTest(unittest.TestCase):
@@ -142,6 +154,44 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertIn("brownfield_bonus", factor_keys)
             self.assertEqual(card["replan_strategy"], "validate_imported_workflow")
             self.assertIn("workflow", card["replan_summary"].lower())
+
+    def test_board_cards_include_brownfield_scope_and_validation_commands(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Brownfield Board\n")
+            with open(os.path.join(tmpdir, "Makefile"), "w", encoding="utf-8") as handle:
+                handle.write("test:\n\tpytest\n")
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('ok')\n")
+
+            result = bootstrap_project(
+                tmpdir,
+                name="Board Brownfield Scope Test",
+                description="Board brownfield scope test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            workflow_card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Validate imported workflow: test"
+            )
+            map_card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Map imported source area: src"
+            )
+            self.assertIn("Makefile", workflow_card["scoped_paths"])
+            self.assertIn("make test", workflow_card["validation_commands"])
+            self.assertIn("src/app.py", map_card["scoped_paths"])
 
     def test_board_cards_match_fallback_brownfield_workflow_titles_without_colon(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -285,6 +335,107 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertIsNotNone(matching_cards[0]["last_retry_at"])
             self.assertEqual(matching_cards[0]["next_retry_at"], "2999-01-01 00:00:00")
             self.assertEqual(matching_cards[0]["next_retry_reason"], "session_timed_out")
+
+    def test_board_cards_include_latest_verification_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Verification Test", description="Board verification test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id, project_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {
+                                    "type": "test_passes",
+                                    "command": "python -c \"print('ok')\"",
+                                    "timeout_seconds": 30,
+                                }
+                            ]
+                        ),
+                        task_id["task_id"],
+                    ),
+                )
+                artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, 'verification_log', ?, '{}')
+                    """,
+                    (
+                        artifact_id,
+                        task_id["project_id"],
+                        task_id["task_id"],
+                        os.path.join(tmpdir, "verification.log"),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code,
+                        output_excerpt, artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, 'passed', 0, 'ok', ?, 'agent_allocator', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        generate_id("verify"),
+                        task_id["project_id"],
+                        task_id["task_id"],
+                        "python -c \"print('ok')\"",
+                        artifact_id,
+                    ),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            matching_cards = [
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id["task_id"]
+            ]
+            self.assertTrue(matching_cards[0]["has_verification_recipe"])
+            self.assertEqual(matching_cards[0]["latest_verification_status"], "passed")
+            self.assertEqual(matching_cards[0]["latest_verification_command"], "python -c \"print('ok')\"")
+            self.assertIsNotNone(matching_cards[0]["latest_verification_at"])
+
+    def test_board_cards_include_git_workspace_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Git Workspace Test", description="Board git workspace test", project_type="custom")
+            _init_git_repo(tmpdir)
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                workspace = prepare_task_git_workspace(connection, result["paths"], task_id, "agent_allocator")
+                with open(os.path.join(workspace["worktree_path"], "README.md"), "a", encoding="utf-8") as handle:
+                    handle.write("\nworkspace diff\n")
+                capture_task_git_diff(connection, result["paths"], task_id, "agent_allocator")
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            matching_cards = [
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id
+            ]
+            self.assertTrue(matching_cards[0]["git_workspace_supported"])
+            self.assertTrue(matching_cards[0]["git_workspace_prepared"])
+            self.assertEqual(matching_cards[0]["git_workspace_branch"], "maas/{0}".format(task_id))
+            self.assertGreaterEqual(matching_cards[0]["git_workspace_dirty_files"], 1)
+            self.assertIsNotNone(matching_cards[0]["git_workspace_diff_artifact_id"])
 
 
 if __name__ == "__main__":

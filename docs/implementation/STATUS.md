@@ -2,9 +2,70 @@
 
 ## Legend
 
-- `[x]` shipped on `main`
-- `[ ]` not fully shipped on `main`
-- In-flight branch work should be tracked in open PRs, not in this file.
+- `[x]` completed in the current numbered delivery sequence
+- `[ ]` not yet completed in the current numbered delivery sequence
+
+The "Current Development Sequence" section below shows whether a completed item is already on `main` or still only exists on stacked branches.
+
+## Current Development Sequence
+
+- [x] `#81` is shipped on `main`
+- [x] `#82` is implemented on the stacked branch `codex/project-aware-supervisor-orchestration`
+- [x] `#83` is implemented on the stacked branch `codex/brownfield-file-backed-planning`
+- [x] `#84` is implemented on the stacked branch `codex/recovery-circuit-breakers`
+- [x] `#85` is implemented on the stacked branch `codex/project-isolated-provider-runtime`
+- [x] `#86` is implemented on the stacked branch `codex/provider-job-queue`
+- [x] `#87` is implemented on the stacked branch `codex/provider-job-queue`
+- [x] `#88` is implemented on the stacked branch `codex/file-linked-task-scopes`
+- [x] `#89` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
+- [x] `#90` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
+- [x] `#91` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
+- [x] `#92` is implemented on the stacked branch `codex/queue-capacity-controls`
+- [x] `#93` is implemented on the stacked branch `codex/session-runner-envelopes`
+- [x] `#94` is implemented on the stacked branch `codex/policy-driven-self-healing-v2`
+- [x] `#95` is implemented on the stacked branch `codex/brownfield-onboarding-review-v2`
+- [x] `#96` is implemented on the stacked branch `codex/remote-executor-worker-pool`
+- [x] `#97` is implemented on the stacked branch `codex/cross-project-scheduler-fairness`
+- [x] `#98` is implemented on the stacked branch `codex/repo-grounded-plan-synthesis`
+- [x] `#99` is implemented on `codex/verification-runners-evidence-capture`
+- [x] `#100` is implemented on `codex/git-aware-task-workspaces`
+- [x] `#101` is implemented on `codex/cross-project-command-center`
+- [x] `#102` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#103` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
+
+## Extended Numbered Roadmap
+
+- [x] `#81` Multi-project write path and project lifecycle
+- [x] `#82` Project-aware supervisor and background orchestration
+- [x] `#83` Brownfield file-backed planning and repo navigation
+- [x] `#84` Policy-driven self-healing and circuit breakers
+- [x] `#85` Sandboxed provider runners per project
+- [x] `#86` Remote or queued provider execution beyond local CLI paths
+- [x] `#87` Brownfield rescan and drift detection
+- [x] `#88` File-linked task scopes and acceptance criteria
+- [x] `#89` Brownfield runbook and command catalog
+- [x] `#90` Portfolio view across projects
+- [x] `#91` Background orchestration daemon
+- [x] `#92` Queue and worker capacity management on top of the provider job queue
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
+- [x] `#96` Remote executor or worker pool
+- [x] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#98` Repo-grounded plan synthesis and refresh
+- [x] `#99` Verification runners and evidence capture
+- [x] `#100` Git-aware task workspaces and diff review
+- [x] `#101` Cross-project command center
+- [x] `#102` Queue and worker capacity controls
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Current Snapshot
 
@@ -122,15 +183,35 @@
 - [x] The strongest areas today are board operations, recovery handling, failure memory, provider visibility, artifact inspection, and control-room tooling.
 - [ ] The biggest remaining gaps are autonomous planning quality, broader provider/runtime coverage, stronger self-healing, and platform expansion beyond one greenfield project.
 
-## Next High-Value PR Sequence
+## Current Numbered Delivery Sequence
 
 - [x] `#80` Provider runtime preflight and readiness checks
-- [ ] `#81` Multi-project write path and project lifecycle
-- [ ] `#82` Project-aware supervisor and background orchestration
-- [ ] `#83` Brownfield file-backed planning and repo navigation
-- [ ] `#84` Policy-driven self-healing and circuit breakers
-- [ ] `#85` Sandboxed provider runners per project
-- [ ] `#86` Remote or queued provider execution beyond local CLI paths
+- [x] `#81` Multi-project write path and project lifecycle
+- [x] `#82` Project-aware supervisor and background orchestration
+- [x] `#83` Brownfield file-backed planning and repo navigation
+- [x] `#84` Policy-driven self-healing and circuit breakers
+- [x] `#85` Sandboxed provider runners per project
+- [x] `#86` Remote or queued provider execution beyond local CLI paths
+- [x] `#87` Brownfield rescan and drift detection
+- [x] `#88` File-linked task scopes and acceptance criteria
+- [x] `#89` Brownfield runbook and command catalog
+- [x] `#90` Portfolio view across projects
+- [x] `#91` Background orchestration daemon
+- [x] `#92` Queue and worker capacity management on top of the provider job queue
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
+- [x] `#96` Remote executor or worker pool
+- [x] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#98` Repo-grounded plan synthesis and refresh
+- [x] `#99` Verification runners and evidence capture
+- [x] `#100` Git-aware task workspaces and diff review
+- [x] `#101` Cross-project command center
+- [x] `#102` Queue and worker capacity controls
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Batch View
 

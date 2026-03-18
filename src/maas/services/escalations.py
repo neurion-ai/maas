@@ -3,8 +3,9 @@
 import json
 
 from maas.ids import generate_id
-from maas.services.security import ensure_board_action_allowed
+from maas.services.security import ensure_board_action_allowed, resolve_board_actor
 from maas.services.steering import halt_task, pause_agent, reassign_task, resume_agent
+from maas.services.notifications import queue_notification_event
 
 
 SUPPORTED_ESCALATION_ACTIONS = {
@@ -16,14 +17,7 @@ SUPPORTED_ESCALATION_ACTIONS = {
 
 
 def _ensure_requester_exists(connection, project_id, actor_id):
-    row = connection.execute(
-        """
-        SELECT agent_id
-        FROM agents
-        WHERE project_id = ? AND agent_id = ?
-        """,
-        (project_id, actor_id),
-    ).fetchone()
+    row = resolve_board_actor(connection, actor_id, project_id)
     if row is None:
         raise ValueError("Escalation requester not found")
     return row
@@ -126,7 +120,7 @@ def _ensure_reassignment_target_exists(connection, project_id, payload):
 
 
 def request_escalation(connection, project_id, actor_id, action_type, resource_type, resource_id, reason, payload=None):
-    _ensure_requester_exists(connection, project_id, actor_id)
+    requester = _ensure_requester_exists(connection, project_id, actor_id)
     payload = payload or {}
     _validate_request(action_type, resource_type, payload)
     _ensure_resource_exists(connection, project_id, resource_type, resource_id)
@@ -144,7 +138,7 @@ def request_escalation(connection, project_id, actor_id, action_type, resource_t
         (
             escalation_id,
             project_id,
-            actor_id,
+            requester["agent_id"],
             action_type,
             resource_type,
             resource_id,
@@ -169,6 +163,17 @@ def request_escalation(connection, project_id, actor_id, action_type, resource_t
         "Escalation requested for {0}.".format(action_type),
         details={"escalation_id": escalation_id, "resource_id": resource_id},
         severity="warning",
+    )
+    queue_notification_event(
+        connection,
+        project_id,
+        event_type="escalation_requested",
+        severity="warning",
+        title="Escalation requested",
+        body="Escalation requested for {0} on {1} {2}.".format(action_type, resource_type, resource_id),
+        resource_type=resource_type,
+        resource_id=resource_id,
+        payload={"escalation_id": escalation_id, "action_type": action_type, "requested_by": requester["agent_id"]},
     )
     connection.commit()
     return {"escalation_id": escalation_id, "status": "open"}

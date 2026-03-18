@@ -11,11 +11,14 @@ import { LivePulseProvider, useLiveStatus } from "./lib/useLivePulse";
 import { archiveProject, createProject, fetchProjects, restoreProject } from "./lib/controlRoomApi";
 import { getSelectedProjectId, setSelectedProjectId } from "./lib/projectScope";
 import { OverviewPage } from "./pages/OverviewPage";
+import { PortfolioPage } from "./pages/PortfolioPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { RecoveryPage } from "./pages/RecoveryPage";
+import { TimelinePage } from "./pages/TimelinePage";
 import type { ProjectSummary } from "./types";
 
 type View =
+  | "portfolio"
   | "overview"
   | "board"
   | "goals"
@@ -24,11 +27,13 @@ type View =
   | "artifacts"
   | "providers"
   | "recovery"
+  | "timeline"
   | "failures"
   | "alerts"
   | "escalations";
 
 const VIEWS: { id: View; label: string }[] = [
+  { id: "portfolio", label: "Portfolio" },
   { id: "overview", label: "Overview" },
   { id: "board", label: "Board" },
   { id: "goals", label: "Goal Tree" },
@@ -37,6 +42,7 @@ const VIEWS: { id: View; label: string }[] = [
   { id: "artifacts", label: "Artifacts" },
   { id: "providers", label: "Providers" },
   { id: "recovery", label: "Recovery" },
+  { id: "timeline", label: "Timeline" },
   { id: "failures", label: "Failures" },
   { id: "alerts", label: "Alerts" },
   { id: "escalations", label: "Escalations" }
@@ -382,6 +388,7 @@ function AppShell() {
 
       <div className="app-content">
         {activeView === "overview" ? <OverviewPage /> : null}
+        {activeView === "portfolio" ? <PortfolioPage /> : null}
         {activeView === "board" ? <BoardPage /> : null}
         {activeView === "goals" ? <GoalTreePage /> : null}
         {activeView === "agents" ? <AgentRosterPage /> : null}
@@ -390,6 +397,7 @@ function AppShell() {
         {activeView === "providers" ? <ProvidersPage /> : null}
         {activeView === "recovery" ? <RecoveryPage /> : null}
         {activeView === "failures" ? <FailuresPage /> : null}
+        {activeView === "timeline" ? <TimelinePage /> : null}
         {activeView === "alerts" ? <AlertsPage /> : null}
         {activeView === "escalations" ? <EscalationsPage /> : null}
       </div>

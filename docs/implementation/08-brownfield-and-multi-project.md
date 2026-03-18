@@ -2,7 +2,67 @@
 
 ## Status On `main`
 
-- [ ] Batch 8 is partially started on `main` through brownfield repo detection, onboarding approval gating, imported workflow and repo-area backlog seeding, brownfield codebase mapping, multi-project read scoping, and first-pass runtime isolation hardening.
+- [x] Batch 8 is partially started on `main` through brownfield repo detection, onboarding approval gating, imported workflow and repo-area backlog seeding, brownfield codebase mapping, multi-project read scoping, and first-pass runtime isolation hardening.
+
+## Current Stacked Branch Progress
+
+- [x] `#81` multi-project write path and project lifecycle is shipped on `main`
+- [x] `#82` project-aware supervisor and background orchestration is implemented on `codex/project-aware-supervisor-orchestration`
+- [x] `#83` brownfield file-backed planning and repo navigation is implemented on `codex/brownfield-file-backed-planning`
+- [x] `#84` policy-driven self-healing and circuit breakers is implemented on `codex/recovery-circuit-breakers`
+- [x] `#85` sandboxed provider runners per project is implemented on `codex/project-isolated-provider-runtime`
+- [x] `#86` remote or queued provider execution is implemented on `codex/provider-job-queue`
+- [x] `#87` brownfield rescan and drift detection is implemented on `codex/provider-job-queue`
+- [x] `#88` file-linked task scopes and acceptance criteria is implemented on `codex/file-linked-task-scopes`
+- [x] `#89` brownfield runbook and command catalog is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#90` portfolio view across projects is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#91` background orchestration daemon is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#92` queue and worker capacity management is implemented on `codex/queue-capacity-controls`
+- [x] `#93` stronger runner sandbox envelopes is implemented on `codex/session-runner-envelopes`
+- [x] `#94` policy-driven self-healing v2 is implemented on `codex/policy-driven-self-healing-v2`
+- [x] `#95` brownfield onboarding review v2 is implemented on `codex/brownfield-onboarding-review-v2`
+- [x] `#96` remote executor or worker pool is implemented on `codex/remote-executor-worker-pool`
+- [x] `#97` cross-project scheduler fairness and capacity policy is implemented on `codex/cross-project-scheduler-fairness`
+- [x] `#98` repo-grounded plan synthesis and refresh is implemented on `codex/repo-grounded-plan-synthesis`
+- [x] `#99` verification runners and evidence capture is implemented on `codex/verification-runners-evidence-capture`
+- [x] `#100` git-aware task workspaces and diff review is implemented on `codex/git-aware-task-workspaces`
+- [x] `#101` cross-project command center is implemented on `codex/cross-project-command-center`
+- [x] `#102` queue and worker capacity controls is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#103` policy-driven approval and risk routing is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#104` cost, runtime, and quota controls are implemented on `codex/queue-worker-capacity-governance`
+- [x] `#105` notifications and outbound integrations are implemented on `codex/queue-worker-capacity-governance`
+- [x] `#106` incident timeline and replay are implemented on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
+
+## Extended Numbered Roadmap
+
+- [x] `#81` Multi-project write path and project lifecycle
+- [x] `#82` Project-aware supervisor and background orchestration
+- [x] `#83` Brownfield file-backed planning and repo navigation
+- [x] `#84` Policy-driven self-healing and circuit breakers
+- [x] `#85` Sandboxed provider runners per project
+- [x] `#86` Remote or queued provider execution beyond local CLI paths
+- [x] `#87` Brownfield rescan and drift detection
+- [x] `#88` File-linked task scopes and acceptance criteria
+- [x] `#89` Brownfield runbook and command catalog
+- [x] `#90` Portfolio view across projects
+- [x] `#91` Background orchestration daemon
+- [x] `#92` Queue and worker capacity management on top of the provider job queue
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
+- [x] `#96` Remote executor or worker pool
+- [x] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#98` Repo-grounded plan synthesis and refresh
+- [x] `#99` Verification runners and evidence capture
+- [x] `#100` Git-aware task workspaces and diff review
+- [x] `#101` Cross-project command center
+- [x] `#102` Queue and worker capacity controls
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Still To Do On `main`
 

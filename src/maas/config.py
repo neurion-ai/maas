@@ -15,6 +15,8 @@ DEFAULT_PROVIDER_SETTINGS = {
         "cli_command": "claude",
         "timeout_seconds": 300,
         "permission_mode": "acceptEdits",
+        "job_limit_per_pass": 2,
+        "queue_paused": False,
         "model": "",
     },
     "openai_codex": {
@@ -22,7 +24,13 @@ DEFAULT_PROVIDER_SETTINGS = {
         "cli_command": "codex",
         "timeout_seconds": 300,
         "sandbox": "workspace-write",
+        "job_limit_per_pass": 2,
+        "queue_paused": False,
         "model": "",
+    },
+    "python_script": {
+        "job_limit_per_pass": 2,
+        "queue_paused": False,
     },
 }
 
@@ -109,6 +117,20 @@ def build_default_project_config(
             "retry_backoff_max_seconds": 900,
         },
         "providers": deepcopy(DEFAULT_PROVIDER_SETTINGS),
+        "provider_capacity": {
+            "queue_mode": "running",
+            "max_running_jobs": 2,
+        },
+        "risk_policy": {
+            "priority_threshold": 101,
+            "sensitive_path_prefixes": [],
+        },
+        "runtime_quotas": {
+            "daily_run_limit": 0,
+            "daily_live_run_limit": 0,
+            "daily_runtime_seconds_limit": 0,
+            "max_task_session_attempts": 0,
+        },
     }
 
 

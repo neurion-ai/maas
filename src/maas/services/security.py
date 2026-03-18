@@ -33,7 +33,7 @@ def _audit_denial(connection, project_id, actor_id, action_type, resource_type, 
     )
 
 
-def _resolve_board_actor(connection, actor_id, project_id):
+def resolve_board_actor(connection, actor_id, project_id):
     actor = connection.execute(
         """
         SELECT agent_id, role, permissions_json
@@ -60,8 +60,12 @@ def _resolve_board_actor(connection, actor_id, project_id):
     ).fetchone()
 
 
+def _resolve_board_actor(connection, actor_id, project_id):
+    return resolve_board_actor(connection, actor_id, project_id)
+
+
 def ensure_board_action_allowed(connection, actor_id, project_id, action_type, resource_type, resource_id):
-    actor = _resolve_board_actor(connection, actor_id, project_id)
+    actor = resolve_board_actor(connection, actor_id, project_id)
     if actor is None:
         _audit_denial(connection, project_id, actor_id, action_type, resource_type, resource_id, "actor_not_found")
         connection.commit()

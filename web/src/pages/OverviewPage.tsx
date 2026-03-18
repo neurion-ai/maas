@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react";
-import { fetchOverview, runAlertOperatorAction, runFailureOperatorAction, runSupervisorPass } from "../lib/controlRoomApi";
+import {
+  fetchOverview,
+  fetchRepoFile,
+  fetchRepoTree,
+  refreshRepoPlan,
+  rescanBrownfieldProject,
+  runAlertOperatorAction,
+  runFailureOperatorAction,
+  runSupervisorPass,
+  updateBrownfieldOnboardingReview
+} from "../lib/controlRoomApi";
 import { reviewTask } from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { OverviewResponse, SupervisorRunResponse } from "../types";
+import type { OverviewResponse, RepoFileResponse, RepoTreeResponse, SupervisorRunResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 export function OverviewPage() {
@@ -13,6 +23,12 @@ export function OverviewPage() {
   const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
   const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const [pendingOnboardingReview, setPendingOnboardingReview] = useState<string | null>(null);
+  const [pendingBrownfieldRescan, setPendingBrownfieldRescan] = useState(false);
+  const [pendingRepoPlanRefresh, setPendingRepoPlanRefresh] = useState(false);
+  const [pendingOnboardingReviewUpdate, setPendingOnboardingReviewUpdate] = useState<string | null>(null);
+  const [repoTree, setRepoTree] = useState<RepoTreeResponse | null>(null);
+  const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
+  const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -32,14 +48,46 @@ export function OverviewPage() {
     };
   }, [livePulse]);
 
+  useEffect(() => {
+    let mounted = true;
+    if (overview?.onboarding?.mode !== "brownfield") {
+      setRepoTree(null);
+      setRepoFile(null);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    async function loadInitialRepoTree() {
+      try {
+        const payload = await fetchRepoTree("");
+        if (mounted) {
+          setRepoTree(payload);
+        }
+      } catch {
+        if (mounted) {
+          setNotice("Imported repository browser is unavailable; keeping onboarding summary only.");
+        }
+      }
+    }
+
+    void loadInitialRepoTree();
+
+    return () => {
+      mounted = false;
+    };
+  }, [overview?.project?.project_id, overview?.onboarding?.mode]);
+
   async function handleRunSupervisor() {
     setIsRunningSupervisor(true);
     setNotice(null);
     try {
       const result = await runSupervisorPass(2);
       setSupervisorResult(result);
+      const projectScopeSummary =
+        result.project_runs.length > 1 ? ` across ${result.project_runs.length} projects` : "";
       setNotice(
-        `Supervisor refreshed ${result.ready_changes.length} tasks, assigned ${result.assigned_count}, and found ${result.stale_sessions.length} stale sessions.`
+        `Supervisor refreshed ${result.ready_changes.length} tasks, assigned ${result.assigned_count}, and found ${result.stale_sessions.length} stale sessions${projectScopeSummary}.`
       );
       setOverview(await fetchOverview());
     } catch {
@@ -125,6 +173,174 @@ export function OverviewPage() {
     }
   }
 
+  async function handleBrownfieldRescan() {
+    const projectId = overview?.project?.project_id;
+    if (!projectId) {
+      return;
+    }
+
+    setPendingBrownfieldRescan(true);
+    setNotice(null);
+    try {
+      const payload = await rescanBrownfieldProject(projectId);
+      const refreshedOverview = await fetchOverview();
+      setOverview(refreshedOverview);
+      try {
+        const refreshedTree = await fetchRepoTree("");
+        setRepoTree(refreshedTree);
+        setRepoFile(null);
+      } catch {
+        setRepoTree(null);
+        setRepoFile(null);
+      }
+      setNotice(
+        payload.drift?.detected
+          ? `Brownfield rescan detected drift and reopened review: ${payload.drift?.summary ?? "changes detected"}.`
+          : "Brownfield rescan completed with no material drift detected."
+      );
+    } catch {
+      setNotice("Brownfield rescan failed; keeping the current imported understanding.");
+    } finally {
+      setPendingBrownfieldRescan(false);
+    }
+  }
+
+  async function handleUpdateOnboardingReview(
+    payload: {
+      ignored_paths: string[];
+      accepted_workflow_labels?: string[] | null;
+      accepted_runbook_labels?: string[] | null;
+    },
+    noticeMessage: string,
+    pendingKey: string
+  ) {
+    const projectId = overview?.project?.project_id;
+    if (!projectId) {
+      return;
+    }
+
+    setPendingOnboardingReviewUpdate(pendingKey);
+    setNotice(null);
+    try {
+      await updateBrownfieldOnboardingReview(projectId, payload);
+      setOverview(await fetchOverview());
+      setNotice(noticeMessage);
+    } catch {
+      setNotice("Updating brownfield onboarding review inputs failed; keeping the current imported understanding.");
+    } finally {
+      setPendingOnboardingReviewUpdate(null);
+    }
+  }
+
+  async function handleRefreshRepoPlan() {
+    const projectId = overview?.project?.project_id;
+    if (!projectId) {
+      return;
+    }
+
+    setPendingRepoPlanRefresh(true);
+    setNotice(null);
+    try {
+      const payload = await refreshRepoPlan(projectId);
+      setOverview(await fetchOverview());
+      setNotice(
+        `Repo-grounded plan refreshed: ${payload.preview?.generated_task_count ?? 0} synthesized tasks, ${payload.created_task_ids?.length ?? 0} created, ${payload.updated_task_ids?.length ?? 0} updated.`
+      );
+    } catch {
+      setNotice("Refreshing the repo-grounded plan failed; keeping the current brownfield plan state.");
+    } finally {
+      setPendingRepoPlanRefresh(false);
+    }
+  }
+
+  async function handleToggleIgnoredPath(path: string) {
+    const reviewOverrides = overview?.onboarding?.review_overrides;
+    if (!reviewOverrides) {
+      return;
+    }
+    const ignoredPaths = reviewOverrides.ignored_paths.includes(path)
+      ? reviewOverrides.ignored_paths.filter((item) => item !== path)
+      : [...reviewOverrides.ignored_paths, path];
+    await handleUpdateOnboardingReview(
+      {
+        ignored_paths: ignoredPaths,
+        accepted_workflow_labels: reviewOverrides.accepted_workflow_labels,
+        accepted_runbook_labels: reviewOverrides.accepted_runbook_labels
+      },
+      ignoredPaths.includes(path)
+        ? `Ignored imported scope ${path} for onboarding release.`
+        : `Restored imported scope ${path} to the onboarding release set.`,
+      `ignore:${path}`
+    );
+  }
+
+  async function handleToggleAcceptedWorkflow(label: string) {
+    const reviewOverrides = overview?.onboarding?.review_overrides;
+    if (!reviewOverrides) {
+      return;
+    }
+    const acceptedWorkflowLabels = reviewOverrides.accepted_workflow_labels.includes(label)
+      ? reviewOverrides.accepted_workflow_labels.filter((item) => item !== label)
+      : [...reviewOverrides.accepted_workflow_labels, label];
+    await handleUpdateOnboardingReview(
+      {
+        ignored_paths: reviewOverrides.ignored_paths,
+        accepted_workflow_labels: acceptedWorkflowLabels,
+        accepted_runbook_labels: reviewOverrides.accepted_runbook_labels
+      },
+      acceptedWorkflowLabels.includes(label)
+        ? `Included imported workflow ${label} in onboarding release.`
+        : `Excluded imported workflow ${label} from onboarding release.`,
+      `workflow:${label}`
+    );
+  }
+
+  async function handleToggleAcceptedRunbook(label: string) {
+    const reviewOverrides = overview?.onboarding?.review_overrides;
+    if (!reviewOverrides) {
+      return;
+    }
+    const acceptedRunbookLabels = reviewOverrides.accepted_runbook_labels.includes(label)
+      ? reviewOverrides.accepted_runbook_labels.filter((item) => item !== label)
+      : [...reviewOverrides.accepted_runbook_labels, label];
+    await handleUpdateOnboardingReview(
+      {
+        ignored_paths: reviewOverrides.ignored_paths,
+        accepted_workflow_labels: reviewOverrides.accepted_workflow_labels,
+        accepted_runbook_labels: acceptedRunbookLabels
+      },
+      acceptedRunbookLabels.includes(label)
+        ? `Included imported runbook command ${label} in onboarding release.`
+        : `Excluded imported runbook command ${label} from onboarding release.`,
+      `runbook:${label}`
+    );
+  }
+
+  async function handleBrowseRepoPath(path: string) {
+    setPendingRepoPath(path || ".");
+    try {
+      const payload = await fetchRepoTree(path);
+      setRepoTree(payload);
+      setRepoFile(null);
+    } catch {
+      setNotice("Unable to load that imported repo area.");
+    } finally {
+      setPendingRepoPath(null);
+    }
+  }
+
+  async function handleOpenRepoFile(path: string) {
+    setPendingRepoPath(path);
+    try {
+      const payload = await fetchRepoFile(path);
+      setRepoFile(payload);
+    } catch {
+      setNotice("Unable to preview that imported file.");
+    } finally {
+      setPendingRepoPath(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -160,8 +376,18 @@ export function OverviewPage() {
         {overview?.onboarding?.mode === "brownfield" ? (
           <article className="data-panel">
             <header className="data-panel__header">
-              <h2>Brownfield onboarding</h2>
-              <p>Imported repo understanding must be explicitly reviewed before the seeded work is released.</p>
+              <div>
+                <h2>Brownfield onboarding</h2>
+                <p>Imported repo understanding must be explicitly reviewed before the seeded work is released.</p>
+              </div>
+              <button
+                type="button"
+                className="task-action task-action--secondary"
+                disabled={pendingBrownfieldRescan}
+                onClick={() => void handleBrownfieldRescan()}
+              >
+                {pendingBrownfieldRescan ? "Rescanning..." : "Rescan import"}
+              </button>
             </header>
               <div className="data-list">
                 <div className="data-list__item">
@@ -186,6 +412,64 @@ export function OverviewPage() {
                     <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
                   </div>
                 </div>
+                {overview.onboarding.last_scanned_at ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Latest rescan</strong>
+                      <p>{overview.onboarding.last_scanned_by ?? "unknown actor"}</p>
+                      {overview.onboarding.drift_summary?.summary ? <p>{overview.onboarding.drift_summary.summary}</p> : null}
+                      {(overview.onboarding.drift_summary?.changes?.length ?? 0) > 0
+                        ? overview.onboarding.drift_summary?.changes?.map((item) => <p key={item}>{item}</p>)
+                        : null}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{new Date(overview.onboarding.last_scanned_at).toLocaleString()}</span>
+                      <span>{overview.onboarding.drift_summary?.detected ? "drift detected" : "no drift"}</span>
+                    </div>
+                  </div>
+                ) : null}
+                {overview.onboarding.repo_plan_preview ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Repo-grounded plan</strong>
+                      <p>
+                        {overview.onboarding.repo_plan_preview.generated_task_count} synthesized tasks ·{" "}
+                        {overview.onboarding.repo_plan_preview.verification_task_count} verification recipes ·{" "}
+                        {overview.onboarding.repo_plan_preview.repo_area_task_count} repo areas
+                      </p>
+                      {(overview.onboarding.repo_plan_state?.last_refreshed_at ?? null) ? (
+                        <p>
+                          Last refreshed by {overview.onboarding.repo_plan_state?.last_refreshed_by ?? "unknown actor"}
+                          {" · "}
+                          {new Date(overview.onboarding.repo_plan_state?.last_refreshed_at ?? "").toLocaleString()}
+                          {overview.onboarding.repo_plan_state?.stale ? " · stale after onboarding changes" : ""}
+                        </p>
+                      ) : (
+                        <p>Preview only until onboarding is approved and the synthesized backlog is refreshed.</p>
+                      )}
+                      {overview.onboarding.repo_plan_preview.items?.map((item) => (
+                        <p key={item.synthesis_key}>
+                          <strong>{item.title}</strong>
+                          {item.command ? ` · ${item.command}` : ""}
+                          {(item.paths?.length ?? 0) > 0 ? ` · ${item.paths.join(", ")}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.repo_plan_state?.active_task_count ?? 0} active synthesized tasks</span>
+                      {overview.onboarding.review_status === "approved" ? (
+                        <button
+                          type="button"
+                          className="task-action task-action--secondary"
+                          disabled={pendingRepoPlanRefresh}
+                          onClick={() => void handleRefreshRepoPlan()}
+                        >
+                          {pendingRepoPlanRefresh ? "Refreshing..." : "Refresh repo plan"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
                 {(overview.onboarding.discovery_summary.workflow_details?.length ?? 0) > 0 ||
                 (overview.onboarding.discovery_summary.workflow_labels?.length ?? 0) > 0 ? (
                   <div className="data-list__item">
@@ -197,11 +481,82 @@ export function OverviewPage() {
                           <strong>{item.label}</strong>
                           {item.path ? ` · ${item.path}` : ""}
                           {item.detail ? ` · ${item.detail}` : ""}
+                          {" · "}
+                          <button
+                            type="button"
+                            className="inline-link-button"
+                            disabled={pendingOnboardingReviewUpdate === `workflow:${item.label}`}
+                            onClick={() => void handleToggleAcceptedWorkflow(item.label)}
+                          >
+                            {pendingOnboardingReviewUpdate === `workflow:${item.label}`
+                              ? "Saving..."
+                              : overview.onboarding.review_overrides?.accepted_workflow_labels.includes(item.label)
+                                ? "Exclude"
+                                : "Include"}
+                          </button>
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingRepoPath === item.path}
+                                onClick={() => void handleOpenRepoFile(item.path ?? "")}
+                              >
+                                {pendingRepoPath === item.path ? "Opening..." : "Open file"}
+                              </button>
+                            </>
+                          ) : null}
                         </p>
                       ))}
                     </div>
                     <div className="data-list__meta">
                       <span>{overview.onboarding.discovery_summary.workflow_details?.length ?? 0} signals</span>
+                    </div>
+                  </div>
+                ) : null}
+                {(overview.onboarding.discovery_summary.runbook_commands?.length ?? 0) > 0 ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Imported runbook</strong>
+                      {overview.onboarding.discovery_summary.runbook_commands?.map((item) => (
+                        <p key={`${item.label}-${item.command ?? ""}-${item.path ?? ""}`}>
+                          <strong>{item.label}</strong>
+                          {item.command ? ` · ${item.command}` : ""}
+                          {item.path ? ` · ${item.path}` : ""}
+                          {item.detail ? ` · ${item.detail}` : ""}
+                          {item.review_note ? ` · ${item.review_note}` : ""}
+                          {" · "}
+                          <button
+                            type="button"
+                            className="inline-link-button"
+                            disabled={pendingOnboardingReviewUpdate === `runbook:${item.label}`}
+                            onClick={() => void handleToggleAcceptedRunbook(item.label)}
+                          >
+                            {pendingOnboardingReviewUpdate === `runbook:${item.label}`
+                              ? "Saving..."
+                              : overview.onboarding.review_overrides?.accepted_runbook_labels.includes(item.label)
+                                ? "Exclude"
+                                : "Include"}
+                          </button>
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingRepoPath === item.path}
+                                onClick={() => void handleOpenRepoFile(item.path ?? "")}
+                              >
+                                {pendingRepoPath === item.path ? "Opening..." : "Open file"}
+                              </button>
+                            </>
+                          ) : null}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.discovery_summary.runbook_commands?.length ?? 0} recipes</span>
                     </div>
                   </div>
                 ) : null}
@@ -228,6 +583,55 @@ export function OverviewPage() {
                           {` · ${item.primary_language}`}
                           {` · ${item.file_count} files`}
                           {item.summary ? ` · ${item.summary}` : ""}
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingOnboardingReviewUpdate === `ignore:${item.path}`}
+                                onClick={() => void handleToggleIgnoredPath(item.path ?? "")}
+                              >
+                                {pendingOnboardingReviewUpdate === `ignore:${item.path}`
+                                  ? "Saving..."
+                                  : overview.onboarding.review_overrides?.ignored_paths.includes(item.path)
+                                    ? "Unignore"
+                                    : "Ignore"}
+                              </button>
+                            </>
+                          ) : null}
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingRepoPath === item.path}
+                                onClick={() => void handleBrowseRepoPath(item.path ?? "")}
+                              >
+                                {pendingRepoPath === item.path ? "Loading..." : "Browse"}
+                              </button>
+                            </>
+                          ) : null}
+                          {(item.sample_files?.length ?? 0) > 0 ? (
+                            <>
+                              <br />
+                              <span>Sample files: </span>
+                              {item.sample_files?.map((samplePath, index) => (
+                                <span key={samplePath}>
+                                  {index > 0 ? ", " : ""}
+                                  <button
+                                    type="button"
+                                    className="inline-link-button"
+                                    disabled={pendingRepoPath === samplePath}
+                                    onClick={() => void handleOpenRepoFile(samplePath)}
+                                  >
+                                    {samplePath}
+                                  </button>
+                                </span>
+                              ))}
+                            </>
+                          ) : null}
                         </p>
                       ))}
                     </div>
@@ -268,6 +672,79 @@ export function OverviewPage() {
                 >
                   {pendingOnboardingReview === "reject" ? "Rejecting..." : "Request changes"}
                 </button>
+              </div>
+            ) : null}
+          </article>
+        ) : null}
+
+        {overview?.onboarding?.mode === "brownfield" ? (
+          <article className="data-panel">
+            <header className="data-panel__header">
+              <h2>Imported repository</h2>
+              <p>Browse the imported source tree and preview files directly from the brownfield source root.</p>
+            </header>
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>Current area</strong>
+                  <p>{repoTree?.path || "."}</p>
+                </div>
+                <div className="data-list__meta">
+                  {repoTree?.parent_path ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingRepoPath === repoTree.parent_path}
+                      onClick={() => void handleBrowseRepoPath(repoTree.parent_path ?? "")}
+                    >
+                      {pendingRepoPath === repoTree.parent_path ? "Loading..." : "Up one level"}
+                    </button>
+                  ) : (
+                    <span>{repoTree?.entries.length ?? 0} entries</span>
+                  )}
+                </div>
+              </div>
+              {(repoTree?.entries ?? []).map((entry) => (
+                <div key={entry.path} className="data-list__item">
+                  <div>
+                    <strong>{entry.name}</strong>
+                    <p>{entry.path}</p>
+                  </div>
+                  <div className="data-list__meta">
+                    <span>{entry.kind}</span>
+                    {entry.kind === "directory" ? (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        disabled={pendingRepoPath === entry.path}
+                        onClick={() => void handleBrowseRepoPath(entry.path)}
+                      >
+                        {pendingRepoPath === entry.path ? "Loading..." : "Browse"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        disabled={pendingRepoPath === entry.path}
+                        onClick={() => void handleOpenRepoFile(entry.path)}
+                      >
+                        {pendingRepoPath === entry.path ? "Opening..." : "Preview"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {repoFile ? (
+              <div className="repo-preview">
+                <div className="repo-preview__header">
+                  <strong>{repoFile.path}</strong>
+                  <span>
+                    {repoFile.previewable ? repoFile.content_kind : "binary"} · {repoFile.size} bytes
+                    {repoFile.truncated ? " · truncated" : ""}
+                  </span>
+                </div>
+                <pre>{repoFile.content ?? "Preview unavailable for this file type."}</pre>
               </div>
             ) : null}
           </article>

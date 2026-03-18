@@ -298,6 +298,7 @@ def _build_codebase_map(discovery):
                 "primary_language": item["primary_language"],
                 "file_count": item["file_count"],
                 "summary": ", ".join(summary_parts),
+                "sample_files": item.get("sample_files", [])[:3],
             }
         )
         if len(codebase_map) >= 4:
@@ -314,6 +315,7 @@ def _build_codebase_map(discovery):
                 "summary": "root-level repo layout with {count} files".format(
                     count=discovery.get("total_files") or 0
                 ),
+                "sample_files": discovery.get("sample_files", [])[:3],
             }
         )
     return codebase_map
@@ -340,6 +342,8 @@ def discover_brownfield_project(project_root):
 
     top_level_counts = {}
     top_level_languages = {}
+    top_level_sample_files = {}
+    discovery["sample_files"] = []
     for current_root, dirnames, filenames in os.walk(project_root):
         relative_root = os.path.relpath(current_root, project_root)
         dirnames[:] = [name for name in dirnames if name not in IGNORED_DISCOVERY_DIRS]
@@ -365,6 +369,11 @@ def discover_brownfield_project(project_root):
 
             top_level_name = relative_path.split(os.sep, 1)[0]
             top_level_counts[top_level_name] = top_level_counts.get(top_level_name, 0) + 1
+            top_level_sample_files.setdefault(top_level_name, [])
+            if len(top_level_sample_files[top_level_name]) < 3:
+                top_level_sample_files[top_level_name].append(relative_path)
+            if len(discovery["sample_files"]) < 6:
+                discovery["sample_files"].append(relative_path)
 
     if discovery["language_counts"]:
         discovery["primary_language"] = max(
@@ -450,6 +459,7 @@ def discover_brownfield_project(project_root):
                     top_level_languages.get(name, {"mixed": 0}).items(),
                     key=lambda item: item[1],
                 )[0],
+                "sample_files": top_level_sample_files.get(name, [])[:3],
             }
         )
         if len(top_level_dirs) >= 4:
@@ -486,13 +496,27 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             "{kind}:{name}".format(kind=item["kind"], name=item["name"])
             for item in discovery["workflow_signals"]
         ) or "none detected"
+        runbook = "\n".join(
+            "- {label}{command}{path}{note}".format(
+                label=item["label"],
+                command=(" | command: `{0}`".format(item["command"]) if item.get("command") else ""),
+                path=(" | path: {0}".format(item["path"]) if item.get("path") else ""),
+                note=(" | note: {0}".format(item["review_note"]) if item.get("review_note") else ""),
+            )
+            for item in _build_runbook_commands(discovery)
+        ) or "- none detected"
         codebase_map = "\n".join(
-            "- {name} ({kind}, {language}, {count} files): {summary}".format(
+            "- {name} ({kind}, {language}, {count} files): {summary}{samples}".format(
                 name=item["name"],
                 kind=CODEBASE_AREA_LABELS.get(item["kind"], item["kind"]),
                 language=item["primary_language"],
                 count=item["file_count"],
                 summary=item["summary"],
+                samples=(
+                    " | sample files: {0}".format(", ".join(item.get("sample_files", [])[:3]))
+                    if item.get("sample_files")
+                    else ""
+                ),
             )
             for item in discovery.get("codebase_map", [])
         ) or "- none detected"
@@ -522,6 +546,8 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
 ## Workflow Signals
 
 - Detected commands and automation: {workflows}
+- Imported runbook:
+{runbook}
 - Imported codebase map:
 {codebase_map}
 - Initial README excerpt:
@@ -551,6 +577,7 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             docs=docs,
             tests=tests,
             workflows=workflows,
+            runbook=runbook,
             codebase_map=codebase_map,
             readme_excerpt=readme_excerpt,
         )
@@ -601,6 +628,7 @@ def build_discovery_summary(discovery):
             }
             for item in discovery["workflow_signals"][:5]
         ],
+        "runbook_commands": _build_runbook_commands(discovery),
         "repo_areas": [item["name"] for item in discovery["top_level_dirs"][:4]],
         "codebase_map": [
             {
@@ -610,10 +638,151 @@ def build_discovery_summary(discovery):
                 "primary_language": item["primary_language"],
                 "file_count": item["file_count"],
                 "summary": item.get("summary") or "",
+                "sample_files": item.get("sample_files", [])[:3],
             }
             for item in discovery.get("codebase_map", [])[:4]
         ],
     }
+
+
+def _normalize_review_paths(paths):
+    normalized = []
+    for value in paths or []:
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip().replace("\\", "/")
+        if not candidate:
+            continue
+        normalized_candidate = os.path.normpath(candidate).replace("\\", "/")
+        if normalized_candidate in ("", ".") or normalized_candidate.startswith("../"):
+            continue
+        if normalized_candidate not in normalized:
+            normalized.append(normalized_candidate)
+    return normalized
+
+
+def default_onboarding_review_overrides(discovery_summary):
+    summary = discovery_summary or {}
+    return {
+        "ignored_paths": [],
+        "accepted_workflow_labels": list(summary.get("workflow_labels") or []),
+        "accepted_runbook_labels": [
+            item["label"] for item in (summary.get("runbook_commands") or []) if item.get("label")
+        ],
+    }
+
+
+def merge_onboarding_review_overrides(discovery_summary, previous_summary=None, current_overrides=None):
+    summary = discovery_summary or {}
+    previous = previous_summary or {}
+    current = current_overrides or {}
+
+    workflow_labels = list(summary.get("workflow_labels") or [])
+    previous_workflow_labels = set(previous.get("workflow_labels") or [])
+    accepted_workflow_labels = set(current.get("accepted_workflow_labels") or workflow_labels)
+
+    runbook_labels = [item["label"] for item in (summary.get("runbook_commands") or []) if item.get("label")]
+    previous_runbook_labels = {
+        item["label"] for item in (previous.get("runbook_commands") or []) if item.get("label")
+    }
+    accepted_runbook_labels = set(current.get("accepted_runbook_labels") or runbook_labels)
+
+    return {
+        "ignored_paths": _normalize_review_paths(current.get("ignored_paths") or []),
+        "accepted_workflow_labels": [
+            label
+            for label in workflow_labels
+            if label in accepted_workflow_labels or label not in previous_workflow_labels
+        ],
+        "accepted_runbook_labels": [
+            label
+            for label in runbook_labels
+            if label in accepted_runbook_labels or label not in previous_runbook_labels
+        ],
+    }
+
+
+def normalize_onboarding_review_overrides(discovery_summary, overrides=None):
+    summary = discovery_summary or {}
+    requested = overrides or {}
+    defaults = default_onboarding_review_overrides(summary)
+    available_workflow_labels = list(summary.get("workflow_labels") or [])
+    available_runbook_labels = [item["label"] for item in (summary.get("runbook_commands") or []) if item.get("label")]
+    requested_workflow_labels = requested.get("accepted_workflow_labels")
+    requested_runbook_labels = requested.get("accepted_runbook_labels")
+    return {
+        "ignored_paths": _normalize_review_paths(requested.get("ignored_paths", defaults["ignored_paths"])),
+        "accepted_workflow_labels": [
+            label
+            for label in available_workflow_labels
+            if requested_workflow_labels is None or label in set(requested_workflow_labels)
+        ],
+        "accepted_runbook_labels": [
+            label
+            for label in available_runbook_labels
+            if requested_runbook_labels is None or label in set(requested_runbook_labels)
+        ],
+    }
+
+
+def _path_matches_ignored(path, ignored_paths):
+    if not path:
+        return False
+    normalized_path = os.path.normpath(path).replace("\\", "/")
+    for ignored in ignored_paths:
+        if normalized_path == ignored or normalized_path.startswith(ignored + "/"):
+            return True
+    return False
+
+
+def apply_onboarding_review_overrides(discovery_summary, review_overrides=None):
+    summary = dict(discovery_summary or {})
+    if not summary:
+        return summary
+    normalized_overrides = normalize_onboarding_review_overrides(summary, review_overrides)
+    ignored_paths = normalized_overrides["ignored_paths"]
+    accepted_workflow_labels = set(normalized_overrides["accepted_workflow_labels"])
+    accepted_runbook_labels = set(normalized_overrides["accepted_runbook_labels"])
+
+    workflow_details = [
+        item
+        for item in (summary.get("workflow_details") or [])
+        if item.get("label") in accepted_workflow_labels and not _path_matches_ignored(item.get("path"), ignored_paths)
+    ]
+    workflow_labels = [item["label"] for item in workflow_details]
+    if not workflow_labels:
+        workflow_labels = [
+            label
+            for label in (summary.get("workflow_labels") or [])
+            if label in accepted_workflow_labels
+        ]
+
+    runbook_commands = []
+    for item in summary.get("runbook_commands") or []:
+        if item.get("label") not in accepted_runbook_labels:
+            continue
+        if _path_matches_ignored(item.get("path"), ignored_paths):
+            continue
+        runbook_commands.append(dict(item))
+
+    codebase_map = []
+    for item in summary.get("codebase_map") or []:
+        path = item.get("path") or item.get("name")
+        if _path_matches_ignored(path, ignored_paths):
+            continue
+        filtered_item = dict(item)
+        filtered_item["sample_files"] = [
+            sample for sample in (item.get("sample_files") or []) if not _path_matches_ignored(sample, ignored_paths)
+        ]
+        codebase_map.append(filtered_item)
+
+    summary["workflow_details"] = workflow_details
+    summary["workflow_labels"] = workflow_labels
+    summary["runbook_commands"] = runbook_commands
+    summary["codebase_map"] = codebase_map
+    summary["repo_areas"] = [item["name"] for item in codebase_map]
+    summary["review_overrides"] = normalized_overrides
+    return summary
 
 
 def build_greenfield_task_specs():
@@ -653,13 +822,153 @@ def _operator_codebase_entries(discovery):
     return entries[:2]
 
 
+def _unique_preserving_order(values):
+    ordered = []
+    seen = set()
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def _source_path_criterion(paths):
+    scoped_paths = _unique_preserving_order(paths)
+    if not scoped_paths:
+        return None
+    return {"type": "source_path_exists", "paths": scoped_paths}
+
+
+def _workflow_validation_command(signal):
+    kind = signal.get("kind")
+    name = signal.get("name")
+    if not name:
+        return None
+    if kind == "make_target":
+        return "make {name}".format(name=name)
+    if kind == "npm_script":
+        return "npm run {name}".format(name=name)
+    return None
+
+
+def _runbook_entry_for_signal(signal):
+    kind = signal.get("kind")
+    label = "{kind}:{name}".format(kind=kind, name=signal.get("name"))
+    command = _workflow_validation_command(signal)
+    entry = {
+        "label": label,
+        "kind": kind,
+        "name": signal.get("name"),
+        "path": signal.get("path"),
+        "command": command,
+        "detail": signal.get("detail") or "",
+        "review_note": "",
+    }
+    if kind == "python_script":
+        entry["review_note"] = "Review the imported pyproject entrypoint and map it to a MAAS validation recipe."
+    elif kind == "github_actions":
+        entry["review_note"] = "Review the imported CI workflow and mirror its checks inside the MAAS runbook."
+    elif command:
+        entry["review_note"] = "Use this imported command as a first-pass validation recipe."
+    else:
+        entry["review_note"] = "Review the imported workflow before wider automation."
+    return entry
+
+
+def _build_runbook_commands(discovery):
+    entries = []
+    seen = set()
+    for signal in discovery.get("workflow_signals", []):
+        if signal.get("kind") not in WORKFLOW_SIGNAL_LABELS:
+            continue
+        entry = _runbook_entry_for_signal(signal)
+        key = (entry["label"], entry.get("command") or "", entry.get("path") or "")
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append(entry)
+    return entries[:8]
+
+
+def _brownfield_repo_area_paths(item):
+    sample_files = item.get("sample_files", [])[:3]
+    if sample_files:
+        return sample_files
+    return [item.get("path") or item["name"]]
+
+
+def _brownfield_docs_and_tests_paths(discovery):
+    scoped_paths = []
+    for item in discovery.get("codebase_map", []):
+        if item.get("kind") in {"docs", "tests"}:
+            scoped_paths.extend(item.get("sample_files", [])[:2] or [item.get("path") or item["name"]])
+    if scoped_paths:
+        return _unique_preserving_order(scoped_paths)
+
+    for root_name in (discovery.get("docs_roots") or []) + (discovery.get("test_roots") or []):
+        sample = next(
+            (path for path in discovery.get("sample_files", []) if path == root_name or path.startswith(root_name + os.sep)),
+            None,
+        )
+        scoped_paths.append(sample or root_name)
+    return _unique_preserving_order(scoped_paths)
+
+
+def _runtime_alignment_paths(discovery):
+    scoped_paths = []
+    for filename in discovery.get("package_managers", []):
+        scoped_paths.append(filename)
+    for signal in discovery.get("workflow_signals", [])[:3]:
+        if signal.get("path"):
+            scoped_paths.append(signal["path"])
+    if not scoped_paths:
+        scoped_paths.extend(discovery.get("sample_files", [])[:3])
+    return _unique_preserving_order(scoped_paths)
+
+
+def _brownfield_task_spec(
+    status,
+    title,
+    agent_id,
+    priority,
+    description,
+    review_state,
+    progress_pct,
+    scoped_paths=None,
+    validation_command=None,
+):
+    acceptance_criteria = [{"type": "artifact_exists"}]
+    path_criterion = _source_path_criterion(scoped_paths or [])
+    if path_criterion is not None:
+        acceptance_criteria.append(path_criterion)
+    if validation_command:
+        acceptance_criteria.append(
+            {
+                "type": "test_passes",
+                "command": validation_command,
+                "timeout_seconds": 120,
+            }
+        )
+    return {
+        "status": status,
+        "title": title,
+        "agent_id": agent_id,
+        "priority": priority,
+        "description": description,
+        "review_state": review_state,
+        "progress_pct": progress_pct,
+        "acceptance_criteria": acceptance_criteria,
+    }
+
+
 def build_brownfield_task_specs(discovery):
     top_dirs = ", ".join(item["name"] for item in discovery["top_level_dirs"]) or "the repository root"
     docs = ", ".join(discovery["docs_roots"]) or "README and inline project docs"
     tests = ", ".join(discovery["test_roots"]) or "discovered validation entrypoints"
     primary_language = discovery["primary_language"]
     task_specs = [
-        (
+        _brownfield_task_spec(
             "review",
             BROWNFIELD_REVIEW_TASK_TITLE,
             "agent_reviewer",
@@ -667,22 +976,27 @@ def build_brownfield_task_specs(discovery):
             "Review the brownfield understanding artifact and confirm the imported operating model before wider automation.",
             "awaiting_review",
             0,
+            scoped_paths=["README.md"] if discovery.get("readme_excerpt") else [],
         ),
     ]
     workflow_priority = 94
     for signal in _operator_workflow_signals(discovery):
         task_specs.append(
-            (
+            _brownfield_task_spec(
                 "blocked",
                 "Validate imported workflow: {name}".format(name=signal["name"]),
                 "agent_researcher",
                 workflow_priority,
-                "Confirm the imported {kind} `{name}` matches the existing repo workflow and acceptance path.".format(
+                "Confirm the imported {kind} `{name}` matches the existing repo workflow and acceptance path from {path}{detail}.".format(
                     kind=WORKFLOW_SIGNAL_LABELS[signal["kind"]],
                     name=signal["name"],
+                    path=signal.get("path") or "the existing repository",
+                    detail=(" ({0})".format(signal.get("detail")) if signal.get("detail") else ""),
                 ),
                 BROWNFIELD_PENDING_REVIEW_STATE,
                 0,
+                scoped_paths=[signal.get("path")] if signal.get("path") else [],
+                validation_command=_workflow_validation_command(signal),
             )
         )
         workflow_priority -= 2
@@ -691,26 +1005,28 @@ def build_brownfield_task_specs(discovery):
     for item in _operator_codebase_entries(discovery):
         kind_label = CODEBASE_AREA_LABELS.get(item["kind"], "repo area")
         task_specs.append(
-            (
+            _brownfield_task_spec(
                 "blocked",
                 "Map imported {kind}: {name}".format(kind=kind_label, name=item["name"]),
                 "agent_allocator",
                 repo_area_priority,
-                "Turn the imported {kind} `{name}` into an operator-visible ownership/workflow area using the discovered {language} stack and {count} files.".format(
+                "Turn the imported {kind} `{name}` into an operator-visible ownership/workflow area using the discovered {language} stack and {count} files. Start from {samples}.".format(
                     kind=kind_label,
                     name=item["name"],
                     language=item["primary_language"],
                     count=item["file_count"],
+                    samples=", ".join(item.get("sample_files", [])[:3]) or item["path"],
                 ),
                 BROWNFIELD_PENDING_REVIEW_STATE,
                 0,
+                scoped_paths=_brownfield_repo_area_paths(item),
             )
         )
         repo_area_priority -= 2
 
     if discovery.get("docs_roots") or discovery.get("test_roots"):
         task_specs.append(
-            (
+            _brownfield_task_spec(
                 "blocked",
                 "Import discovered documentation and test conventions",
                 "agent_researcher",
@@ -721,11 +1037,12 @@ def build_brownfield_task_specs(discovery):
                 ),
                 BROWNFIELD_PENDING_REVIEW_STATE,
                 0,
+                scoped_paths=_brownfield_docs_and_tests_paths(discovery),
             )
         )
 
     task_specs.append(
-        (
+        _brownfield_task_spec(
             "blocked",
             "Align runtime and provider settings with existing tooling",
             "agent_builder",
@@ -735,13 +1052,14 @@ def build_brownfield_task_specs(discovery):
             ),
             BROWNFIELD_PENDING_REVIEW_STATE,
             0,
+            scoped_paths=_runtime_alignment_paths(discovery),
         )
     )
 
     if len(task_specs) == 1:
         task_specs.extend(
             [
-                (
+                _brownfield_task_spec(
                     "blocked",
                     "Validate imported workflow entrypoints",
                     "agent_researcher",
@@ -749,8 +1067,9 @@ def build_brownfield_task_specs(discovery):
                     "Confirm the imported repo workflow surfaces before wider automation starts.",
                     BROWNFIELD_PENDING_REVIEW_STATE,
                     0,
+                    scoped_paths=discovery.get("sample_files", [])[:2],
                 ),
-                (
+                _brownfield_task_spec(
                     "blocked",
                     "Map imported repository areas",
                     "agent_allocator",
@@ -760,10 +1079,30 @@ def build_brownfield_task_specs(discovery):
                     ),
                     BROWNFIELD_PENDING_REVIEW_STATE,
                     0,
+                    scoped_paths=discovery.get("sample_files", [])[:3],
                 ),
             ]
         )
     return task_specs
+
+
+def _normalize_task_spec(task_spec):
+    if isinstance(task_spec, dict):
+        normalized = dict(task_spec)
+        normalized.setdefault("acceptance_criteria", [{"type": "artifact_exists"}])
+        return normalized
+
+    status, title, agent_id, priority, description, review_state, progress_pct = task_spec
+    return {
+        "status": status,
+        "title": title,
+        "agent_id": agent_id,
+        "priority": priority,
+        "description": description,
+        "review_state": review_state,
+        "progress_pct": progress_pct,
+        "acceptance_criteria": [{"type": "artifact_exists"}],
+    }
 
 
 def seed_project(
@@ -849,7 +1188,16 @@ def seed_project(
         parent_goal_id = goal_id
 
     task_ids = []
-    for status, title, agent_id, priority, description, review_state, progress_pct in task_specs:
+    for raw_task_spec in task_specs:
+        task_spec = _normalize_task_spec(raw_task_spec)
+        status = task_spec["status"]
+        title = task_spec["title"]
+        agent_id = task_spec["agent_id"]
+        priority = task_spec["priority"]
+        description = task_spec["description"]
+        review_state = task_spec["review_state"]
+        progress_pct = task_spec["progress_pct"]
+        acceptance_criteria = task_spec.get("acceptance_criteria") or [{"type": "artifact_exists"}]
         task_id = generate_id("task")
         task_ids.append(task_id)
         assigned_agent_id = agent_ids.get(agent_id, agent_id)
@@ -871,7 +1219,7 @@ def seed_project(
                 status,
                 priority,
                 assigned_agent_id,
-                json.dumps([{"type": "artifact_exists"}]),
+                json.dumps(acceptance_criteria),
                 progress_pct,
                 review_state,
             )
@@ -885,7 +1233,7 @@ def seed_project(
                 status,
                 priority,
                 assigned_agent_id,
-                json.dumps([{"type": "artifact_exists"}]),
+                json.dumps(acceptance_criteria),
                 progress_pct,
                 review_state,
                 None,
@@ -998,6 +1346,10 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
         discovery_summary=build_discovery_summary(discovery),
         source_root=paths.root,
     )
+    if resolved_mode == "brownfield":
+        onboarding = dict(config.get("onboarding") or {})
+        onboarding["review_overrides"] = default_onboarding_review_overrides(onboarding.get("discovery_summary") or {})
+        config["onboarding"] = onboarding
     save_project_config(paths.project_config, config)
     with open(paths.understanding_path, "w", encoding="utf-8") as handle:
         handle.write(build_understanding_markdown(config, mode=resolved_mode, discovery=discovery))

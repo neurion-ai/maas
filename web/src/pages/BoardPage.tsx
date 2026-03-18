@@ -4,11 +4,14 @@ import {
   finishTaskReplan,
   haltTask,
   markTaskForReplan,
+  prepareTaskGitWorkspace,
   reassignTask,
   recoverAndRequeueTask,
   recoverTask,
+  refreshTaskGitDiff,
   reprioritizeTask,
   reviewTask,
+  runTaskVerification,
   setTaskRetryLimit,
   setAgentState
 } from "../lib/boardApi";
@@ -117,8 +120,12 @@ export function BoardPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
-      await setAgentState(nextAgentId, action);
-      setNotice(`Agent ${action} requested for ${nextAgentId}.`);
+      const payload = await setAgentState(nextAgentId, action);
+      setNotice(
+        payload?.status === "escalated"
+          ? `Agent ${action} routed to escalation ${payload.escalation_id}.`
+          : `Agent ${action} requested for ${nextAgentId}.`
+      );
       await loadBoard();
     } catch {
       setNotice("Agent steering is not available yet on this backend.");
@@ -147,8 +154,12 @@ export function BoardPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
-      await reassignTask(taskId, nextAgentId);
-      setNotice(`Task ${taskId} reassigned to ${nextAgentId}.`);
+      const payload = await reassignTask(taskId, nextAgentId);
+      setNotice(
+        payload?.status === "escalated"
+          ? `Task ${taskId} reassignment routed to escalation ${payload.escalation_id}.`
+          : `Task ${taskId} reassigned to ${nextAgentId}.`
+      );
       await loadBoard();
     } catch {
       setNotice("Task reassignment failed; keep the current board snapshot under review.");
@@ -162,8 +173,12 @@ export function BoardPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
-      await haltTask(taskId);
-      setNotice(`Task ${taskId} halted.`);
+      const payload = await haltTask(taskId);
+      setNotice(
+        payload?.status === "escalated"
+          ? `Task ${taskId} halt routed to escalation ${payload.escalation_id}.`
+          : `Task ${taskId} halted.`
+      );
       await loadBoard();
     } catch {
       setNotice("Task halt failed; keep the current board snapshot under review.");
@@ -227,6 +242,59 @@ export function BoardPage() {
       await loadBoard();
     } catch {
       setNotice("Finish-replan failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleRunVerification(taskId: string) {
+    const actionKey = `run-verification:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await runTaskVerification(taskId);
+      setNotice(
+        payload.overall_passed
+          ? `Verification passed for ${taskId}.`
+          : `Verification recorded failures for ${taskId}.`
+      );
+      await loadBoard();
+    } catch {
+      setNotice("Task verification failed to run; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handlePrepareGitWorkspace(taskId: string) {
+    const actionKey = `prepare-git-workspace:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await prepareTaskGitWorkspace(taskId);
+      setNotice(`Git workspace prepared for ${taskId} on ${payload.branch_name}.`);
+      await loadBoard();
+    } catch {
+      setNotice("Git workspace preparation failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleRefreshGitDiff(taskId: string) {
+    const actionKey = `refresh-git-diff:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await refreshTaskGitDiff(taskId);
+      setNotice(
+        payload.dirty_file_count
+          ? `Git diff refreshed for ${taskId} with ${payload.dirty_file_count} changed files.`
+          : `Git diff refreshed for ${taskId}; workspace is clean.`
+      );
+      await loadBoard();
+    } catch {
+      setNotice("Git diff refresh failed; keep the current board snapshot under review.");
     } finally {
       setPendingActionKey(null);
     }
@@ -367,13 +435,16 @@ export function BoardPage() {
             onPriorityChange={handlePriorityChange}
             onReassign={handleReassign}
               onHalt={handleHalt}
-              onRecover={handleRecover}
-              onRecoverAndRequeue={handleRecoverAndRequeue}
-              onMarkForReplan={handleMarkForReplan}
-              onFinishReplan={handleFinishReplan}
-              onRetryLimitChange={handleRetryLimitChange}
-            />
-          ))}
+            onRecover={handleRecover}
+            onRecoverAndRequeue={handleRecoverAndRequeue}
+            onMarkForReplan={handleMarkForReplan}
+            onFinishReplan={handleFinishReplan}
+            onRunVerification={handleRunVerification}
+            onPrepareGitWorkspace={handlePrepareGitWorkspace}
+            onRefreshGitDiff={handleRefreshGitDiff}
+            onRetryLimitChange={handleRetryLimitChange}
+          />
+        ))}
       </section>
     </main>
   );

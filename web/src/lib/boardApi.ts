@@ -245,7 +245,7 @@ function buildBoardQuery(filters: BoardFiltersInput) {
   return query.toString();
 }
 
-async function postJson(path: string, body: Record<string, string | number | null>) {
+async function postJson(path: string, body: Record<string, string | number | string[] | null>) {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -257,6 +257,7 @@ async function postJson(path: string, body: Record<string, string | number | nul
   if (!response.ok) {
     throw new Error(`Unexpected status: ${response.status}`);
   }
+  return response.json();
 }
 
 export async function fetchBoard(filters: BoardFiltersInput = {}, signal?: AbortSignal): Promise<BoardResponse> {
@@ -326,6 +327,60 @@ export async function markTaskForReplan(taskId: string) {
   await postJson(`/api/tasks/${taskId}/actions/mark-for-replan`, {
     actor_id: DEFAULT_ACTOR_ID
   });
+}
+
+export async function runTaskVerification(taskId: string) {
+  const response = await fetch(`/api/tasks/${taskId}/actions/run-verification`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      actor_id: DEFAULT_ACTOR_ID
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function prepareTaskGitWorkspace(taskId: string) {
+  const response = await fetch(`/api/tasks/${taskId}/actions/prepare-git-workspace`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      actor_id: DEFAULT_ACTOR_ID
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function refreshTaskGitDiff(taskId: string) {
+  const response = await fetch(`/api/tasks/${taskId}/actions/refresh-git-diff`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      actor_id: DEFAULT_ACTOR_ID
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+
+  return response.json();
 }
 
 export async function finishTaskReplan(taskId: string) {

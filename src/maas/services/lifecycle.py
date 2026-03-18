@@ -6,6 +6,7 @@ from maas.ids import generate_id
 from maas.providers import get_provider
 from maas.services.alerts import resolve_task_session_failed_alerts
 from maas.services.dead_letter import upsert_dead_letter_entry
+from maas.services.notifications import queue_notification_event
 from maas.services.recovery_policy import (
     failed_session_retry_cooldown_seconds,
     fetch_project_recovery_policy,
@@ -215,6 +216,107 @@ def _maybe_route_failed_task_to_dlq(connection, project_id, task_id, actor_id, f
         resolution_reason="task_dead_lettered",
     )
     return {"task_id": task_id, "dlq_id": dlq_id, "retry_limit": retry_limit, "retry_count": task["retry_count"]}
+
+
+def _maybe_open_task_circuit_breaker(
+    connection,
+    project_id,
+    task_id,
+    actor_id,
+    trigger,
+    failure_count=None,
+    retry_limit=None,
+    failure_id=None,
+):
+    recovery_policy = fetch_project_recovery_policy(connection, project_id)
+    if not recovery_policy["auto_open_task_circuit_breakers"]:
+        return None
+
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, review_state, retry_count
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None or task["status"] in ("done", "cancelled"):
+        return None
+
+    threshold = recovery_policy["circuit_breaker_failure_threshold"]
+    if trigger == "repeated_failures" and (failure_count or 0) < threshold:
+        return None
+
+    if task["assigned_agent_id"]:
+        revoke_task_capabilities(
+            connection,
+            project_id,
+            task_id,
+            agent_id=task["assigned_agent_id"],
+            reason="task_circuit_breaker_opened",
+            revoked_by=actor_id,
+        )
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'blocked',
+            assigned_agent_id = NULL,
+            review_state = 'circuit_breaker_open',
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    dlq_id = upsert_dead_letter_entry(
+        connection,
+        project_id,
+        task_id,
+        "circuit_breaker_open",
+        failure_id=failure_id,
+        detail={
+            "trigger": trigger,
+            "failure_count": failure_count,
+            "threshold": threshold,
+            "retry_limit": retry_limit,
+            "retry_count": task["retry_count"],
+        },
+    )
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, 'task_circuit_breaker_opened', 'resilience', ?, ?, 'warning')
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            task["assigned_agent_id"],
+            task_id,
+            "Task automation halted behind a circuit breaker.",
+            json.dumps({"dlq_id": dlq_id, "trigger": trigger, "failure_count": failure_count, "threshold": threshold}),
+        ),
+    )
+    queue_notification_event(
+        connection,
+        project_id,
+        event_type="circuit_breaker_opened",
+        severity="critical",
+        title="Task circuit breaker opened",
+        body="Task {0} is blocked behind a circuit breaker after {1}.".format(task_id, trigger),
+        resource_type="task",
+        resource_id=task_id,
+        payload={
+            "dlq_id": dlq_id,
+            "trigger": trigger,
+            "failure_count": failure_count,
+            "threshold": threshold,
+            "retry_limit": retry_limit,
+        },
+    )
+    return {"task_id": task_id, "dlq_id": dlq_id, "trigger": trigger}
 
 
 def start_session(connection, project_id, agent_id, task_id, provider_type, status_message):
@@ -494,7 +596,7 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
                 "Task {0} failed in session {1}. {2}".format(row["task_id"], session_id, summary or ""),
             ),
         )
-        maybe_raise_repeated_failure_alert(connection, row["project_id"], row["task_id"], summary or "Session failed")
+        repeated_alert = maybe_raise_repeated_failure_alert(connection, row["project_id"], row["task_id"], summary or "Session failed")
         auto_retry = _maybe_auto_retry_failed_task(
             connection,
             row["project_id"],
@@ -510,7 +612,28 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
                 actor_id=row["agent_id"],
                 failure_id=failure_id,
             )
-        if auto_retry is None and dead_letter is None:
+        circuit_breaker = None
+        if auto_retry is None and dead_letter is not None:
+            circuit_breaker = _maybe_open_task_circuit_breaker(
+                connection,
+                row["project_id"],
+                row["task_id"],
+                actor_id=row["agent_id"],
+                trigger="retry_budget_exhausted",
+                retry_limit=dead_letter["retry_limit"],
+                failure_id=failure_id,
+            )
+        if auto_retry is None and dead_letter is None and repeated_alert is not None:
+            circuit_breaker = _maybe_open_task_circuit_breaker(
+                connection,
+                row["project_id"],
+                row["task_id"],
+                actor_id=row["agent_id"],
+                trigger="repeated_failures",
+                failure_count=repeated_alert["failure_count"],
+                failure_id=failure_id,
+            )
+        if auto_retry is None and dead_letter is None and circuit_breaker is None:
             connection.execute(
                 """
                 UPDATE tasks
@@ -525,8 +648,12 @@ def end_session(connection, session_id, outcome, summary, project_paths=None):
                 row["project_id"],
                 row["task_id"],
                 row["agent_id"],
-                reason="task_auto_retried",
-                activity_description="Task failure alerts resolved after automatic task retry.",
+                reason="task_auto_retried" if auto_retry is not None else "task_circuit_breaker_opened",
+                activity_description=(
+                    "Task failure alerts resolved after automatic task retry."
+                    if auto_retry is not None
+                    else "Task failure alerts resolved after the task circuit breaker opened."
+                ),
             )
     elif outcome == "cancelled":
         record_failure(

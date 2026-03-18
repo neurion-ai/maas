@@ -14,18 +14,23 @@ import type {
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  OrchestratorRunResponse,
+  PortfolioResponse,
   ProjectActionResponse,
   ProjectCreateRequest,
   ProjectCreateResponse,
   ProjectsResponse,
   ProvidersResponse,
   RecoveryPolicyResponse,
+  RepoFileResponse,
+  RepoTreeResponse,
   QuarantineQueueResponse,
   ReopenQuarantineEntryResponse,
   RestoreAndRequeueQuarantineEntryResponse,
   RestoreFailureArtifactsResponse,
   RestoreQuarantineEntryResponse,
-  SupervisorRunResponse
+  SupervisorRunResponse,
+  TimelineResponse
 } from "../types";
 import { appendProjectScope, getSelectedProjectId } from "./projectScope";
 
@@ -42,6 +47,11 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     mode: "greenfield",
     review_status: "not_applicable",
     review_required: false,
+    review_overrides: {
+      ignored_paths: [],
+      accepted_workflow_labels: [],
+      accepted_runbook_labels: []
+    },
     discovery_summary: {
       workflow_labels: [],
       workflow_details: [],
@@ -52,6 +62,9 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     review_task_status: null,
     review_task_review_state: null,
     pending_gated_tasks: 0,
+    last_scanned_at: null,
+    last_scanned_by: null,
+    drift_summary: null,
     reviewed_by: null,
     reviewed_at: null
   },
@@ -119,6 +132,49 @@ const GOAL_TREE_FALLBACK: GoalTreeResponse = {
   ]
 };
 
+const REPO_TREE_FALLBACK: RepoTreeResponse = {
+  path: "",
+  parent_path: null,
+  source_root: "",
+  entries: []
+};
+
+const REPO_FILE_FALLBACK: RepoFileResponse = {
+  path: "",
+  name: "",
+  parent_path: null,
+  size: 0,
+  extension: null,
+  previewable: false,
+  content_kind: "binary",
+  content: null,
+  truncated: false
+};
+
+const PORTFOLIO_FALLBACK: PortfolioResponse = {
+  summary: {
+    active_projects: 0,
+    archived_projects: 0,
+    open_alerts: 0,
+    blocked_tasks: 0,
+    active_sessions: 0,
+    recovery_pressure: 0,
+    projects_with_issues: 0,
+    open_escalations: 0,
+    queued_provider_jobs: 0,
+    queued_notifications: 0,
+    failed_notifications: 0
+  },
+  projects: [],
+  command_center: {
+    open_escalations: [],
+    urgent_alerts: [],
+    open_dead_letter_entries: [],
+    queued_provider_jobs: [],
+    notification_deliveries: []
+  }
+};
+
 const ROSTER_FALLBACK: AgentRosterResponse = {
   agents: [
     {
@@ -148,6 +204,18 @@ const ACTIVITY_FALLBACK: ActivityItem[] = [
     created_at: new Date().toISOString()
   }
 ];
+
+const TIMELINE_FALLBACK: TimelineResponse = {
+  filters: {
+    limit: 100,
+    order: "desc"
+  },
+  summary: {
+    total_events: 0,
+    sources: {}
+  },
+  events: []
+};
 
 const ARTIFACTS_FALLBACK: ArtifactsResponse = {
   summary: {
@@ -279,6 +347,14 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_kind: null,
         latest_failure_at: null
       },
+      job_summary: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        completed_jobs: 0,
+        failed_jobs: 0,
+        cancelled_jobs: 0,
+        last_job_at: null
+      },
       recent_runs: [],
       latest_preflight: null,
       notes: "Reference local runtime with normalized runtime phase reporting."
@@ -325,6 +401,14 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         runtime_failures: 0,
         latest_failure_kind: null,
         latest_failure_at: null
+      },
+      job_summary: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        completed_jobs: 0,
+        failed_jobs: 0,
+        cancelled_jobs: 0,
+        last_job_at: null
       },
       recent_runs: [],
       latest_preflight: null,
@@ -373,12 +457,28 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_kind: null,
         latest_failure_at: null
       },
+      job_summary: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        completed_jobs: 0,
+        failed_jobs: 0,
+        cancelled_jobs: 0,
+        last_job_at: null
+      },
       recent_runs: [],
       latest_preflight: null,
       notes: "Simulated API-style adapter with normalized runtime phase reporting."
     }
   ],
-  run_targets: []
+  run_targets: [],
+  job_queue: [],
+  worker_summary: {
+    total_workers: 0,
+    idle_workers: 0,
+    busy_workers: 0,
+    offline_workers: 0
+  },
+  worker_pool: []
 };
 
 const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
@@ -388,6 +488,10 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     auto_retry_failed_sessions: false,
     auto_recover_blocked_tasks: false,
     auto_dlq_retry_exhausted_tasks: false,
+    auto_open_task_circuit_breakers: false,
+    auto_route_circuit_breakers_to_replan: false,
+    circuit_breaker_failure_threshold: 3,
+    circuit_breaker_replan_after_seconds: 300,
     max_timed_out_retries: 1,
     max_failed_session_retries: 1,
     timed_out_retry_cooldown_seconds: 60,
@@ -401,6 +505,10 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     auto_retry_failed_sessions: false,
     auto_recover_blocked_tasks: false,
     auto_dlq_retry_exhausted_tasks: false,
+    auto_open_task_circuit_breakers: false,
+    auto_route_circuit_breakers_to_replan: false,
+    circuit_breaker_failure_threshold: 3,
+    circuit_breaker_replan_after_seconds: 300,
     max_timed_out_retries: 1,
     max_failed_session_retries: 1,
     timed_out_retry_cooldown_seconds: 60,
@@ -412,11 +520,14 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   summary: {
     retry_backoff_tasks: 0,
     needs_replan_tasks: 0,
+    circuit_breaker_tasks: 0,
     replanning_candidates: 0,
     tasks_with_retry_history: 0,
     recoverable_blocked_tasks: 0,
     auto_recovery_candidates: 0,
+    auto_replan_candidates: 0,
     open_dead_letter_entries: 0,
+    open_circuit_breakers: 0,
     tasks_with_retry_overrides: 0,
     open_quarantine_entries: 0,
     open_failure_alerts: 0,
@@ -434,10 +545,12 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   },
   task_retry_overrides: [],
   auto_recovery_candidates: [],
+  auto_replan_candidates: [],
   recoverable_blocked_tasks: [],
   task_retry_history: [],
   replanning_candidates: [],
   needs_replan_tasks: [],
+  circuit_breaker_tasks: [],
   active_retry_backoff: [],
   dead_letter_entries: [],
   open_quarantine_entries: [],
@@ -473,8 +586,38 @@ async function fetchJson<T>(
   }
 }
 
+async function fetchGlobalJson<T>(
+  path: string,
+  fallback: T,
+  signal?: AbortSignal,
+  onFallback?: () => void
+): Promise<T> {
+  try {
+    const response = await fetch(path, { signal });
+    if (!response.ok) {
+      throw new Error(`Unexpected status: ${response.status}`);
+    }
+    const payload = (await response.json()) as T;
+    lastSuccessfulResponses.set(path, payload);
+    return payload;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    onFallback?.();
+    if (lastSuccessfulResponses.has(path)) {
+      return lastSuccessfulResponses.get(path) as T;
+    }
+    return fallback;
+  }
+}
+
 export function fetchProjects() {
   return fetchJson<ProjectsResponse>("/api/projects", { projects: [] });
+}
+
+export function fetchPortfolio() {
+  return fetchGlobalJson<PortfolioResponse>("/api/portfolio", PORTFOLIO_FALLBACK);
 }
 
 export async function createProject(payload: ProjectCreateRequest) {
@@ -496,8 +639,110 @@ export async function restoreProject(projectId: string) {
   return response as ProjectActionResponse;
 }
 
+export async function updateBrownfieldOnboardingReview(
+  projectId: string,
+  payload: {
+    ignored_paths: string[];
+    accepted_workflow_labels?: string[] | null;
+    accepted_runbook_labels?: string[] | null;
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-onboarding-review`, {
+    actor_id: "agent_allocator",
+    ignored_paths: payload.ignored_paths,
+    accepted_workflow_labels: payload.accepted_workflow_labels ?? null,
+    accepted_runbook_labels: payload.accepted_runbook_labels ?? null
+  });
+}
+
+export async function updateProjectProviderCapacity(
+  projectId: string,
+  payload: { queue_mode: "running" | "draining" | "paused"; max_running_jobs: number }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-provider-capacity`, {
+    actor_id: "agent_allocator",
+    queue_mode: payload.queue_mode,
+    max_running_jobs: payload.max_running_jobs
+  });
+}
+
+export async function updateProjectRiskPolicy(
+  projectId: string,
+  payload: { priority_threshold: number; sensitive_path_prefixes: string[] }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-risk-policy`, {
+    actor_id: "agent_allocator",
+    priority_threshold: payload.priority_threshold,
+    sensitive_path_prefixes: payload.sensitive_path_prefixes
+  });
+}
+
+export async function updateProjectRuntimeQuotas(
+  projectId: string,
+  payload: {
+    daily_run_limit: number;
+    daily_live_run_limit: number;
+    daily_runtime_seconds_limit: number;
+    max_task_session_attempts: number;
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-runtime-quotas`, {
+    actor_id: "agent_allocator",
+    daily_run_limit: payload.daily_run_limit,
+    daily_live_run_limit: payload.daily_live_run_limit,
+    daily_runtime_seconds_limit: payload.daily_runtime_seconds_limit,
+    max_task_session_attempts: payload.max_task_session_attempts
+  });
+}
+
+export async function updateProjectNotificationPolicy(
+  projectId: string,
+  payload: {
+    webhook_urls: string[];
+    minimum_severity: "info" | "warning" | "critical";
+    enabled_events: string[];
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-notification-policy`, {
+    actor_id: "agent_allocator",
+    webhook_urls: payload.webhook_urls,
+    minimum_severity: payload.minimum_severity,
+    enabled_events: payload.enabled_events
+  });
+}
+
+export async function processNotification(notificationId: string) {
+  return postJson(`/api/notifications/${notificationId}/actions/process`, {
+    actor_id: "agent_allocator"
+  });
+}
+
+export async function processNextNotification(projectId?: string) {
+  return postJson("/api/notifications/actions/process-next", {
+    actor_id: "agent_allocator",
+    project_id: projectId ?? null
+  });
+}
+
+export async function refreshRepoPlan(projectId: string) {
+  return postJson(`/api/projects/${projectId}/actions/refresh-repo-plan`, {
+    actor_id: "agent_allocator"
+  });
+}
+
 export function fetchOverview() {
   return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK);
+}
+
+export function fetchRepoTree(path = "", signal?: AbortSignal, onFallback?: () => void) {
+  const query = new URLSearchParams();
+  if (path) query.set("path", path);
+  return fetchJson<RepoTreeResponse>(query.size > 0 ? `/api/repo/tree?${query.toString()}` : "/api/repo/tree", REPO_TREE_FALLBACK, signal, onFallback);
+}
+
+export function fetchRepoFile(path: string, signal?: AbortSignal, onFallback?: () => void) {
+  const query = new URLSearchParams({ path });
+  return fetchJson<RepoFileResponse>(`/api/repo/file?${query.toString()}`, REPO_FILE_FALLBACK, signal, onFallback);
 }
 
 export function fetchGoalTree() {
@@ -510,6 +755,31 @@ export function fetchAgentRoster() {
 
 export function fetchActivity() {
   return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
+}
+
+export function fetchIncidentTimeline(
+  params?: {
+    taskId?: string;
+    sessionId?: string;
+    agentId?: string;
+    resourceType?: string;
+    resourceId?: string;
+    order?: "asc" | "desc";
+    limit?: number;
+  },
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const query = new URLSearchParams();
+  if (params?.taskId) query.set("task_id", params.taskId);
+  if (params?.sessionId) query.set("session_id", params.sessionId);
+  if (params?.agentId) query.set("agent_id", params.agentId);
+  if (params?.resourceType) query.set("resource_type", params.resourceType);
+  if (params?.resourceId) query.set("resource_id", params.resourceId);
+  if (params?.order) query.set("order", params.order);
+  if (params?.limit) query.set("limit", String(params.limit));
+  const path = query.size ? `/api/timeline?${query.toString()}` : "/api/timeline";
+  return fetchJson<TimelineResponse>(path, TIMELINE_FALLBACK, signal, onFallback);
 }
 
 export function fetchArtifacts(
@@ -692,6 +962,60 @@ export async function runProviderTask(providerId: string, projectId: string, age
   };
 }
 
+export async function queueProviderTask(providerId: string, projectId: string, agentId: string, taskId: string) {
+  const payload = await postJson<{
+    job_id: string;
+    status: string;
+  }>(`/api/providers/${providerId}/actions/queue-task`, {
+    actor_id: "agent_allocator",
+    project_id: projectId,
+    agent_id: agentId,
+    task_id: taskId
+  });
+  return payload as {
+    job_id: string;
+    status: string;
+  };
+}
+
+export async function processProviderJob(jobId: string) {
+  const payload = await postJson<{
+    job_id: string;
+    status: string;
+    session_id?: string | null;
+    artifact_id?: string | null;
+    failure_kind?: string | null;
+    failure_detail?: string | null;
+  }>(`/api/provider-jobs/${jobId}/actions/process`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as {
+    job_id: string;
+    status: string;
+    session_id?: string | null;
+    artifact_id?: string | null;
+    failure_kind?: string | null;
+    failure_detail?: string | null;
+  };
+}
+
+export async function runProviderWorkerOnce(workerId: string, providerId?: string) {
+  return postJson<{
+    processed: boolean;
+    worker_id: string;
+    job?: {
+      job_id: string;
+      status: string;
+      provider_id: string;
+      title?: string | null;
+    } | null;
+  }>("/api/provider-workers/actions/run-once", {
+    worker_id: workerId,
+    provider_id: providerId ?? null,
+    project_id: getSelectedProjectId()
+  });
+}
+
 export async function setProviderMode(providerId: string, mode: string) {
   const payload = await postJson(`/api/providers/${providerId}/actions/set-mode`, {
     actor_id: "agent_allocator",
@@ -701,7 +1025,7 @@ export async function setProviderMode(providerId: string, mode: string) {
   return payload;
 }
 
-export async function setProviderSettings(providerId: string, settings: Record<string, string | number>) {
+export async function setProviderSettings(providerId: string, settings: Record<string, string | number | boolean>) {
   const payload = await postJson(`/api/providers/${providerId}/actions/set-settings`, {
     actor_id: "agent_allocator",
     settings,
@@ -751,6 +1075,13 @@ export async function releaseTaskRetryBackoff(taskId: string) {
 
 export async function resetTaskRetryState(taskId: string) {
   const payload = await postJson(`/api/tasks/${taskId}/actions/reset-retry-state`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
+export async function resetTaskCircuitBreaker(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/reset-circuit-breaker`, {
     actor_id: "agent_allocator"
   });
   return payload;
@@ -830,9 +1161,42 @@ export async function updateEscalationStatus(escalationId: string, action: "appr
 
 export async function runSupervisorPass(allocateLimit?: number) {
   const payload = await postJson<SupervisorRunResponse>("/api/supervisor/run", {
-    allocate_limit: allocateLimit ?? null
+    allocate_limit: allocateLimit ?? null,
+    project_id: getSelectedProjectId()
   });
   return payload as SupervisorRunResponse;
+}
+
+export async function runOrchestratorPass(allocateLimit?: number, providerJobLimit = 2) {
+  const payload = await postJson<OrchestratorRunResponse>("/api/orchestrator/run", {
+    allocate_limit: allocateLimit ?? null,
+    provider_job_limit: providerJobLimit,
+    project_id: getSelectedProjectId()
+  });
+  return payload as OrchestratorRunResponse;
+}
+
+export async function rescanBrownfieldProject(projectId: string) {
+  const payload = await postJson<{
+    project_id: string;
+    review_status: string;
+    drift?: {
+      detected?: boolean;
+      summary?: string;
+      changes?: string[];
+    };
+  }>(`/api/projects/${projectId}/actions/rescan-brownfield`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as {
+    project_id: string;
+    review_status: string;
+    drift?: {
+      detected?: boolean;
+      summary?: string;
+      changes?: string[];
+    };
+  };
 }
 
 export async function assignNextTask(agentId: string) {

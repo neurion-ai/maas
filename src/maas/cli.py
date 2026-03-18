@@ -12,11 +12,38 @@ from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
-from maas.services.provider_runtime import run_provider_task
-from maas.services.projects import archive_project, create_project, list_projects, restore_project
+from maas.services.git_workspaces import capture_task_git_diff, fetch_task_git_workspace, prepare_task_git_workspace
+from maas.services.provider_runtime import (
+    process_next_provider_job,
+    process_provider_job,
+    provider_job_queue,
+    queue_provider_task,
+    run_provider_task,
+)
+from maas.services.provider_workers import run_provider_worker_once
+from maas.services.projects import (
+    archive_project,
+    create_project,
+    list_projects,
+    rescan_brownfield_project,
+    restore_project,
+    update_brownfield_onboarding_review,
+)
+from maas.services.notifications import (
+    fetch_notification_outbox,
+    process_next_notification,
+    process_notification,
+    update_project_notification_policy,
+)
+from maas.services.queue_capacity import update_project_queue_capacity_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.orchestrator import run_orchestrator_once
+from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.risk_policy import update_project_risk_policy
+from maas.services.runtime_quotas import update_project_runtime_quotas
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.steering import (
     dismiss_quarantine_entry,
     finish_task_replan,
@@ -27,6 +54,7 @@ from maas.services.steering import (
     recover_task,
     release_task_retry_backoff,
     reset_task_retry_state,
+    reset_task_circuit_breaker,
     resolve_task_repeated_failures,
     set_task_retry_limit,
     restore_and_requeue_quarantine_entry,
@@ -34,6 +62,7 @@ from maas.services.steering import (
     restore_failure_artifacts,
 )
 from maas.supervisor import run_supervisor_once
+from maas.services.verification import fetch_verification_runs, run_task_verification
 
 
 def build_parser():
@@ -61,6 +90,15 @@ def build_parser():
     supervisor_parser.add_argument("--project-root", default=".")
     supervisor_parser.add_argument("--once", action="store_true")
     supervisor_parser.add_argument("--allocate-limit", type=int)
+    supervisor_parser.add_argument("--project-id")
+
+    orchestrator_parser = subparsers.add_parser("orchestrator")
+    orchestrator_parser.add_argument("--project-root", default=".")
+    orchestrator_parser.add_argument("--once", action="store_true")
+    orchestrator_parser.add_argument("--allocate-limit", type=int)
+    orchestrator_parser.add_argument("--provider-job-limit", type=int, default=2)
+    orchestrator_parser.add_argument("--project-id")
+    orchestrator_parser.add_argument("--interval-seconds", type=int, default=15)
 
     board_parser = subparsers.add_parser("board")
     board_parser.add_argument("--project-root", default=".")
@@ -89,6 +127,67 @@ def build_parser():
     project_restore_parser.add_argument("--project-root", default=".")
     project_restore_parser.add_argument("--project-id", required=True)
     project_restore_parser.add_argument("--actor-id", required=True)
+
+    project_rescan_parser = project_subparsers.add_parser("rescan-brownfield")
+    project_rescan_parser.add_argument("--project-root", default=".")
+    project_rescan_parser.add_argument("--project-id", required=True)
+    project_rescan_parser.add_argument("--actor-id", default="agent_allocator")
+
+    project_update_review_parser = project_subparsers.add_parser("update-onboarding-review")
+    project_update_review_parser.add_argument("--project-root", default=".")
+    project_update_review_parser.add_argument("--project-id", required=True)
+    project_update_review_parser.add_argument("--actor-id", default="agent_allocator")
+    project_update_review_parser.add_argument("--ignored-path", action="append", default=[])
+    project_update_review_parser.add_argument("--accept-workflow-label", action="append")
+    project_update_review_parser.add_argument("--accept-runbook-label", action="append")
+
+    project_scheduler_policy_parser = project_subparsers.add_parser("set-scheduler-policy")
+    project_scheduler_policy_parser.add_argument("--project-root", default=".")
+    project_scheduler_policy_parser.add_argument("--project-id", required=True)
+    project_scheduler_policy_parser.add_argument("--actor-id", default="agent_allocator")
+    project_scheduler_policy_parser.add_argument("--fair-share-weight", type=int, required=True)
+    project_scheduler_policy_parser.add_argument("--max-active-sessions", type=int, required=True)
+
+    project_provider_capacity_parser = project_subparsers.add_parser("set-provider-capacity")
+    project_provider_capacity_parser.add_argument("--project-root", default=".")
+    project_provider_capacity_parser.add_argument("--project-id", required=True)
+    project_provider_capacity_parser.add_argument("--actor-id", default="agent_allocator")
+    project_provider_capacity_parser.add_argument("--queue-mode", choices=("running", "draining", "paused"), required=True)
+    project_provider_capacity_parser.add_argument("--max-running-jobs", type=int, required=True)
+
+    project_risk_policy_parser = project_subparsers.add_parser("set-risk-policy")
+    project_risk_policy_parser.add_argument("--project-root", default=".")
+    project_risk_policy_parser.add_argument("--project-id", required=True)
+    project_risk_policy_parser.add_argument("--actor-id", default="agent_allocator")
+    project_risk_policy_parser.add_argument("--priority-threshold", type=int, required=True)
+    project_risk_policy_parser.add_argument("--sensitive-path-prefix", action="append", default=[])
+
+    project_runtime_quota_parser = project_subparsers.add_parser("set-runtime-quotas")
+    project_runtime_quota_parser.add_argument("--project-root", default=".")
+    project_runtime_quota_parser.add_argument("--project-id", required=True)
+    project_runtime_quota_parser.add_argument("--actor-id", default="agent_allocator")
+    project_runtime_quota_parser.add_argument("--daily-run-limit", type=int, required=True)
+    project_runtime_quota_parser.add_argument("--daily-live-run-limit", type=int, required=True)
+    project_runtime_quota_parser.add_argument("--daily-runtime-seconds-limit", type=int, required=True)
+    project_runtime_quota_parser.add_argument("--max-task-session-attempts", type=int, required=True)
+
+    project_notification_policy_parser = project_subparsers.add_parser("set-notification-policy")
+    project_notification_policy_parser.add_argument("--project-root", default=".")
+    project_notification_policy_parser.add_argument("--project-id", required=True)
+    project_notification_policy_parser.add_argument("--actor-id", default="agent_allocator")
+    project_notification_policy_parser.add_argument("--webhook-url", action="append", default=[])
+    project_notification_policy_parser.add_argument("--minimum-severity", choices=("info", "warning", "critical"), required=True)
+    project_notification_policy_parser.add_argument(
+        "--enabled-event",
+        action="append",
+        default=[],
+        choices=("escalation_requested", "dead_letter_opened", "circuit_breaker_opened"),
+    )
+
+    project_refresh_repo_plan_parser = project_subparsers.add_parser("refresh-repo-plan")
+    project_refresh_repo_plan_parser.add_argument("--project-root", default=".")
+    project_refresh_repo_plan_parser.add_argument("--project-id", required=True)
+    project_refresh_repo_plan_parser.add_argument("--actor-id", default="agent_allocator")
 
     agent_parser = subparsers.add_parser("agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -142,6 +241,11 @@ def build_parser():
     task_reset_retry_state_parser.add_argument("--task-id", required=True)
     task_reset_retry_state_parser.add_argument("--actor-id", required=True)
 
+    task_reset_circuit_breaker_parser = task_subparsers.add_parser("reset-circuit-breaker")
+    task_reset_circuit_breaker_parser.add_argument("--project-root", default=".")
+    task_reset_circuit_breaker_parser.add_argument("--task-id", required=True)
+    task_reset_circuit_breaker_parser.add_argument("--actor-id", required=True)
+
     task_mark_for_replan_parser = task_subparsers.add_parser("mark-for-replan")
     task_mark_for_replan_parser.add_argument("--project-root", default=".")
     task_mark_for_replan_parser.add_argument("--task-id", required=True)
@@ -157,6 +261,48 @@ def build_parser():
     task_allocate_parser.add_argument("--agent-id")
     task_allocate_parser.add_argument("--actor-id", default="system_allocator")
     task_allocate_parser.add_argument("--limit", type=int)
+
+    task_verify_parser = task_subparsers.add_parser("run-verification")
+    task_verify_parser.add_argument("--project-root", default=".")
+    task_verify_parser.add_argument("--task-id", required=True)
+    task_verify_parser.add_argument("--actor-id", required=True)
+
+    task_prepare_git_workspace_parser = task_subparsers.add_parser("prepare-git-workspace")
+    task_prepare_git_workspace_parser.add_argument("--project-root", default=".")
+    task_prepare_git_workspace_parser.add_argument("--task-id", required=True)
+    task_prepare_git_workspace_parser.add_argument("--actor-id", required=True)
+
+    task_refresh_git_diff_parser = task_subparsers.add_parser("refresh-git-diff")
+    task_refresh_git_diff_parser.add_argument("--project-root", default=".")
+    task_refresh_git_diff_parser.add_argument("--task-id", required=True)
+    task_refresh_git_diff_parser.add_argument("--actor-id", required=True)
+
+    verification_parser = subparsers.add_parser("verification")
+    verification_subparsers = verification_parser.add_subparsers(dest="verification_command", required=True)
+
+    verification_list_parser = verification_subparsers.add_parser("list")
+    verification_list_parser.add_argument("--project-root", default=".")
+
+    notification_parser = subparsers.add_parser("notification")
+    notification_subparsers = notification_parser.add_subparsers(dest="notification_command", required=True)
+
+    notification_list_parser = notification_subparsers.add_parser("list")
+    notification_list_parser.add_argument("--project-root", default=".")
+    notification_list_parser.add_argument("--project-id")
+    notification_list_parser.add_argument("--status")
+
+    notification_process_parser = notification_subparsers.add_parser("process")
+    notification_process_parser.add_argument("--project-root", default=".")
+    notification_process_parser.add_argument("--notification-id", required=True)
+    notification_process_parser.add_argument("--actor-id", default="agent_allocator")
+
+    notification_process_next_parser = notification_subparsers.add_parser("process-next")
+    notification_process_next_parser.add_argument("--project-root", default=".")
+    notification_process_next_parser.add_argument("--actor-id", default="agent_allocator")
+    notification_process_next_parser.add_argument("--project-id")
+    verification_list_parser.add_argument("--project-id")
+    verification_list_parser.add_argument("--task-id")
+    verification_list_parser.add_argument("--limit", type=int, default=20)
 
     failure_parser = subparsers.add_parser("failure")
     failure_subparsers = failure_parser.add_subparsers(dest="failure_command", required=True)
@@ -232,6 +378,44 @@ def build_parser():
     worker_parser.add_argument("--task-id", required=True)
     worker_parser.add_argument("--provider-type", default="python_script")
     worker_parser.add_argument("--artifact-path", default=".maas/artifacts/example.txt")
+
+    provider_job_parser = subparsers.add_parser("provider-job")
+    provider_job_subparsers = provider_job_parser.add_subparsers(dest="provider_job_command", required=True)
+
+    provider_job_list_parser = provider_job_subparsers.add_parser("list")
+    provider_job_list_parser.add_argument("--project-root", default=".")
+    provider_job_list_parser.add_argument("--project-id")
+    provider_job_list_parser.add_argument("--provider-id")
+    provider_job_list_parser.add_argument("--status")
+    provider_job_list_parser.add_argument("--limit", type=int, default=20)
+
+    provider_job_queue_parser = provider_job_subparsers.add_parser("queue")
+    provider_job_queue_parser.add_argument("--project-root", default=".")
+    provider_job_queue_parser.add_argument("--project-id", required=True)
+    provider_job_queue_parser.add_argument("--provider-id", required=True)
+    provider_job_queue_parser.add_argument("--task-id", required=True)
+    provider_job_queue_parser.add_argument("--agent-id", required=True)
+    provider_job_queue_parser.add_argument("--actor-id", default="agent_allocator")
+    provider_job_queue_parser.add_argument("--artifact-path")
+
+    provider_job_process_parser = provider_job_subparsers.add_parser("process")
+    provider_job_process_parser.add_argument("--project-root", default=".")
+    provider_job_process_parser.add_argument("--job-id", required=True)
+    provider_job_process_parser.add_argument("--actor-id", default="agent_allocator")
+
+    provider_job_process_next_parser = provider_job_subparsers.add_parser("process-next")
+    provider_job_process_next_parser.add_argument("--project-root", default=".")
+    provider_job_process_next_parser.add_argument("--project-id")
+    provider_job_process_next_parser.add_argument("--provider-id")
+    provider_job_process_next_parser.add_argument("--actor-id", default="agent_allocator")
+
+    provider_worker_parser = subparsers.add_parser("provider-worker")
+    provider_worker_parser.add_argument("--project-root", default=".")
+    provider_worker_parser.add_argument("--worker-id", required=True)
+    provider_worker_parser.add_argument("--project-id")
+    provider_worker_parser.add_argument("--provider-id")
+    provider_worker_parser.add_argument("--once", action="store_true")
+    provider_worker_parser.add_argument("--interval-seconds", type=int, default=5)
 
     recovery_parser = subparsers.add_parser("recovery")
     recovery_subparsers = recovery_parser.add_subparsers(dest="recovery_command", required=True)
@@ -327,13 +511,58 @@ def command_supervisor(args):
     while True:
         connection = connect(paths)
         try:
-            findings = run_supervisor_once(connection, allocate_limit=args.allocate_limit, project_paths=paths)
+            findings = run_supervisor_once(
+                connection,
+                allocate_limit=args.allocate_limit,
+                project_paths=paths,
+                project_id=args.project_id,
+            )
             print(json.dumps(findings, indent=2))
         finally:
             connection.close()
         if args.once:
             break
         time.sleep(15)
+
+
+def command_orchestrator(args):
+    paths = project_paths(args.project_root)
+    while True:
+        connection = connect(paths)
+        try:
+            findings = run_orchestrator_once(
+                connection,
+                paths,
+                allocate_limit=args.allocate_limit,
+                provider_job_limit=args.provider_job_limit,
+                project_id=args.project_id,
+            )
+            print(json.dumps(findings, indent=2))
+        finally:
+            connection.close()
+        if args.once:
+            break
+        time.sleep(args.interval_seconds)
+
+
+def command_provider_worker(args):
+    paths = project_paths(args.project_root)
+    while True:
+        connection = connect(paths)
+        try:
+            findings = run_provider_worker_once(
+                connection,
+                paths,
+                worker_id=args.worker_id,
+                project_id=args.project_id,
+                provider_id=args.provider_id,
+            )
+            print(json.dumps(findings, indent=2))
+        finally:
+            connection.close()
+        if args.once:
+            break
+        time.sleep(args.interval_seconds)
 
 
 def command_board(args):
@@ -371,6 +600,140 @@ def command_project(args):
             print(json.dumps(archive_project(connection, args.project_id, args.actor_id), indent=2))
         elif args.project_command == "restore":
             print(json.dumps(restore_project(connection, args.project_id, args.actor_id), indent=2))
+        elif args.project_command == "rescan-brownfield":
+            print(json.dumps(rescan_brownfield_project(connection, paths, args.project_id, args.actor_id), indent=2))
+        elif args.project_command == "update-onboarding-review":
+            print(
+                json.dumps(
+                    update_brownfield_onboarding_review(
+                        connection,
+                        paths,
+                        args.project_id,
+                        args.actor_id,
+                        {
+                            "ignored_paths": args.ignored_path,
+                            "accepted_workflow_labels": args.accept_workflow_label,
+                            "accepted_runbook_labels": args.accept_runbook_label,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-scheduler-policy":
+            print(
+                json.dumps(
+                    update_project_scheduler_policy(
+                        connection,
+                        args.project_id,
+                        args.actor_id,
+                        {
+                            "fair_share_weight": args.fair_share_weight,
+                            "max_active_sessions": args.max_active_sessions,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-provider-capacity":
+            print(
+                json.dumps(
+                    update_project_queue_capacity_policy(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "queue_mode": args.queue_mode,
+                            "max_running_jobs": args.max_running_jobs,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-risk-policy":
+            print(
+                json.dumps(
+                    update_project_risk_policy(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "priority_threshold": args.priority_threshold,
+                            "sensitive_path_prefixes": args.sensitive_path_prefix,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-runtime-quotas":
+            print(
+                json.dumps(
+                    update_project_runtime_quotas(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "daily_run_limit": args.daily_run_limit,
+                            "daily_live_run_limit": args.daily_live_run_limit,
+                            "daily_runtime_seconds_limit": args.daily_runtime_seconds_limit,
+                            "max_task_session_attempts": args.max_task_session_attempts,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-notification-policy":
+            print(
+                json.dumps(
+                    update_project_notification_policy(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "webhook_urls": args.webhook_url,
+                            "minimum_severity": args.minimum_severity,
+                            "enabled_events": args.enabled_event,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "refresh-repo-plan":
+            print(
+                json.dumps(
+                    refresh_repo_grounded_plan(
+                        connection,
+                        args.project_id,
+                        args.actor_id,
+                    ),
+                    indent=2,
+                )
+            )
+    finally:
+        connection.close()
+
+
+def command_notification(args):
+    connection = connect(project_paths(args.project_root))
+    try:
+        if args.notification_command == "list":
+            print(
+                json.dumps(
+                    {
+                        "notifications": fetch_notification_outbox(
+                            connection,
+                            project_id=args.project_id,
+                            status=args.status,
+                            limit=20,
+                            include_archived=False,
+                        )
+                    },
+                    indent=2,
+                )
+            )
+        elif args.notification_command == "process":
+            print(json.dumps(process_notification(connection, args.notification_id, args.actor_id), indent=2))
+        elif args.notification_command == "process-next":
+            print(json.dumps(process_next_notification(connection, args.actor_id, project_id=args.project_id), indent=2))
     finally:
         connection.close()
 
@@ -406,6 +769,8 @@ def command_task(args):
             print(json.dumps(release_task_retry_backoff(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "reset-retry-state":
             print(json.dumps(reset_task_retry_state(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "reset-circuit-breaker":
+            print(json.dumps(reset_task_circuit_breaker(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "mark-for-replan":
             print(json.dumps(mark_task_for_replan(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "finish-replan":
@@ -415,6 +780,12 @@ def command_task(args):
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))
             else:
                 print(json.dumps(allocate_ready_tasks(connection, actor_id=args.actor_id, limit=args.limit), indent=2))
+        elif args.task_command == "run-verification":
+            print(json.dumps(run_task_verification(connection, paths, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "prepare-git-workspace":
+            print(json.dumps(prepare_task_git_workspace(connection, paths, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "refresh-git-diff":
+            print(json.dumps(capture_task_git_diff(connection, paths, args.task_id, args.actor_id), indent=2))
     finally:
         connection.close()
 
@@ -437,6 +808,21 @@ def command_failure(args):
             print(json.dumps(fetch_failure_log(connection, limit=args.limit), indent=2))
         elif args.failure_command == "restore-artifacts":
             print(json.dumps(restore_failure_artifacts(connection, paths, args.failure_id, args.actor_id), indent=2))
+    finally:
+        connection.close()
+
+
+def command_verification(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.verification_command == "list":
+            print(
+                json.dumps(
+                    {"runs": fetch_verification_runs(connection, project_id=args.project_id, task_id=args.task_id, limit=args.limit)},
+                    indent=2,
+                )
+            )
     finally:
         connection.close()
 
@@ -514,6 +900,68 @@ def command_worker(args):
                 indent=2,
             )
         )
+    finally:
+        connection.close()
+
+
+def command_provider_job(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.provider_job_command == "list":
+            print(
+                json.dumps(
+                    provider_job_queue(
+                        connection,
+                        project_id=args.project_id,
+                        provider_id=args.provider_id,
+                        status=args.status,
+                        limit=args.limit,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.provider_job_command == "queue":
+            print(
+                json.dumps(
+                    queue_provider_task(
+                        connection,
+                        project_paths=paths,
+                        provider_id=args.provider_id,
+                        actor_id=args.actor_id,
+                        project_id=args.project_id,
+                        agent_id=args.agent_id,
+                        task_id=args.task_id,
+                        artifact_path=args.artifact_path,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.provider_job_command == "process":
+            print(
+                json.dumps(
+                    process_provider_job(
+                        connection,
+                        project_paths=paths,
+                        job_id=args.job_id,
+                        actor_id=args.actor_id,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.provider_job_command == "process-next":
+            print(
+                json.dumps(
+                    process_next_provider_job(
+                        connection,
+                        project_paths=paths,
+                        actor_id=args.actor_id,
+                        project_id=args.project_id,
+                        provider_id=args.provider_id,
+                    ),
+                    indent=2,
+                )
+            )
     finally:
         connection.close()
 
@@ -597,6 +1045,8 @@ def main(argv=None):
         command_api(args)
     elif args.command == "supervisor":
         command_supervisor(args)
+    elif args.command == "orchestrator":
+        command_orchestrator(args)
     elif args.command == "board":
         command_board(args)
     elif args.command == "project":
@@ -607,12 +1057,20 @@ def main(argv=None):
         command_task(args)
     elif args.command == "failure":
         command_failure(args)
+    elif args.command == "verification":
+        command_verification(args)
+    elif args.command == "notification":
+        command_notification(args)
     elif args.command == "quarantine":
         command_quarantine(args)
     elif args.command == "escalation":
         command_escalation(args)
     elif args.command == "worker":
         command_worker(args)
+    elif args.command == "provider-job":
+        command_provider_job(args)
+    elif args.command == "provider-worker":
+        command_provider_worker(args)
     elif args.command == "recovery":
         command_recovery(args)
     elif args.command == "lifecycle":

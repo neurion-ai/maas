@@ -8,6 +8,7 @@ import {
   recoverAndRequeueTask,
   recoverTask,
   releaseTaskRetryBackoff,
+  resetTaskCircuitBreaker,
   resetTaskRetryState,
   runAlertOperatorAction,
   restoreAndRequeueQuarantineEntry,
@@ -32,10 +33,14 @@ const BOOLEAN_FIELDS: (keyof RecoveryPolicySettings)[] = [
   "auto_retry_timeout_sessions",
   "auto_retry_failed_sessions",
   "auto_recover_blocked_tasks",
-  "auto_dlq_retry_exhausted_tasks"
+  "auto_dlq_retry_exhausted_tasks",
+  "auto_open_task_circuit_breakers",
+  "auto_route_circuit_breakers_to_replan"
 ];
 
 const NUMBER_FIELDS: (keyof RecoveryPolicySettings)[] = [
+  "circuit_breaker_failure_threshold",
+  "circuit_breaker_replan_after_seconds",
   "max_timed_out_retries",
   "max_failed_session_retries",
   "timed_out_retry_cooldown_seconds",
@@ -57,6 +62,10 @@ function buildDraft(
     auto_retry_failed_sessions: payload.policy.auto_retry_failed_sessions ? "true" : "false",
     auto_recover_blocked_tasks: payload.policy.auto_recover_blocked_tasks ? "true" : "false",
     auto_dlq_retry_exhausted_tasks: payload.policy.auto_dlq_retry_exhausted_tasks ? "true" : "false",
+    auto_open_task_circuit_breakers: payload.policy.auto_open_task_circuit_breakers ? "true" : "false",
+    auto_route_circuit_breakers_to_replan: payload.policy.auto_route_circuit_breakers_to_replan ? "true" : "false",
+    circuit_breaker_failure_threshold: String(payload.policy.circuit_breaker_failure_threshold),
+    circuit_breaker_replan_after_seconds: String(payload.policy.circuit_breaker_replan_after_seconds),
     max_timed_out_retries: String(payload.policy.max_timed_out_retries),
     max_failed_session_retries: String(payload.policy.max_failed_session_retries),
     timed_out_retry_cooldown_seconds: String(payload.policy.timed_out_retry_cooldown_seconds),
@@ -81,6 +90,10 @@ function buildDefaultsDraft(defaults: RecoveryPolicySettings): RecoveryDraft {
     auto_retry_failed_sessions: defaults.auto_retry_failed_sessions ? "true" : "false",
     auto_recover_blocked_tasks: defaults.auto_recover_blocked_tasks ? "true" : "false",
     auto_dlq_retry_exhausted_tasks: defaults.auto_dlq_retry_exhausted_tasks ? "true" : "false",
+    auto_open_task_circuit_breakers: defaults.auto_open_task_circuit_breakers ? "true" : "false",
+    auto_route_circuit_breakers_to_replan: defaults.auto_route_circuit_breakers_to_replan ? "true" : "false",
+    circuit_breaker_failure_threshold: String(defaults.circuit_breaker_failure_threshold),
+    circuit_breaker_replan_after_seconds: String(defaults.circuit_breaker_replan_after_seconds),
     max_timed_out_retries: String(defaults.max_timed_out_retries),
     max_failed_session_retries: String(defaults.max_failed_session_retries),
     timed_out_retry_cooldown_seconds: String(defaults.timed_out_retry_cooldown_seconds),
@@ -146,6 +159,21 @@ function RecoveryTaskList({
             {item.replan_reason ? <p>Replan reason: {item.replan_reason}</p> : null}
             {item.replan_strategy ? <p>Replan strategy: {item.replan_strategy}</p> : null}
             {item.replan_summary ? <p>{item.replan_summary}</p> : null}
+            {item.circuit_breaker_detail ? (
+              <p>
+                Circuit breaker:
+                {item.circuit_breaker_detail.trigger ? ` ${item.circuit_breaker_detail.trigger.replaceAll("_", " ")}` : ""}
+                {item.circuit_breaker_detail.failure_count != null
+                  ? ` | failures ${item.circuit_breaker_detail.failure_count}`
+                  : ""}
+                {item.circuit_breaker_detail.threshold != null
+                  ? ` | threshold ${item.circuit_breaker_detail.threshold}`
+                  : ""}
+                {item.circuit_breaker_detail.retry_limit != null
+                  ? ` | retry limit ${item.circuit_breaker_detail.retry_limit}`
+                  : ""}
+              </p>
+            ) : null}
             {item.next_retry_at ? (
               <p>
                 Next retry: {new Date(item.next_retry_at).toLocaleString()}
@@ -517,6 +545,20 @@ export function RecoveryPage() {
     }
   }
 
+  async function handleResetCircuitBreaker(taskId: string) {
+    setPendingTaskActionId(taskId);
+    setNotice(null);
+    try {
+      const payload = await resetTaskCircuitBreaker(taskId);
+      await reload();
+      setNotice(`Reset circuit breaker for ${taskId}; task is now ${payload.status}.`);
+    } catch {
+      setNotice("Circuit breaker reset failed; keep the task under operator review.");
+    } finally {
+      setPendingTaskActionId(null);
+    }
+  }
+
   async function handleRecoverTask(taskId: string) {
     setPendingTaskActionId(taskId);
     setNotice(null);
@@ -672,11 +714,14 @@ export function RecoveryPage() {
       <section className="stats-grid">
         <StatCard label="Backoff tasks" value={recovery?.summary.retry_backoff_tasks ?? 0} tone="warn" />
         <StatCard label="Needs replan" value={recovery?.summary.needs_replan_tasks ?? 0} tone="warn" />
+        <StatCard label="Circuit breakers" value={recovery?.summary.circuit_breaker_tasks ?? 0} tone="warn" />
         <StatCard label="Replan candidates" value={recovery?.summary.replanning_candidates ?? 0} tone="warn" />
         <StatCard label="Auto-recover candidates" value={recovery?.summary.auto_recovery_candidates ?? 0} tone="warn" />
+        <StatCard label="Auto-replan candidates" value={recovery?.summary.auto_replan_candidates ?? 0} tone="warn" />
         <StatCard label="Retry overrides" value={recovery?.summary.tasks_with_retry_overrides ?? 0} />
         <StatCard label="Retry history" value={recovery?.summary.tasks_with_retry_history ?? 0} />
         <StatCard label="DLQ open" value={recovery?.summary.open_dead_letter_entries ?? 0} tone="warn" />
+        <StatCard label="Circuit breaker incidents" value={recovery?.summary.open_circuit_breakers ?? 0} tone="warn" />
         <StatCard label="Recoverable blocked" value={recovery?.summary.recoverable_blocked_tasks ?? 0} tone="warn" />
         <StatCard label="Open failure alerts" value={recovery?.summary.open_failure_alerts ?? 0} tone="warn" />
         <StatCard label="Repeated incidents" value={recovery?.summary.open_repeated_failure_alerts ?? 0} tone="warn" />
@@ -752,6 +797,44 @@ export function RecoveryPage() {
                     <option value="false">Disabled</option>
                     <option value="true">Enabled</option>
                   </select>
+                </label>
+                <label className="filter-field">
+                  <span>Open task circuit breakers</span>
+                  <select
+                    value={currentDraft.auto_open_task_circuit_breakers}
+                    onChange={(event) => updateDraft("auto_open_task_circuit_breakers", event.target.value)}
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Auto-route clear circuit breakers to replan</span>
+                  <select
+                    value={currentDraft.auto_route_circuit_breakers_to_replan}
+                    onChange={(event) => updateDraft("auto_route_circuit_breakers_to_replan", event.target.value)}
+                  >
+                    <option value="false">Disabled</option>
+                    <option value="true">Enabled</option>
+                  </select>
+                </label>
+                <label className="filter-field">
+                  <span>Circuit breaker failure threshold</span>
+                  <input
+                    type="number"
+                    min="2"
+                    value={currentDraft.circuit_breaker_failure_threshold}
+                    onChange={(event) => updateDraft("circuit_breaker_failure_threshold", event.target.value)}
+                  />
+                </label>
+                <label className="filter-field">
+                  <span>Circuit breaker replan delay</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={currentDraft.circuit_breaker_replan_after_seconds}
+                    onChange={(event) => updateDraft("circuit_breaker_replan_after_seconds", event.target.value)}
+                  />
                 </label>
                 <label className="filter-field">
                   <span>Max failed-session retries</span>
@@ -979,6 +1062,62 @@ export function RecoveryPage() {
                 <div>
                   <strong>No tasks waiting on replan</strong>
                   <p>No task is currently parked in the manual replanning queue.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Open circuit breakers</h2>
+              <p>Tasks halted out of automatic recovery after repeated failures or retry-budget exhaustion. Reset after manual intervention to return them to readiness evaluation.</p>
+            </div>
+          </header>
+          {(recovery?.circuit_breaker_tasks ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.circuit_breaker_tasks ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleResetCircuitBreaker(taskId)}
+              primaryActionLabel="Reset circuit breaker"
+              pendingPrimaryActionLabel="Resetting..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No open circuit breakers</strong>
+                  <p>No task is currently halted behind an automatic circuit breaker.</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Auto-replan candidates</h2>
+              <p>Open circuit breakers that have aged past the policy delay and no longer have blocking quarantine or repeated-failure incidents. When enabled, the supervisor will move these into the replanning queue automatically.</p>
+            </div>
+          </header>
+          {(recovery?.auto_replan_candidates ?? []).length ? (
+            <RecoveryTaskList
+              items={recovery?.auto_replan_candidates ?? []}
+              pendingTaskId={pendingTaskActionId}
+              onRetryLimitChange={handleTaskRetryLimitChange}
+              onPrimaryAction={(taskId) => void handleMarkForReplan(taskId)}
+              primaryActionLabel="Mark for replan"
+              pendingPrimaryActionLabel="Marking..."
+            />
+          ) : (
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>No auto-replan candidates</strong>
+                  <p>No circuit-broken task currently satisfies the policy guardrails for automatic routing into replanning.</p>
                 </div>
               </div>
             </div>

@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -94,6 +95,10 @@ lint = "example:main"
                 1,
             )
             self.assertGreaterEqual(
+                len(overview_payload["onboarding"]["discovery_summary"]["runbook_commands"]),
+                1,
+            )
+            self.assertGreaterEqual(
                 len(overview_payload["onboarding"]["discovery_summary"]["codebase_map"]),
                 1,
             )
@@ -103,10 +108,126 @@ lint = "example:main"
                     for item in overview_payload["onboarding"]["discovery_summary"]["codebase_map"]
                 )
             )
+            src_entry = next(
+                item
+                for item in overview_payload["onboarding"]["discovery_summary"]["codebase_map"]
+                if item["name"] == "src"
+            )
+            self.assertIn(
+                "src/app.py",
+                src_entry["sample_files"],
+            )
             self.assertIn(
                 "src",
                 overview_payload["onboarding"]["discovery_summary"]["repo_areas"],
             )
+            self.assertIn(
+                "python_script:lint",
+                [
+                    item["label"]
+                    for item in overview_payload["onboarding"]["discovery_summary"]["runbook_commands"]
+                ],
+            )
+            self.assertEqual(overview_payload["onboarding"]["review_overrides"]["ignored_paths"], [])
+            self.assertGreater(overview_payload["onboarding"]["repo_plan_preview"]["generated_task_count"], 0)
+            self.assertIsNone(overview_payload["onboarding"]["repo_plan_state"])
+
+    def test_overview_exposes_repo_plan_state_after_brownfield_approval(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+
+            bootstrap_project(tmpdir, name="Brownfield Repo Plan Test", description="dashboard brownfield repo plan", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            overview_payload = client.get("/api/overview").json()
+            self.assertEqual(overview_payload["onboarding"]["review_status"], "approved")
+            self.assertIsNotNone(overview_payload["onboarding"]["repo_plan_state"])
+            self.assertFalse(overview_payload["onboarding"]["repo_plan_state"]["stale"])
+            self.assertGreater(overview_payload["onboarding"]["repo_plan_state"]["generated_task_count"], 0)
+
+    def test_overview_filters_brownfield_summary_using_review_overrides(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "tests"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "Makefile"), "w", encoding="utf-8") as handle:
+                handle.write("test:\n\tpytest\n")
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            with open(os.path.join(tmpdir, "tests", "test_app.py"), "w", encoding="utf-8") as handle:
+                handle.write("def test_ok():\n    assert True\n")
+
+            bootstrap_project(
+                tmpdir,
+                name="Filtered Brownfield Dashboard Test",
+                description="dashboard brownfield",
+                project_type="custom",
+            )
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["onboarding"]["review_overrides"] = {
+                    "ignored_paths": ["tests"],
+                    "accepted_workflow_labels": ["python_script:lint"],
+                    "accepted_runbook_labels": ["python_script:lint"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            overview_payload = client.get("/api/overview").json()
+
+            self.assertEqual(overview_payload["onboarding"]["review_overrides"]["ignored_paths"], ["tests"])
+            self.assertEqual(
+                overview_payload["onboarding"]["discovery_summary"]["workflow_labels"],
+                ["python_script:lint"],
+            )
+            self.assertEqual(
+                [item["label"] for item in overview_payload["onboarding"]["discovery_summary"]["runbook_commands"]],
+                ["python_script:lint"],
+            )
+            codebase_names = [
+                item["name"] for item in overview_payload["onboarding"]["discovery_summary"]["codebase_map"]
+            ]
+            self.assertIn("src", codebase_names)
+            self.assertNotIn("tests", codebase_names)
 
     def test_overview_repeated_failure_summary_is_not_capped_to_top_five(self):
         with tempfile.TemporaryDirectory() as tmpdir:

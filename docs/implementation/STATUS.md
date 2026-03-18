@@ -6,6 +6,15 @@
 - `[ ]` not fully shipped on `main`
 - In-flight branch work should be tracked in open PRs, not in this file.
 
+## Current Development Sequence
+
+- [x] `#81` is shipped on `main`
+- [x] `#82` is implemented on the stacked branch `codex/project-aware-supervisor-orchestration`
+- [x] `#83` is implemented on the stacked branch `codex/brownfield-file-backed-planning`
+- [x] `#84` is implemented on the stacked branch `codex/recovery-circuit-breakers`
+- [x] `#85` is implemented on the stacked branch `codex/project-isolated-provider-runtime`
+- [ ] `#86` is the next unfinished item in the current stacked sequence
+
 ## Current Snapshot
 
 - [x] MAAS is usable today as a greenfield local prototype with a real operator-facing control room.
@@ -125,7 +134,7 @@
 ## Next High-Value PR Sequence
 
 - [x] `#80` Provider runtime preflight and readiness checks
-- [ ] `#81` Multi-project write path and project lifecycle
+- [x] `#81` Multi-project write path and project lifecycle
 - [ ] `#82` Project-aware supervisor and background orchestration
 - [ ] `#83` Brownfield file-backed planning and repo navigation
 - [ ] `#84` Policy-driven self-healing and circuit breakers

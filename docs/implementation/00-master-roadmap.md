@@ -13,6 +13,14 @@ Legend for the checklist column:
 - `[x]` shipped on `main`
 - `[ ]` not fully shipped on `main`
 
+Current stacked development chain above `main`:
+
+- `#82` exists on `codex/project-aware-supervisor-orchestration`
+- `#83` exists on `codex/brownfield-file-backed-planning`
+- `#84` exists on `codex/recovery-circuit-breakers`
+- `#85` exists on `codex/project-isolated-provider-runtime`
+- `#86` is the next unfinished item in sequence
+
 | Batch | Checklist | Notes |
 |---|---|---|
 | 1. Core kernel and scaffold | `[x]` | Python package, CLI, SQLite migrations, `.maas/` workspace, `project.yaml`, greenfield bootstrap |
@@ -36,7 +44,7 @@ Legend for the checklist column:
 
 - [x] `#80` Provider runtime preflight and readiness checks:
   let operators verify live runtime readiness before task execution by checking CLI availability, required auth env, and persisted readiness state in the Providers surface.
-- [ ] `#81` Multi-project write path and project lifecycle:
+- [x] `#81` Multi-project write path and project lifecycle:
   move beyond read scoping by adding create/import/archive flows, project-scoped write operations, and explicit lifecycle management for multiple repos.
 - [ ] `#82` Project-aware supervisor and background orchestration:
   make the scheduler, supervisor, live transport, and recovery automation operate cleanly per project instead of assuming a single active workspace loop.
@@ -48,6 +56,15 @@ Legend for the checklist column:
   strengthen runtime isolation by moving from sanitized subprocess envs to clearer per-project runtime boundaries and safer execution sandboxes.
 - [ ] `#86` Remote or queued provider execution beyond local CLI paths:
   add the next meaningful execution mode after local CLI paths, such as a queued or remote runner, once readiness and isolation are strong enough.
+
+## Current Stacked Branch Progress
+
+- [x] `#81` is shipped on `main`
+- [x] `#82` is implemented on `codex/project-aware-supervisor-orchestration`
+- [x] `#83` is implemented on `codex/brownfield-file-backed-planning`
+- [x] `#84` is implemented on `codex/recovery-circuit-breakers`
+- [x] `#85` is implemented on `codex/project-isolated-provider-runtime`
+- [ ] `#86` is the next unfinished item
 
 ## Delivery Order
 

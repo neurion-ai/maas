@@ -27,6 +27,14 @@ Legend:
 - `[x]` shipped on `main`
 - `[ ]` not fully shipped on `main`
 
+Current stacked development chain above `main`:
+
+- `#82` exists on `codex/project-aware-supervisor-orchestration`
+- `#83` exists on `codex/brownfield-file-backed-planning`
+- `#84` exists on `codex/recovery-circuit-breakers`
+- `#85` exists on `codex/project-isolated-provider-runtime`
+- `#86` is the next unfinished step in the current sequence
+
 ### Current project state
 
 - [x] MAAS is now a substantial single-project, greenfield, operator-supervised prototype.
@@ -68,12 +76,21 @@ Legend:
 ### Next high-value PR sequence
 
 - [x] `#80` Provider runtime preflight and readiness checks
-- [ ] `#81` Multi-project write path and project lifecycle
+- [x] `#81` Multi-project write path and project lifecycle
 - [ ] `#82` Project-aware supervisor and background orchestration
 - [ ] `#83` Brownfield file-backed planning and repo navigation
 - [ ] `#84` Policy-driven self-healing and circuit breakers
 - [ ] `#85` Sandboxed provider runners per project
 - [ ] `#86` Remote or queued provider execution beyond local CLI paths
+
+### Current stacked branch progress
+
+- [x] `#81` is already shipped on `main`
+- [x] `#82` is implemented on `codex/project-aware-supervisor-orchestration`
+- [x] `#83` is implemented on `codex/brownfield-file-backed-planning`
+- [x] `#84` is implemented on `codex/recovery-circuit-breakers`
+- [x] `#85` is implemented on `codex/project-isolated-provider-runtime`
+- [ ] `#86` is the next unfinished item
 
 ## Quick Start
 

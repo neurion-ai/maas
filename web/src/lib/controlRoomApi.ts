@@ -661,6 +661,24 @@ export async function updateProjectRiskPolicy(
   });
 }
 
+export async function updateProjectRuntimeQuotas(
+  projectId: string,
+  payload: {
+    daily_run_limit: number;
+    daily_live_run_limit: number;
+    daily_runtime_seconds_limit: number;
+    max_task_session_attempts: number;
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-runtime-quotas`, {
+    actor_id: "agent_allocator",
+    daily_run_limit: payload.daily_run_limit,
+    daily_live_run_limit: payload.daily_live_run_limit,
+    daily_runtime_seconds_limit: payload.daily_runtime_seconds_limit,
+    max_task_session_attempts: payload.max_task_session_attempts
+  });
+}
+
 export async function refreshRepoPlan(projectId: string) {
   return postJson(`/api/projects/${projectId}/actions/refresh-repo-plan`, {
     actor_id: "agent_allocator"

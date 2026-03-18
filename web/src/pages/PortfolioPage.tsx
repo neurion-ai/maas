@@ -6,7 +6,8 @@ import {
   runOrchestratorPass,
   updateEscalationStatus,
   updateProjectProviderCapacity,
-  updateProjectRiskPolicy
+  updateProjectRiskPolicy,
+  updateProjectRuntimeQuotas
 } from "../lib/controlRoomApi";
 import { setSelectedProjectId } from "../lib/projectScope";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -32,6 +33,17 @@ export function PortfolioPage() {
   const [runningOrchestrator, setRunningOrchestrator] = useState(false);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [riskDrafts, setRiskDrafts] = useState<Record<string, { priorityThreshold: number; sensitivePaths: string }>>({});
+  const [quotaDrafts, setQuotaDrafts] = useState<
+    Record<
+      string,
+      {
+        dailyRunLimit: number;
+        dailyLiveRunLimit: number;
+        dailyRuntimeSecondsLimit: number;
+        maxTaskSessionAttempts: number;
+      }
+    >
+  >({});
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -49,6 +61,20 @@ export function PortfolioPage() {
                 next[project.project_id] = {
                   priorityThreshold: project.risk_policy.priority_threshold,
                   sensitivePaths: project.risk_policy.sensitive_path_prefixes.join(", ")
+                };
+              }
+            });
+            return next;
+          });
+          setQuotaDrafts((current) => {
+            const next = { ...current };
+            payload.projects.forEach((project) => {
+              if (!next[project.project_id]) {
+                next[project.project_id] = {
+                  dailyRunLimit: project.runtime_quotas.daily_run_limit,
+                  dailyLiveRunLimit: project.runtime_quotas.daily_live_run_limit,
+                  dailyRuntimeSecondsLimit: project.runtime_quotas.daily_runtime_seconds_limit,
+                  maxTaskSessionAttempts: project.runtime_quotas.max_task_session_attempts
                 };
               }
             });
@@ -163,6 +189,30 @@ export function PortfolioPage() {
     }
   }
 
+  async function handleUpdateRuntimeQuotas(projectId: string) {
+    const actionKey = `runtime-quotas:${projectId}`;
+    const draft = quotaDrafts[projectId];
+    if (!draft) {
+      return;
+    }
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await updateProjectRuntimeQuotas(projectId, {
+        daily_run_limit: draft.dailyRunLimit,
+        daily_live_run_limit: draft.dailyLiveRunLimit,
+        daily_runtime_seconds_limit: draft.dailyRuntimeSecondsLimit,
+        max_task_session_attempts: draft.maxTaskSessionAttempts
+      });
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Updated runtime quotas for ${projectId}.`);
+    } catch {
+      setNotice("Runtime quota update failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -239,6 +289,20 @@ export function PortfolioPage() {
                   {project.risk_policy.sensitive_path_prefixes.length
                     ? ` · sensitive paths: ${project.risk_policy.sensitive_path_prefixes.join(", ")}`
                     : " · no sensitive path prefixes"}
+                </p>
+                <p>
+                  Runtime quotas: {project.runtime_quotas.runs_today} runs today
+                  {project.runtime_quotas.daily_run_limit
+                    ? ` / ${project.runtime_quotas.daily_run_limit}`
+                    : " / unlimited"}
+                  {` · ${project.runtime_quotas.live_runs_today} live`}
+                  {project.runtime_quotas.daily_live_run_limit
+                    ? ` / ${project.runtime_quotas.daily_live_run_limit}`
+                    : " / unlimited"}
+                  {` · ${Math.round(project.runtime_quotas.runtime_seconds_today / 60)} runtime min`}
+                  {project.runtime_quotas.daily_runtime_seconds_limit
+                    ? ` / ${Math.round(project.runtime_quotas.daily_runtime_seconds_limit / 60)}`
+                    : " / unlimited"}
                 </p>
               </div>
               <div className="data-list__meta">
@@ -331,6 +395,118 @@ export function PortfolioPage() {
                   onClick={() => void handleUpdateRiskPolicy(project.project_id)}
                 >
                   Save risk policy
+                </button>
+                <label className="task-inline-control">
+                  <span>Daily runs</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={quotaDrafts[project.project_id]?.dailyRunLimit ?? project.runtime_quotas.daily_run_limit}
+                    disabled={pendingActionKey === `runtime-quotas:${project.project_id}`}
+                    onChange={(event) =>
+                      setQuotaDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          dailyRunLimit: Number(event.target.value),
+                          dailyLiveRunLimit:
+                            current[project.project_id]?.dailyLiveRunLimit ?? project.runtime_quotas.daily_live_run_limit,
+                          dailyRuntimeSecondsLimit:
+                            current[project.project_id]?.dailyRuntimeSecondsLimit ??
+                            project.runtime_quotas.daily_runtime_seconds_limit,
+                          maxTaskSessionAttempts:
+                            current[project.project_id]?.maxTaskSessionAttempts ??
+                            project.runtime_quotas.max_task_session_attempts
+                        }
+                      }))
+                    }
+                  />
+                </label>
+                <label className="task-inline-control">
+                  <span>Live runs</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={quotaDrafts[project.project_id]?.dailyLiveRunLimit ?? project.runtime_quotas.daily_live_run_limit}
+                    disabled={pendingActionKey === `runtime-quotas:${project.project_id}`}
+                    onChange={(event) =>
+                      setQuotaDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          dailyRunLimit:
+                            current[project.project_id]?.dailyRunLimit ?? project.runtime_quotas.daily_run_limit,
+                          dailyLiveRunLimit: Number(event.target.value),
+                          dailyRuntimeSecondsLimit:
+                            current[project.project_id]?.dailyRuntimeSecondsLimit ??
+                            project.runtime_quotas.daily_runtime_seconds_limit,
+                          maxTaskSessionAttempts:
+                            current[project.project_id]?.maxTaskSessionAttempts ??
+                            project.runtime_quotas.max_task_session_attempts
+                        }
+                      }))
+                    }
+                  />
+                </label>
+                <label className="task-inline-control">
+                  <span>Runtime sec</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={
+                      quotaDrafts[project.project_id]?.dailyRuntimeSecondsLimit ??
+                      project.runtime_quotas.daily_runtime_seconds_limit
+                    }
+                    disabled={pendingActionKey === `runtime-quotas:${project.project_id}`}
+                    onChange={(event) =>
+                      setQuotaDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          dailyRunLimit:
+                            current[project.project_id]?.dailyRunLimit ?? project.runtime_quotas.daily_run_limit,
+                          dailyLiveRunLimit:
+                            current[project.project_id]?.dailyLiveRunLimit ?? project.runtime_quotas.daily_live_run_limit,
+                          dailyRuntimeSecondsLimit: Number(event.target.value),
+                          maxTaskSessionAttempts:
+                            current[project.project_id]?.maxTaskSessionAttempts ??
+                            project.runtime_quotas.max_task_session_attempts
+                        }
+                      }))
+                    }
+                  />
+                </label>
+                <label className="task-inline-control">
+                  <span>Task attempts</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={
+                      quotaDrafts[project.project_id]?.maxTaskSessionAttempts ??
+                      project.runtime_quotas.max_task_session_attempts
+                    }
+                    disabled={pendingActionKey === `runtime-quotas:${project.project_id}`}
+                    onChange={(event) =>
+                      setQuotaDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          dailyRunLimit:
+                            current[project.project_id]?.dailyRunLimit ?? project.runtime_quotas.daily_run_limit,
+                          dailyLiveRunLimit:
+                            current[project.project_id]?.dailyLiveRunLimit ?? project.runtime_quotas.daily_live_run_limit,
+                          dailyRuntimeSecondsLimit:
+                            current[project.project_id]?.dailyRuntimeSecondsLimit ??
+                            project.runtime_quotas.daily_runtime_seconds_limit,
+                          maxTaskSessionAttempts: Number(event.target.value)
+                        }
+                      }))
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="task-action task-action--secondary"
+                  disabled={pendingActionKey === `runtime-quotas:${project.project_id}`}
+                  onClick={() => void handleUpdateRuntimeQuotas(project.project_id)}
+                >
+                  Save quotas
                 </button>
                 <button
                   type="button"

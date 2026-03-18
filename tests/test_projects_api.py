@@ -315,6 +315,40 @@ lint = "imported:lint"
             self.assertEqual(project_row["risk_policy"]["priority_threshold"], 95)
             self.assertEqual(project_row["risk_policy"]["sensitive_path_prefixes"], ["src/payments", "infra"])
 
+    def test_update_runtime_quotas_persist_and_are_visible_in_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-runtime-quotas",
+                json={
+                    "actor_id": "agent_allocator",
+                    "daily_run_limit": 4,
+                    "daily_live_run_limit": 2,
+                    "daily_runtime_seconds_limit": 1800,
+                    "max_task_session_attempts": 3,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["runtime_quotas"],
+                {
+                    "daily_run_limit": 4,
+                    "daily_live_run_limit": 2,
+                    "daily_runtime_seconds_limit": 1800,
+                    "max_task_session_attempts": 3,
+                },
+            )
+
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["runtime_quotas"]["daily_run_limit"], 4)
+            self.assertEqual(project_row["runtime_quotas"]["daily_live_run_limit"], 2)
+            self.assertEqual(project_row["runtime_quotas"]["daily_runtime_seconds_limit"], 1800)
+            self.assertEqual(project_row["runtime_quotas"]["max_task_session_attempts"], 3)
+
     def test_refresh_repo_plan_endpoint_preserves_progressed_synthesized_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._create_brownfield_repo(tmpdir)

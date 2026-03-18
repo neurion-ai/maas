@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from unittest import mock
@@ -356,6 +357,52 @@ class ProviderJobQueueApiTest(unittest.TestCase):
                 connection.close()
 
             self.assertEqual(job_row["status"], "queued")
+
+    def test_queue_task_respects_task_attempt_quota(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Quota Queue Test", description="Provider quota queue test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                project_id = project["project_id"]
+                config = json.loads(project["config_json"] or "{}")
+                config["runtime_quotas"] = {
+                    "daily_run_limit": 0,
+                    "daily_live_run_limit": 0,
+                    "daily_runtime_seconds_limit": 0,
+                    "max_task_session_attempts": 1,
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Quota blocked provider run")
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message, ended_at
+                    ) VALUES ('sess_quota_attempt_existing', ?, 'agent_reviewer', ?, 'completed', 'python_script', 100, 'existing run', CURRENT_TIMESTAMP)
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Task session-attempt quota reached", response.json()["detail"])
 
 
 if __name__ == "__main__":

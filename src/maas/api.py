@@ -52,6 +52,7 @@ from maas.services.recovery_policy import fetch_project_recovery_overview, updat
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.repo_plan import refresh_repo_grounded_plan
 from maas.services.risk_policy import update_project_risk_policy
+from maas.services.runtime_quotas import update_project_runtime_quotas
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
@@ -274,6 +275,14 @@ class ProjectRiskPolicyRequest(BaseModel):
     sensitive_path_prefixes: List[str] = []
 
 
+class ProjectRuntimeQuotasRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    daily_run_limit: int
+    daily_live_run_limit: int
+    daily_runtime_seconds_limit: int
+    max_task_session_attempts: int
+
+
 def _parse_limit(value, default):
     if value is None:
         return default
@@ -448,6 +457,26 @@ def create_app(project_root="."):
                 policy={
                     "priority_threshold": payload.priority_threshold,
                     "sensitive_path_prefixes": payload.sensitive_path_prefixes,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-runtime-quotas")
+    def projects_update_runtime_quotas(project_id: str, payload: ProjectRuntimeQuotasRequest):
+        connection = connect(paths)
+        try:
+            return update_project_runtime_quotas(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "daily_run_limit": payload.daily_run_limit,
+                    "daily_live_run_limit": payload.daily_live_run_limit,
+                    "daily_runtime_seconds_limit": payload.daily_runtime_seconds_limit,
+                    "max_task_session_attempts": payload.max_task_session_attempts,
                 },
             )
         except ValueError as exc:

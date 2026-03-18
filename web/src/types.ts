@@ -190,6 +190,15 @@ export interface PortfolioProject {
     priority_threshold: number;
     sensitive_path_prefixes: string[];
   };
+  runtime_quotas: {
+    daily_run_limit: number;
+    daily_live_run_limit: number;
+    daily_runtime_seconds_limit: number;
+    max_task_session_attempts: number;
+    runs_today: number;
+    live_runs_today: number;
+    runtime_seconds_today: number;
+  };
   at_scheduler_capacity: boolean;
 }
 

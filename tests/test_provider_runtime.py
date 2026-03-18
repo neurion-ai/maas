@@ -113,6 +113,24 @@ class ProviderRuntimeTest(unittest.TestCase):
         )
         return project["project_id"]
 
+    def _update_runtime_quotas(self, connection, project_id=None, **runtime_quota_updates):
+        if project_id is None:
+            project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        else:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
+        config = json.loads(project["config_json"] or "{}")
+        runtime_quotas = dict(config.get("runtime_quotas") or {})
+        runtime_quotas.update(runtime_quota_updates)
+        config["runtime_quotas"] = runtime_quotas
+        connection.execute(
+            "UPDATE projects SET config_json = ? WHERE project_id = ?",
+            (json.dumps(config), project["project_id"]),
+        )
+        return project["project_id"]
+
     def test_providers_endpoint_reports_runtime_status(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Endpoint Test", description="Provider endpoint test", project_type="custom")
@@ -1390,6 +1408,40 @@ class ProviderRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertFalse(os.path.exists(artifact_full_path))
+
+    def test_provider_run_task_respects_daily_run_quota(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Quota Test", description="Provider quota test", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_allocator", "Run adapter under quota")
+                self._update_runtime_quotas(connection, project_id=project_id, daily_run_limit=1)
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message, ended_at
+                    ) VALUES ('sess_quota_existing', ?, 'agent_allocator', ?, 'completed', 'python_script', 100, 'existing run', CURRENT_TIMESTAMP)
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                "/api/providers/python_script/actions/run-task",
+                json={
+                    "project_id": project_id,
+                    "agent_id": "agent_allocator",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Daily provider run quota reached", response.json()["detail"])
 
     def test_provider_run_task_marks_session_failed_and_cleans_up_untracked_artifact_on_runtime_error(self):
         with tempfile.TemporaryDirectory() as tmpdir:

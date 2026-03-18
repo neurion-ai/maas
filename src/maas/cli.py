@@ -35,6 +35,7 @@ from maas.services.lifecycle import end_session, heartbeat, log_activity, produc
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.repo_plan import refresh_repo_grounded_plan
 from maas.services.risk_policy import update_project_risk_policy
+from maas.services.runtime_quotas import update_project_runtime_quotas
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.steering import (
@@ -154,6 +155,15 @@ def build_parser():
     project_risk_policy_parser.add_argument("--actor-id", default="agent_allocator")
     project_risk_policy_parser.add_argument("--priority-threshold", type=int, required=True)
     project_risk_policy_parser.add_argument("--sensitive-path-prefix", action="append", default=[])
+
+    project_runtime_quota_parser = project_subparsers.add_parser("set-runtime-quotas")
+    project_runtime_quota_parser.add_argument("--project-root", default=".")
+    project_runtime_quota_parser.add_argument("--project-id", required=True)
+    project_runtime_quota_parser.add_argument("--actor-id", default="agent_allocator")
+    project_runtime_quota_parser.add_argument("--daily-run-limit", type=int, required=True)
+    project_runtime_quota_parser.add_argument("--daily-live-run-limit", type=int, required=True)
+    project_runtime_quota_parser.add_argument("--daily-runtime-seconds-limit", type=int, required=True)
+    project_runtime_quota_parser.add_argument("--max-task-session-attempts", type=int, required=True)
 
     project_refresh_repo_plan_parser = project_subparsers.add_parser("refresh-repo-plan")
     project_refresh_repo_plan_parser.add_argument("--project-root", default=".")
@@ -612,6 +622,23 @@ def command_project(args):
                         policy={
                             "priority_threshold": args.priority_threshold,
                             "sensitive_path_prefixes": args.sensitive_path_prefix,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-runtime-quotas":
+            print(
+                json.dumps(
+                    update_project_runtime_quotas(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "daily_run_limit": args.daily_run_limit,
+                            "daily_live_run_limit": args.daily_live_run_limit,
+                            "daily_runtime_seconds_limit": args.daily_runtime_seconds_limit,
+                            "max_task_session_attempts": args.max_task_session_attempts,
                         },
                     ),
                     indent=2,

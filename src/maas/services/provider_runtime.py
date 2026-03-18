@@ -28,6 +28,7 @@ from maas.services.provider_jobs import (
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.queue_capacity import can_start_provider_jobs
+from maas.services.runtime_quotas import ensure_runtime_quotas_allow_provider_run
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -798,6 +799,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         raise ValueError("; ".join(provider["config_warnings"]) or "Provider configuration is invalid.")
     task_title = _task_title(connection, task_id)
     effective_mode = provider.get("effective_execution_mode") or provider["execution_mode"]
+    ensure_runtime_quotas_allow_provider_run(connection, project_id, task_id, effective_mode)
     claude_cli_enabled = effective_mode == "claude_cli"
     codex_cli_enabled = effective_mode == "codex_cli"
     task_prompt = _task_prompt(connection, task_id) if (claude_cli_enabled or codex_cli_enabled) else None
@@ -1031,6 +1033,8 @@ def queue_provider_task(connection, project_paths, provider_id, actor_id, projec
     target = _provider_run_target(connection, resolved_project_id, task_id, agent_id)
     if target is None:
         raise ValueError("Task is not eligible for provider queueing.")
+    effective_mode = provider.get("effective_execution_mode") or provider["execution_mode"]
+    ensure_runtime_quotas_allow_provider_run(connection, resolved_project_id, task_id, effective_mode)
     existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
     if existing is not None:
         raise ValueError("A queued or running provider job already exists for this task and provider.")

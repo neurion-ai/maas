@@ -7,6 +7,7 @@ from maas.services.failure_memory import repeated_failure_task_count
 from maas.services.projects import list_projects
 from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.risk_policy import risk_policy_from_row
+from maas.services.runtime_quotas import runtime_quota_snapshot, runtime_quotas_from_row
 from maas.services.scheduler_policy import scheduler_policy_from_row
 
 
@@ -289,6 +290,7 @@ def fetch_portfolio(connection):
         scheduler_policy = scheduler_policy_from_row(project_row)
         provider_capacity = queue_capacity_snapshot(connection, project_id)
         risk_policy = risk_policy_from_row(project_row)
+        runtime_quota_view = runtime_quota_snapshot(connection, project_id)
         item = {
             **project,
             "blocked_tasks": blocked_counts.get(project_id, 0),
@@ -304,6 +306,12 @@ def fetch_portfolio(connection):
             "scheduler_policy": scheduler_policy,
             "provider_capacity": provider_capacity,
             "risk_policy": risk_policy,
+            "runtime_quotas": {
+                **runtime_quotas_from_row(project_row),
+                "runs_today": runtime_quota_view["usage"]["runs_today"],
+                "live_runs_today": runtime_quota_view["usage"]["live_runs_today"],
+                "runtime_seconds_today": runtime_quota_view["usage"]["runtime_seconds_today"],
+            },
             "at_scheduler_capacity": active_session_counts.get(project_id, 0) >= scheduler_policy["max_active_sessions"],
         }
         item["health"] = _health_status(project, item)

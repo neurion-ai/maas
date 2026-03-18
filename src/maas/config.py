@@ -125,6 +125,12 @@ def build_default_project_config(
             "priority_threshold": 101,
             "sensitive_path_prefixes": [],
         },
+        "runtime_quotas": {
+            "daily_run_limit": 0,
+            "daily_live_run_limit": 0,
+            "daily_runtime_seconds_limit": 0,
+            "max_task_session_attempts": 0,
+        },
     }
 
 

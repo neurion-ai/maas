@@ -8,7 +8,9 @@ import {
   fetchOverview,
   fetchPortfolio,
   fetchRecoveryPolicy,
+  refreshRepoPlan,
   recoverAgent,
+  rescanBrownfieldProject,
   resetTaskCircuitBreaker,
   resetTaskRetryState,
   restoreAndRequeueQuarantineEntry,
@@ -56,6 +58,7 @@ interface HomePageProps {
 
 interface AttentionItem {
   id: string;
+  pendingKey?: string;
   tone: "critical" | "warn" | "default";
   label: string;
   summary: string;
@@ -468,7 +471,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
     return () => {
       mounted = false;
     };
-  }, [selectedTask?.git_workspace_diff_artifact_id, selectedTask?.task_id]);
+  }, [livePulse, selectedTask?.git_workspace_diff_artifact_id, selectedTask?.task_id]);
 
   async function runAction(actionKey: string, successMessage: string, action: () => Promise<unknown>, fallback: string) {
     setPendingActionKey(actionKey);
@@ -487,9 +490,72 @@ export function HomePage({ onNavigate }: HomePageProps) {
   const attentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = [];
 
+    const projectId = overview?.project?.project_id;
+    const onboarding = overview?.onboarding;
+
+    if (onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "review") {
+      items.push({
+        id: "brownfield-review",
+        pendingKey: "brownfield-review:approve",
+        tone: "warn",
+        label: "Review imported repo before release",
+        summary: `${onboarding.pending_gated_tasks} imported tasks are still gated behind onboarding approval.`,
+        meta: onboarding.last_scanned_at ? formatTime(onboarding.last_scanned_at) : undefined,
+        actionLabel: "Approve import",
+        action: () =>
+          runAction(
+            "brownfield-review:approve",
+            "Brownfield onboarding approved; imported work is now eligible for scheduling.",
+            () => reviewTask(onboarding.review_task_id!, "approve"),
+            "Brownfield onboarding approval failed; keep the import under review."
+          )
+      });
+    }
+
+    if (onboarding?.mode === "brownfield" && projectId && onboarding.drift_summary?.detected) {
+      items.push({
+        id: "brownfield-rescan",
+        pendingKey: "brownfield-rescan",
+        tone: "warn",
+        label: "Imported repo drift was detected",
+        summary: onboarding.drift_summary.summary ?? "Files, workflows, or repo areas changed since the last brownfield scan.",
+        meta: onboarding.drift_summary.scanned_at ? formatTime(onboarding.drift_summary.scanned_at) : undefined,
+        actionLabel: "Rescan import",
+        action: () =>
+          runAction(
+            "brownfield-rescan",
+            "Brownfield rescan completed; inspect the updated import state.",
+            () => rescanBrownfieldProject(projectId),
+            "Brownfield rescan failed; keep the current imported understanding."
+          )
+      });
+    }
+
+    if (onboarding?.mode === "brownfield" && projectId && onboarding.repo_plan_state?.stale) {
+      items.push({
+        id: "repo-plan-refresh",
+        pendingKey: "repo-plan-refresh",
+        tone: "default",
+        label: "Refresh repo-grounded plan",
+        summary: "The synthesized brownfield plan is stale relative to the latest imported repository map.",
+        meta: onboarding.repo_plan_state.last_refreshed_at
+          ? formatTime(onboarding.repo_plan_state.last_refreshed_at)
+          : undefined,
+        actionLabel: "Refresh plan",
+        action: () =>
+          runAction(
+            "repo-plan-refresh",
+            "Repo-grounded plan refreshed.",
+            () => refreshRepoPlan(projectId),
+            "Refreshing the repo-grounded plan failed; keeping the current brownfield plan state."
+          )
+      });
+    }
+
     for (const alert of recovery?.open_failure_alerts ?? []) {
       items.push({
         id: `failure-alert:${alert.alert_id}`,
+        pendingKey: `alert:${alert.alert_id}`,
         tone: "critical",
         label: alert.title,
         summary: alert.description,
@@ -510,6 +576,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
     for (const task of recovery?.recoverable_blocked_tasks ?? []) {
       items.push({
         id: `blocked:${task.task_id}`,
+        pendingKey: `recover-and-requeue:${task.task_id}`,
         tone: "warn",
         label: task.title,
         summary: task.review_state ? `Blocked · ${task.review_state}` : "Recoverable blocked task",
@@ -528,6 +595,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
     for (const deadLetter of recovery?.dead_letter_entries ?? []) {
       items.push({
         id: `dlq:${deadLetter.dlq_id}`,
+        pendingKey: `reset-retry:${deadLetter.task_id}`,
         tone: "critical",
         label: deadLetter.title,
         summary: `Dead letter · ${deadLetter.reason}`,
@@ -546,6 +614,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
     for (const task of recovery?.circuit_breaker_tasks ?? []) {
       items.push({
         id: `circuit:${task.task_id}`,
+        pendingKey: `reset-breaker:${task.task_id}`,
         tone: "critical",
         label: task.title,
         summary: task.circuit_breaker_detail?.trigger?.replaceAll("_", " ") ?? "Circuit breaker opened",
@@ -567,6 +636,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
         ["session_failed", "stale_session"].includes(quarantine.task_review_state ?? "");
       items.push({
         id: `quarantine:${quarantine.queue_id}`,
+        pendingKey: `${recoverable ? "restore-requeue" : "restore"}:${quarantine.queue_id}`,
         tone: "warn",
         label: quarantine.task_title ?? quarantine.queue_id,
         summary: quarantine.summary ?? quarantine.reason ?? "Quarantined artifacts need review.",
@@ -590,6 +660,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
     for (const staleAgent of recovery?.open_stale_agent_alerts ?? []) {
       items.push({
         id: `stale-agent:${staleAgent.alert_id}`,
+        pendingKey: `stale-agent:${staleAgent.alert_id}`,
         tone: "warn",
         label: staleAgent.title,
         summary: staleAgent.description,
@@ -613,6 +684,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
       }
       items.push({
         id: `repeated:${repeated.task_id}`,
+        pendingKey: `repeated:${repeated.task_id}`,
         tone: "warn",
         label: repeated.task_title ?? repeated.task_id,
         summary: `${repeated.failure_count} repeated failures`,
@@ -629,7 +701,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
     }
 
     return items.slice(0, 10);
-  }, [recovery]);
+  }, [overview, recovery]);
 
   const goalPath = useMemo(
     () => findGoalPath(goalTree?.roots ?? [], selectedTask?.goal?.id ?? null) ?? [],
@@ -1205,10 +1277,10 @@ export function HomePage({ onNavigate }: HomePageProps) {
                       <button
                         type="button"
                         className="task-action task-action--approve"
-                        disabled={pendingActionKey === item.id}
+                        disabled={pendingActionKey === (item.pendingKey ?? item.id)}
                         onClick={() => void item.action?.()}
                       >
-                        {pendingActionKey === item.id ? "Working..." : item.actionLabel}
+                        {pendingActionKey === (item.pendingKey ?? item.id) ? "Working..." : item.actionLabel}
                       </button>
                     ) : (
                       <button type="button" className="task-action task-action--ghost" onClick={() => onNavigate("incidents")}>

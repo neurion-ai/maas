@@ -277,7 +277,15 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
     if scoped_project_id is None:
         raise ValueError("Project not found")
     runtime_context = _project_runtime_context(connection, project_paths, scoped_project_id)
-    ensure_board_action_allowed(connection, actor_id, scoped_project_id, "check_provider_runtime", "provider", provider_id)
+    actor = ensure_board_action_allowed(
+        connection,
+        actor_id,
+        scoped_project_id,
+        "check_provider_runtime",
+        "provider",
+        provider_id,
+    )
+    resolved_actor_id = actor["actor_id"]
     providers = list_provider_status(connection=connection, project_id=scoped_project_id)
     provider = next((item for item in providers if item["id"] == provider_id), None)
     if provider is None:
@@ -297,7 +305,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         _record_provider_preflight(
             connection,
             scoped_project_id,
-            actor_id,
+            resolved_actor_id,
             provider,
             description,
             preflight_status="failed",
@@ -318,7 +326,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         _record_provider_preflight(
             connection,
             scoped_project_id,
-            actor_id,
+            resolved_actor_id,
             provider,
             description,
             preflight_status="simulation_ready",
@@ -356,7 +364,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         _record_provider_preflight(
             connection,
             scoped_project_id,
-            actor_id,
+            resolved_actor_id,
             provider,
             description,
             preflight_status="failed",
@@ -389,7 +397,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         _record_provider_preflight(
             connection,
             scoped_project_id,
-            actor_id,
+            resolved_actor_id,
             provider,
             description,
             preflight_status="failed",
@@ -413,7 +421,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         _record_provider_preflight(
             connection,
             scoped_project_id,
-            actor_id,
+            resolved_actor_id,
             provider,
             description,
             preflight_status="failed",
@@ -434,7 +442,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
     _record_provider_preflight(
         connection,
         scoped_project_id,
-        actor_id,
+        resolved_actor_id,
         provider,
         description,
         preflight_status="passed",

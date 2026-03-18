@@ -1,6 +1,53 @@
 import type { BoardColumn as BoardColumnType, FilterOption } from "../types";
 import { TaskCard } from "./TaskCard";
 
+function laneDescription(column: BoardColumnType) {
+  switch (column.key) {
+    case "ready":
+      return "Queued for allocation";
+    case "in_progress":
+      return "Live execution";
+    case "review":
+      return "Waiting on operator";
+    case "blocked":
+      return "Stopped or waiting";
+    case "planned":
+      return "Not ready yet";
+    case "done":
+      return "Completed work";
+    case "cancelled":
+      return "Closed out";
+    default:
+      return "Tasks";
+  }
+}
+
+function laneSecondary(column: BoardColumnType) {
+  const criticalCount = column.tasks.filter((task) => task.priority >= 90).length;
+  const blockedSignals = column.tasks.filter((task) => task.failure_count || task.next_retry_at).length;
+  const focusedCount = column.tasks.filter((task) => task.status === "review" || task.status === "blocked").length;
+
+  if (column.key === "review") {
+    return criticalCount ? `${criticalCount} high priority` : "Decision queue";
+  }
+  if (column.key === "blocked") {
+    if (blockedSignals) {
+      return `${blockedSignals} with retry or failure signal`;
+    }
+    return "Needs intervention";
+  }
+  if (column.key === "in_progress") {
+    return criticalCount ? `${criticalCount} critical in flight` : "Active owners";
+  }
+  if (column.key === "ready") {
+    return criticalCount ? `${criticalCount} critical next` : "Ordered by priority";
+  }
+  if (column.key === "planned") {
+    return focusedCount ? `${focusedCount} carrying review state` : "Backlog";
+  }
+  return criticalCount ? `${criticalCount} critical` : `${column.tasks.length} total`;
+}
+
 interface BoardColumnProps {
   column: BoardColumnType;
   agentOptions?: FilterOption[];
@@ -47,9 +94,14 @@ export function BoardColumn({
       <header className="board-column__header">
         <div>
           <h2>{column.title}</h2>
-          <p>{column.tasks.length} tasks</p>
+          <p>
+            {laneDescription(column)}
+            {column.tasks.length ? ` · ${laneSecondary(column)}` : ""}
+          </p>
         </div>
-        <span className="board-column__count">{column.tasks.length}</span>
+        <span className="board-column__count">
+          {column.tasks.length}
+        </span>
       </header>
       <div className="board-column__stack">
         {column.tasks.map((task) => (

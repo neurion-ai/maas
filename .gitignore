@@ -6,3 +6,6 @@ dist/
 .venv/
 .maas/
 project.yaml
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts

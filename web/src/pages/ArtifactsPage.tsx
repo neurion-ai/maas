@@ -331,7 +331,7 @@ export function ArtifactsPage() {
   }
 
   return (
-    <section className="control-page">
+    <section className="control-page artifacts-page">
       <header className="page-hero">
         <div>
           <span className="eyebrow">Artifacts</span>
@@ -356,7 +356,7 @@ export function ArtifactsPage() {
         <StatCard label="Missing files" value={artifacts?.summary.missing_files ?? 0} tone="warn" />
       </section>
 
-      <section className="filters-panel">
+      <section className="filters-panel artifacts-filters">
         <div className="filters-panel__header">
           <div>
             <h2>Artifact filters</h2>
@@ -457,8 +457,8 @@ export function ArtifactsPage() {
         ) : null}
       </section>
 
-      <section className="overview-grid">
-        <article className="data-panel">
+      <section className="overview-grid artifacts-workspace">
+        <article className="data-panel artifacts-workspace__list-panel">
           <header className="data-panel__header">
             <div>
               <h2>Recent artifacts</h2>
@@ -486,11 +486,11 @@ export function ArtifactsPage() {
               </button>
             </div>
           </header>
-          <div className="data-list">
+          <div className="data-list artifacts-list">
             {visibleItems.map((item) => (
               <div
                 key={item.artifact_id}
-                className={`data-list__item ${selectedArtifactId === item.artifact_id ? "is-selected" : ""}`}
+                className={`data-list__item artifact-list-item ${selectedArtifactId === item.artifact_id ? "is-selected" : ""}`}
               >
                 <div>
                   <strong>{item.file_name}</strong>
@@ -561,7 +561,7 @@ export function ArtifactsPage() {
           </div>
         </article>
 
-        <article className="data-panel">
+        <article className="data-panel artifacts-workspace__detail-panel">
           <header className="data-panel__header">
             <div>
               <h2>Artifact detail</h2>
@@ -575,7 +575,7 @@ export function ArtifactsPage() {
             </div>
           </header>
           {detailArtifact ? (
-            <div className="artifact-detail">
+            <div className="artifact-detail artifacts-detail">
               <div className="artifact-detail__header">
                 <div>
                   <strong>{detailArtifact.file_name}</strong>
@@ -915,7 +915,7 @@ export function ArtifactsPage() {
         </article>
       </section>
 
-      <section className="overview-grid">
+      <section className="overview-grid artifacts-breakdown">
         <article className="data-panel">
           <header className="data-panel__header">
             <div>

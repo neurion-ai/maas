@@ -25,28 +25,28 @@ const THEME_STORAGE_KEY = "maas:theme";
 const VIEWS: Array<{ id: View; label: string; summary: string }> = [
   {
     id: "home",
-    label: "Home",
-    summary: "Recommended next actions, current project state, and first-run guidance."
+    label: "Cockpit",
+    summary: "Supervisor overview for agents, incident pressure, and the next operator decision."
   },
   {
     id: "work",
-    label: "Work",
-    summary: "Board, plan, task detail, and execution steering."
+    label: "Board",
+    summary: "The only task workspace: kanban in the center, inspector on the right."
   },
   {
     id: "runs",
-    label: "Runs",
-    summary: "Providers, workers, queueing, agents, and outputs."
+    label: "Execution",
+    summary: "Providers, workers, queued jobs, and runtime outputs."
   },
   {
     id: "incidents",
     label: "Incidents",
-    summary: "Failures, alerts, recovery, and timeline replay."
+    summary: "Recovery queues, alerts, failures, and incident replay."
   },
   {
     id: "projects",
     label: "Projects",
-    summary: "Portfolio health, project lifecycle, and cross-project supervision."
+    summary: "Portfolio health, project lifecycle, and multi-project supervision."
   }
 ];
 
@@ -160,16 +160,29 @@ function AppShell() {
     };
   }, []);
 
-  const liveTransportLabel =
-    transport === "websocket"
-      ? connected
-        ? "Live transport: WebSocket"
-        : "Connecting via WebSocket"
+  const liveTransportTone = connected ? (transport === "polling" ? "warn" : "good") : transport === "polling" ? "warn" : "default";
+  const liveTransportLabel = connected
+    ? transport === "websocket"
+      ? "Live"
       : transport === "sse"
-        ? connected
-          ? "Live transport: SSE"
-          : "Connecting via SSE"
-        : "Polling fallback";
+        ? "Fallback live"
+        : "Polling"
+    : transport === "websocket"
+      ? "Syncing"
+      : transport === "sse"
+        ? "Retrying"
+        : "Polling";
+  const liveTransportDetail = connected
+    ? transport === "websocket"
+      ? "Live updates active"
+      : transport === "sse"
+        ? "Server stream fallback"
+        : "Polling every 15s"
+    : transport === "websocket"
+      ? "Opening live stream"
+      : transport === "sse"
+        ? "Retrying live stream"
+        : "Live transport unavailable";
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -186,6 +199,7 @@ function AppShell() {
       });
       await loadProjects(payload.project.project_id);
       setProjectForm(DEFAULT_PROJECT_FORM);
+      setActiveView("home");
       setProjectNotice(`Created ${payload.project.name} in ${payload.mode} mode from ${payload.metadata.source_root}.`);
     } catch (error) {
       setProjectNotice(error instanceof Error ? error.message : "Could not create project.");
@@ -245,21 +259,16 @@ function AppShell() {
     return [
       ...navigationActions,
       {
-        id: "command:supervisor",
-        label: "Run supervisor pass",
-        description: "Refresh readiness and allocate the next set of tasks.",
-        keywords: ["allocate", "scheduler", "supervisor"],
+        id: "command:run",
+        label: "Run work loop",
+        description: "Advance the board and drain the queue using the default operator path.",
+        keywords: ["run", "queue", "board", "supervisor", "orchestrator"],
         run: () => {
-          void runSupervisorPass(3);
-        }
-      },
-      {
-        id: "command:orchestrator",
-        label: "Run orchestrator pass",
-        description: "Process project-aware orchestration, queued jobs, and assignment flow.",
-        keywords: ["orchestrator", "jobs", "queue"],
-        run: () => {
-          void runOrchestratorPass(4, 2);
+          if ((activeProject?.task_count ?? 0) > 0) {
+            void runOrchestratorPass(4, 2);
+          } else {
+            void runSupervisorPass(3);
+          }
         }
       },
       {
@@ -271,48 +280,23 @@ function AppShell() {
       },
       ...projectActions
     ];
-  }, [activeProjects, theme]);
+  }, [activeProject?.task_count, activeProjects, theme]);
 
   return (
-    <div className="product-shell">
-      <aside className="shell-sidebar">
-        <div className="brand-block">
-          <span className="eyebrow">MAAS</span>
-          <h1>AI software delivery, made operable</h1>
-          <p>Import a repo, supervise execution, recover from failures, and keep evidence attached to the work.</p>
-        </div>
-
-        <nav className="shell-nav" aria-label="Primary views">
-          {VIEWS.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={`shell-nav__item ${activeView === view.id ? "is-active" : ""}`}
-              onClick={() => setActiveView(view.id)}
-            >
-              <strong>{view.label}</strong>
-              <span>{view.summary}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="sidebar-footer">
-          <div className="status-chip">
-            <span className={`status-chip__dot ${connected ? "is-live" : transport === "polling" ? "is-warn" : ""}`} />
-            {liveTransportLabel}
+    <div className="cockpit-shell">
+      <header className="cockpit-shell__topbar">
+        <div className="cockpit-shell__topbar-main">
+          <div className="cockpit-shell__brand">
+            <span className="cockpit-shell__eyebrow">MAAS operator system</span>
+            <strong>MAAS</strong>
+            <span>operator cockpit and board workspace</span>
           </div>
-          <button type="button" className="hero-button hero-button--ghost hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
-            Command palette
-          </button>
-        </div>
-      </aside>
 
-      <main className="shell-main">
-        <header className="shell-topbar">
-          <div className="shell-topbar__project">
-            <span className="eyebrow">Current project</span>
-            <div className="shell-topbar__project-row">
+          <div className="cockpit-shell__project">
+            <label htmlFor="active-project-select">Workspace</label>
+            <div className="cockpit-shell__project-row">
               <select
+                id="active-project-select"
                 aria-label="Selected project"
                 value={activeProject?.project_id ?? ""}
                 onChange={(event) => {
@@ -327,30 +311,70 @@ function AppShell() {
                   </option>
                 ))}
               </select>
-              <div>
+              <div className="cockpit-shell__project-copy">
                 <strong>{activeProject?.name ?? "No active project"}</strong>
-                <p>{activeProject?.description ?? "Create or restore a project to begin."}</p>
+                <span>{activeProject?.description ?? "Create or restore a project to begin."}</span>
               </div>
             </div>
           </div>
+        </div>
 
-          <div className="shell-topbar__actions">
+        <div className="cockpit-shell__topbar-side">
+          <div className="cockpit-shell__telemetry">
+            <div className="telemetry-chip telemetry-chip--wide">
+              <span className={`status-dot status-dot--${liveTransportTone}`} />
+              <div>
+                <strong>{liveTransportLabel}</strong>
+                <span>{liveTransportDetail}</span>
+              </div>
+            </div>
+            <div className="telemetry-chip">
+              <strong>{activeProject?.task_count ?? 0}</strong>
+              <span>tasks</span>
+            </div>
+            <div className="telemetry-chip">
+              <strong>{activeProject?.agent_count ?? 0}</strong>
+              <span>agents</span>
+            </div>
+            <div className="telemetry-chip">
+              <strong>{activeProject?.open_alert_count ?? 0}</strong>
+              <span>alerts</span>
+            </div>
+          </div>
+
+          <div className="cockpit-shell__actions">
             <button
               type="button"
-              className="hero-button hero-button--ghost"
+              className="hero-button hero-button--ghost hero-button--compact"
               onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
             >
-              {theme === "dark" ? "Light theme" : "Dark theme"}
+              {theme === "dark" ? "Light" : "Dark"}
             </button>
-            <button type="button" className="hero-button" onClick={() => setCommandPaletteOpen(true)}>
-              Search and jump
+            <button type="button" className="hero-button hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
+              Command
             </button>
           </div>
-        </header>
+        </div>
+      </header>
 
-        <div className="product-content">
-          {activeView === "home" ? <HomePage onNavigate={setActiveView} /> : null}
-          {activeView === "work" ? <WorkPage /> : null}
+      <div className="cockpit-tabs" aria-label="Primary views">
+        {VIEWS.map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            className={`cockpit-tabs__item ${activeView === view.id ? "is-active" : ""}`}
+            title={view.summary}
+            onClick={() => setActiveView(view.id)}
+          >
+            <strong>{view.label}</strong>
+          </button>
+        ))}
+      </div>
+
+      <main className="cockpit-shell__main">
+        <div className={`product-content product-content--${activeView}`}>
+          {activeView === "home" ? <HomePage onNavigate={setActiveView} mode="ops" /> : null}
+          {activeView === "work" ? <WorkPage onNavigate={setActiveView} /> : null}
           {activeView === "runs" ? <RunsPage /> : null}
           {activeView === "incidents" ? <IncidentsPage /> : null}
           {activeView === "projects" ? (
@@ -368,6 +392,7 @@ function AppShell() {
               onCreateProject={handleCreateProject}
               onArchiveProject={handleArchiveProject}
               onRestoreProject={handleRestoreProject}
+              onNavigate={setActiveView}
             />
           ) : null}
         </div>

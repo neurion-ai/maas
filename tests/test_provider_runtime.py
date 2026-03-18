@@ -419,6 +419,39 @@ class ProviderRuntimeTest(unittest.TestCase):
             providers = {provider["id"]: provider for provider in client.get("/api/providers").json()["providers"]}
             self.assertEqual(providers["python_script"]["latest_preflight"]["status"], "simulation_ready")
 
+    def test_provider_preflight_works_for_project_with_generated_agent_ids(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                payload = create_project(
+                    connection,
+                    project_paths(tmpdir),
+                    actor_id="agent_allocator",
+                    name="Imported Repo",
+                    description="Brownfield project",
+                    project_type="custom",
+                    mode="brownfield",
+                    source_root=tmpdir,
+                )
+                project_id = payload["project"]["project_id"]
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/providers/python_script/actions/run-preflight",
+                json={"actor_id": "agent_allocator", "project_id": project_id},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "simulation_ready")
+
+            providers = {
+                provider["id"]: provider
+                for provider in client.get(f"/api/providers?project_id={project_id}").json()["providers"]
+            }
+            self.assertEqual(providers["python_script"]["latest_preflight"]["status"], "simulation_ready")
+
     def test_provider_preflight_does_not_mark_misconfigured_simulation_provider_as_ready(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")

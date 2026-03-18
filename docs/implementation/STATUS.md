@@ -45,8 +45,45 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#114` is implemented on `codex/ux-product-redesign`
 - [x] `#115` is implemented on `codex/ux-product-redesign`
 - [x] `#116` is implemented on `codex/ux-product-redesign`
+- [x] `#117` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#118` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#119` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#120` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#121` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#122` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#123` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#124` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#125` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#126` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#127` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#128` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#129` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#130` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#131` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#132` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#133` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#134` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#135` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#136` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#137` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#138` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#139` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#140` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#141` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#142` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#143` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#144` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#145` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#146` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#147` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#148` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#149` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#150` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#151` is implemented on `codex/linear-vibekanban-cockpit`
 
-The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#151` sequence is fully implemented on the stacked branch chain above `main`.
+
+The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 
 ## Extended Numbered Roadmap
 
@@ -86,6 +123,41 @@ The current numbered `#81-#116` sequence is fully implemented on the stacked bra
 - [x] `#114` Portfolio and project-management UX redesign
 - [x] `#115` Command palette, contextual actions, empty states, and inline guidance
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass
+- [x] `#117` Shell density reset
+- [x] `#118` Default control room layout
+- [x] `#119` Compact kanban redesign
+- [x] `#120` Agent roster and interaction view
+- [x] `#121` Curated live ticker
+- [x] `#122` Goal/subgoal/task relationship explorer
+- [x] `#123` Incident rail and playbooks
+- [x] `#124` Evidence and verification drawer
+- [x] `#125` Project status and portfolio command bar
+- [x] `#126` Remove legacy hero UX and final dense visual pass
+- [x] `#127` Seraph-style cockpit shell pivot
+- [x] `#128` Panel workspace and windowed composition
+- [x] `#129` Cockpit command bar and telemetry strip
+- [x] `#130` Dense agent rail
+- [x] `#131` Center kanban workspace rewrite
+- [x] `#132` Right ops rail for incidents and ticker
+- [x] `#133` Inspector and evidence workspace
+- [x] `#134` Utility drawers for projects, providers, and settings
+- [x] `#135` Cockpit typography and theme system
+- [x] `#136` Remove legacy page surfaces and finish the cockpit interaction model
+- [x] `#137` Guided onboarding takeover
+- [x] `#138` Compact issue cards and inspector-first steering
+- [x] `#139` Board-first workflow defaults
+- [x] `#140` Import and create drawers
+- [x] `#141` Project next-step workflow
+- [x] `#142` Curated live-ops priorities
+- [x] `#143` Linear/Vibekanban-inspired board polish
+- [x] `#144` Utility and settings demotion
+- [x] `#145` Dense typography and dark-theme cleanup
+- [x] `#146` Remove remaining inline control clutter
+- [x] `#147` Distinct Cockpit and Board roles
+- [x] `#148` Guided brownfield review/start flow
+- [x] `#149` Unified Run action and advanced control demotion
+- [x] `#150` Intent-first project setup flow
+- [x] `#151` Inspector-visible board interaction model
 
 ## Current Snapshot
 
@@ -98,6 +170,7 @@ The current numbered `#81-#116` sequence is fully implemented on the stacked bra
 - [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
 - [x] The stacked UX redesign now provides a simpler mental model, dual-theme shell, guided home surface, unified Work/Runs/Incidents pages, and command-palette navigation on top of the existing backend stack.
+- [x] The current dense-control-room branch goes further by replacing the oversized hero/dashboard posture with a compact operator cockpit: top status strip, agent rail, dense kanban, incident rail, curated ticker, and selected-task evidence inspector.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`

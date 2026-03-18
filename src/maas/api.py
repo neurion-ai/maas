@@ -87,6 +87,7 @@ from maas.services.steering import (
     set_task_retry_limit,
     review_task,
 )
+from maas.services.system_dialogs import pick_directory_via_native_dialog
 from maas.supervisor import run_supervisor_once
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs, run_task_verification
@@ -376,6 +377,13 @@ def create_app(project_root="."):
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
+
+    @app.post("/api/system/actions/pick-directory")
+    def system_pick_directory():
+        try:
+            return pick_directory_via_native_dialog()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.post("/api/projects/{project_id}/actions/archive")
     def projects_archive(project_id: str, payload: AgentActionRequest):

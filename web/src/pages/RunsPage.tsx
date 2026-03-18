@@ -42,6 +42,33 @@ function providerStatusTone(provider: ProviderStatusItem) {
   return "default";
 }
 
+function preflightBadge(provider: ProviderStatusItem) {
+  const status = provider.latest_preflight?.status ?? null;
+  if (status === "passed" || status === "simulation_ready") {
+    return {
+      label: status === "simulation_ready" ? "Ready in simulation" : "Ready",
+      tone: "good" as const,
+    };
+  }
+  if (status === "failed") {
+    return {
+      label: "Preflight failed",
+      tone: "critical" as const,
+    };
+  }
+  return {
+    label: "Not checked",
+    tone: "default" as const,
+  };
+}
+
+async function waitForMinimumFeedback(startedAt: number, minimumMs = 700) {
+  const remaining = minimumMs - (Date.now() - startedAt);
+  if (remaining > 0) {
+    await new Promise((resolve) => window.setTimeout(resolve, remaining));
+  }
+}
+
 export function RunsPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [artifacts, setArtifacts] = useState<ArtifactsResponse | null>(null);
@@ -49,6 +76,7 @@ export function RunsPage() {
   const [advancedStudiosOpen, setAdvancedStudiosOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
+  const [providerFeedback, setProviderFeedback] = useState<Record<string, string | null>>({});
   const livePulse = useLivePulse();
 
   async function loadRuns() {
@@ -60,6 +88,11 @@ export function RunsPage() {
     setProviders(providersPayload);
     setArtifacts(artifactsPayload);
     setActivity(activityPayload);
+  }
+
+  async function refreshProvidersOnly() {
+    const providersPayload = await fetchProviders();
+    setProviders(providersPayload);
   }
 
   useEffect(() => {
@@ -98,8 +131,28 @@ export function RunsPage() {
       await action();
       await loadRuns();
       setNotice(message);
-    } catch {
-      setNotice(fallback);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : fallback);
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleRunPreflight(provider: ProviderStatusItem) {
+    const actionKey = `preflight:${provider.id}`;
+    const startedAt = Date.now();
+    setPendingActionKey(actionKey);
+    setProviderFeedback((current) => ({ ...current, [provider.id]: null }));
+    try {
+      await runProviderPreflight(provider.id);
+      await waitForMinimumFeedback(startedAt);
+      await refreshProvidersOnly();
+    } catch (error) {
+      await waitForMinimumFeedback(startedAt);
+      setProviderFeedback((current) => ({
+        ...current,
+        [provider.id]: error instanceof Error ? error.message : `Provider preflight failed for ${provider.name}.`,
+      }));
     } finally {
       setPendingActionKey(null);
     }
@@ -163,14 +216,42 @@ export function RunsPage() {
           <div className="card-grid">
             {providerItems.map((provider) => (
               <div key={provider.id} className={`mini-card mini-card--${providerStatusTone(provider)}`}>
+                {(() => {
+                  const readiness = preflightBadge(provider);
+                  return (
+                    <div className="provider-readiness">
+                      <span className={`provider-readiness__badge provider-readiness__badge--${readiness.tone}`}>
+                        <span className={`status-dot status-dot--${readiness.tone}`} />
+                        {readiness.label}
+                      </span>
+                      {provider.latest_preflight?.checked_at ? (
+                        <span className="provider-readiness__meta">{formatTime(provider.latest_preflight.checked_at)}</span>
+                      ) : null}
+                    </div>
+                  );
+                })()}
                 <div className="mini-card__header">
                   <strong>{provider.name}</strong>
                   <span className="status-pill">{provider.execution_mode}</span>
                 </div>
                 <p>{provider.notes}</p>
-                <p>
-                  Latest preflight: {provider.latest_preflight?.summary ?? "No preflight recorded yet."}
-                </p>
+                <div className={`provider-preflight-trace ${provider.latest_preflight ? "" : "provider-preflight-trace--empty"}`}>
+                  <span className="provider-preflight-trace__label">Last check</span>
+                  {provider.latest_preflight ? (
+                    <>
+                      <strong>{formatTime(provider.latest_preflight.checked_at)}</strong>
+                      <p>{provider.latest_preflight.summary}</p>
+                    </>
+                  ) : (
+                    <p>No preflight recorded yet.</p>
+                  )}
+                </div>
+                {pendingActionKey === `preflight:${provider.id}` ? (
+                  <p className="provider-preflight-feedback">Checking runtime readiness…</p>
+                ) : null}
+                {!pendingActionKey && providerFeedback[provider.id] ? (
+                  <p className="provider-preflight-feedback provider-preflight-feedback--error">{providerFeedback[provider.id]}</p>
+                ) : null}
                 <p>
                   Recent failure: {failureLabel(provider)}
                   {provider.run_summary?.latest_failure_at
@@ -180,18 +261,15 @@ export function RunsPage() {
                 <div className="surface-card__actions">
                   <button
                     type="button"
-                    className="hero-button hero-button--compact"
+                    className={`hero-button hero-button--compact ${provider.latest_preflight ? "hero-button--ghost" : ""}`}
                     disabled={pendingActionKey === `preflight:${provider.id}`}
-                    onClick={() =>
-                      void runAction(
-                        `preflight:${provider.id}`,
-                        `Preflight finished for ${provider.name}.`,
-                        () => runProviderPreflight(provider.id),
-                        `Provider preflight failed for ${provider.name}.`
-                      )
-                    }
+                    onClick={() => void handleRunPreflight(provider)}
                   >
-                    {pendingActionKey === `preflight:${provider.id}` ? "Checking..." : "Run preflight"}
+                    {pendingActionKey === `preflight:${provider.id}`
+                      ? "Checking..."
+                      : provider.latest_preflight
+                        ? "Re-check"
+                        : "Run preflight"}
                   </button>
                 </div>
               </div>

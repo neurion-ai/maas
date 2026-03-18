@@ -66,6 +66,43 @@ Current stacked development chain above `main`:
 - `#114` exists on `codex/ux-product-redesign`
 - `#115` exists on `codex/ux-product-redesign`
 - `#116` exists on `codex/ux-product-redesign`
+- `#117` exists on `codex/linear-vibekanban-cockpit`
+- `#118` exists on `codex/linear-vibekanban-cockpit`
+- `#119` exists on `codex/linear-vibekanban-cockpit`
+- `#120` exists on `codex/linear-vibekanban-cockpit`
+- `#121` exists on `codex/linear-vibekanban-cockpit`
+- `#122` exists on `codex/linear-vibekanban-cockpit`
+- `#123` exists on `codex/linear-vibekanban-cockpit`
+- `#124` exists on `codex/linear-vibekanban-cockpit`
+- `#125` exists on `codex/linear-vibekanban-cockpit`
+- `#126` exists on `codex/linear-vibekanban-cockpit`
+- `#127` exists on `codex/linear-vibekanban-cockpit`
+- `#128` exists on `codex/linear-vibekanban-cockpit`
+- `#129` exists on `codex/linear-vibekanban-cockpit`
+- `#130` exists on `codex/linear-vibekanban-cockpit`
+- `#131` exists on `codex/linear-vibekanban-cockpit`
+- `#132` exists on `codex/linear-vibekanban-cockpit`
+- `#133` exists on `codex/linear-vibekanban-cockpit`
+- `#134` exists on `codex/linear-vibekanban-cockpit`
+- `#135` exists on `codex/linear-vibekanban-cockpit`
+- `#136` exists on `codex/linear-vibekanban-cockpit`
+- `#137` exists on `codex/linear-vibekanban-cockpit`
+- `#138` exists on `codex/linear-vibekanban-cockpit`
+- `#139` exists on `codex/linear-vibekanban-cockpit`
+- `#140` exists on `codex/linear-vibekanban-cockpit`
+- `#141` exists on `codex/linear-vibekanban-cockpit`
+- `#142` exists on `codex/linear-vibekanban-cockpit`
+- `#143` exists on `codex/linear-vibekanban-cockpit`
+- `#144` exists on `codex/linear-vibekanban-cockpit`
+- `#145` exists on `codex/linear-vibekanban-cockpit`
+- `#146` exists on `codex/linear-vibekanban-cockpit`
+- `#147` exists on `codex/linear-vibekanban-cockpit`
+- `#148` exists on `codex/linear-vibekanban-cockpit`
+- `#149` exists on `codex/linear-vibekanban-cockpit`
+- `#150` exists on `codex/linear-vibekanban-cockpit`
+- `#151` exists on `codex/linear-vibekanban-cockpit`
+
+The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 
 ### Current project state
 
@@ -146,6 +183,41 @@ Current stacked development chain above `main`:
 - [x] `#114` Portfolio and project-management UX redesign
 - [x] `#115` Command palette, contextual actions, empty states, and inline guidance
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass
+- [x] `#117` Shell density reset
+- [x] `#118` Default control room layout
+- [x] `#119` Compact kanban redesign
+- [x] `#120` Agent roster and interaction view
+- [x] `#121` Curated live ticker
+- [x] `#122` Goal/subgoal/task relationship explorer
+- [x] `#123` Incident rail and playbooks
+- [x] `#124` Evidence and verification drawer
+- [x] `#125` Project status and portfolio command bar
+- [x] `#126` Remove legacy hero UX and final dense visual pass
+- [x] `#127` Seraph-style cockpit shell pivot
+- [x] `#128` Panel workspace and windowed composition
+- [x] `#129` Cockpit command bar and telemetry strip
+- [x] `#130` Dense agent rail
+- [x] `#131` Center kanban workspace rewrite
+- [x] `#132` Right ops rail for incidents and ticker
+- [x] `#133` Inspector and evidence workspace
+- [x] `#134` Utility drawers for projects, providers, and settings
+- [x] `#135` Cockpit typography and theme system
+- [x] `#136` Remove legacy page surfaces and finish the cockpit interaction model
+- [x] `#137` Guided onboarding takeover
+- [x] `#138` Compact issue cards and inspector-first steering
+- [x] `#139` Board-first workflow defaults
+- [x] `#140` Import and create drawers
+- [x] `#141` Project next-step workflow
+- [x] `#142` Curated live-ops priorities
+- [x] `#143` Linear/Vibekanban-inspired board polish
+- [x] `#144` Utility and settings demotion
+- [x] `#145` Dense typography and dark-theme cleanup
+- [x] `#146` Remove remaining inline control clutter
+- [x] `#147` Distinct Cockpit and Board roles
+- [x] `#148` Guided brownfield review/start flow
+- [x] `#149` Unified Run action and advanced control demotion
+- [x] `#150` Intent-first project setup flow
+- [x] `#151` Inspector-visible board interaction model
 
 ### Current stacked branch progress
 
@@ -185,8 +257,18 @@ Current stacked development chain above `main`:
 - [x] `#114` is implemented on `codex/ux-product-redesign`
 - [x] `#115` is implemented on `codex/ux-product-redesign`
 - [x] `#116` is implemented on `codex/ux-product-redesign`
+- [x] `#117` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#118` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#119` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#120` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#121` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#122` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#123` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#124` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#125` is implemented on `codex/linear-vibekanban-cockpit`
+- [x] `#126` is implemented on `codex/linear-vibekanban-cockpit`
 
-The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#126` sequence is fully implemented on the stacked branch chain above `main`.
 
 ### UX and product-design sequence now implemented on the stacked branch
 
@@ -210,6 +292,49 @@ The current numbered `#81-#116` sequence is fully implemented on the stacked bra
   make advanced functionality discoverable without overwhelming the default UI.
 - [x] `#116` Accessibility, responsiveness, and visual-polish pass:
   finish the redesign with mobile/tablet behavior, keyboard-first interactions, stronger hierarchy, and usability QA.
+
+### Dense operator control-room sequence now implemented on the stacked branch
+
+- [x] `#117` Shell density reset:
+  remove the oversized landing-page shell and replace it with a compact top strip, tighter navigation, and smaller controls.
+- [x] `#118` Default control room layout:
+  make the landing screen a dense three-pane operator cockpit with agents on the left, kanban in the center, and ops context on the right.
+- [x] `#119` Compact kanban redesign:
+  replace oversized cards with compact execution cards that expose assignee, goal, evidence signals, and failure pressure at a glance.
+- [x] `#120` Agent roster and interaction view:
+  turn agents into first-class visible actors with status, current work, heartbeat, and quick intervention hooks.
+- [x] `#121` Curated live ticker:
+  add a dense meaningful-event feed so the system feels alive without turning into raw telemetry spam.
+- [x] `#122` Goal/subgoal/task relationship explorer:
+  expose selected-task goal lineage, sibling work, repo-plan matches, and recent task-specific history in one inspector.
+- [x] `#123` Incident rail and playbooks:
+  surface actionable incidents directly in the right rail instead of forcing operators to hunt through separate admin pages.
+- [x] `#124` Evidence and verification drawer:
+  put verification state, git diff evidence, artifacts, and task history next to the selected task.
+- [x] `#125` Project status and portfolio command bar:
+  move project selection, health, alert load, and transport/runtime status into a compact top command strip.
+- [x] `#126` Remove legacy hero UX and final dense visual pass:
+  shrink typography, card heights, and button scale across the control room so the product reads like an operations cockpit instead of a landing page.
+- [ ] `#127` Seraph-style cockpit shell pivot:
+  replace the page-and-card shell with a fixed-height cockpit shell, compact top bar, internal scroll regions, and explicit workspace modes such as ops, focus, and review.
+- [ ] `#128` Panel workspace and windowed composition:
+  reorganize the default experience into persistent left-rail, center-workspace, and right-rail panels with panel-scoped overflow instead of stacked sections.
+- [ ] `#129` Cockpit command bar and telemetry strip:
+  collapse navigation, project switching, live transport state, run controls, and quick commands into one dense operator bar.
+- [ ] `#130` Dense agent rail:
+  rebuild agent visibility as a compact live rail with status, current work, recent meaningful events, and fast intervention hooks.
+- [ ] `#131` Center kanban workspace rewrite:
+  make the board the primary workspace with denser cards, fewer empty lanes, scoped backlog access, and better ops/focus/review modes.
+- [ ] `#132` Right ops rail for incidents and ticker:
+  merge the curated feed, approvals, alerts, and incident shortcuts into one compact ops rail instead of separate dashboard blocks.
+- [ ] `#133` Inspector and evidence workspace:
+  turn selected-task context into a true inspector with goal path, repo scope, verification, git diff, artifacts, and history in one persistent panel.
+- [ ] `#134` Utility drawers for projects, providers, and settings:
+  move lifecycle forms, provider settings, quotas, and policy editors out of the primary workspace into drawers and advanced utility windows.
+- [ ] `#135` Cockpit typography and theme system:
+  replace the current generic card styling with a denser mono-forward cockpit system inspired by Seraph’s shell without copying its game flavor.
+- [ ] `#136` Remove legacy page surfaces and finish the cockpit interaction model:
+  delete or demote the old dashboard/page paradigm so MAAS reads as one coherent cockpit instead of multiple competing UI systems.
 
 ### Extended numbered roadmap
 

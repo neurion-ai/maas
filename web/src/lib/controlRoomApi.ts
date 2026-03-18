@@ -7,6 +7,7 @@ import type {
   ArtifactDetail,
   ArtifactPurgeResponse,
   ArtifactsResponse,
+  DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
   FailureOperatorAction,
@@ -625,6 +626,11 @@ export async function createProject(payload: ProjectCreateRequest) {
   return response as ProjectCreateResponse;
 }
 
+export async function pickLocalDirectory() {
+  const response = await postJson<DirectoryPickerResponse>("/api/system/actions/pick-directory", {});
+  return response as DirectoryPickerResponse;
+}
+
 export async function archiveProject(projectId: string) {
   const response = await postJson<ProjectActionResponse>(`/api/projects/${projectId}/actions/archive`, {
     actor_id: "agent_allocator"
@@ -1097,7 +1103,16 @@ async function postJson<T = any>(path: string, body: object): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`Unexpected status: ${response.status}`);
+    let detail = `Unexpected status: ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (typeof payload?.detail === "string" && payload.detail.trim()) {
+        detail = payload.detail;
+      }
+    } catch {
+      // Ignore non-JSON error bodies and fall back to status text.
+    }
+    throw new Error(detail);
   }
 
   if (response.status === 204) {

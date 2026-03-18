@@ -189,19 +189,6 @@ lint = "imported:lint"
                     "mode": "greenfield",
                 },
             ).json()["project"]
-            connection = connect(project_paths(tmpdir))
-            try:
-                connection.execute(
-                    """
-                    UPDATE sessions
-                    SET status = 'completed', ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-                    WHERE project_id = ? AND status = 'active'
-                    """,
-                    (second_project["project_id"],),
-                )
-                connection.commit()
-            finally:
-                connection.close()
 
             archive_response = client.post(
                 "/api/projects/{0}/actions/archive".format(second_project["project_id"]),
@@ -236,3 +223,80 @@ lint = "imported:lint"
 
             self.assertEqual(response.status_code, 400)
             self.assertIn("last active project", response.json()["detail"])
+
+    def test_created_project_accepts_stable_operator_aliases_for_board_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            second_project_id = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Second Project",
+                    "description": "secondary",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                },
+            ).json()["project"]["project_id"]
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (second_project_id,),
+                ).fetchone()["task_id"]
+            finally:
+                connection.close()
+
+            response = client.post(
+                "/api/tasks/{0}/actions/set-retry-limit".format(task_id),
+                json={"actor_id": "agent_allocator", "auto_retry_limit": 2},
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["auto_retry_limit"], 2)
+
+    def test_default_recovery_policy_scope_skips_archived_projects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            second_project_id = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Second Project",
+                    "description": "secondary",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                },
+            ).json()["project"]["project_id"]
+
+            first_project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+            connection = connect(project_paths(tmpdir))
+            try:
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET status = 'completed', ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE project_id = ? AND status = 'active'
+                    """,
+                    (first_project_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            archive_response = client.post(
+                "/api/projects/{0}/actions/archive".format(first_project_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(archive_response.status_code, 200)
+
+            recovery_payload = client.get("/api/recovery-policy").json()
+            self.assertEqual(recovery_payload["project_id"], second_project_id)

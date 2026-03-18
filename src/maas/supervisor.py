@@ -12,6 +12,7 @@ from maas.services.failure_memory import (
     record_failure,
     resolve_repeated_failure_alerts,
 )
+from maas.services.projects import resolve_project_id
 from maas.services.recovery_policy import (
     fetch_auto_recovery_candidate_tasks,
     fetch_project_recovery_policy,
@@ -391,16 +392,16 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
 
 
 def _auto_recover_blocked_tasks(connection):
-    project = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-    if project is None:
+    project_id = resolve_project_id(connection)
+    if project_id is None:
         return []
 
-    policy = fetch_project_recovery_policy(connection, project["project_id"])
+    policy = fetch_project_recovery_policy(connection, project_id)
     if not policy["auto_recover_blocked_tasks"]:
         return []
 
     findings = []
-    for candidate in fetch_auto_recovery_candidate_tasks(connection, project_id=project["project_id"], limit=None):
+    for candidate in fetch_auto_recovery_candidate_tasks(connection, project_id=project_id, limit=None):
         task = connection.execute(
             """
             SELECT task_id, project_id, assigned_agent_id, status, review_state

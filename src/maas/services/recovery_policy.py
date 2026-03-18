@@ -11,6 +11,7 @@ from maas.services.alerts import (
 )
 from maas.services.dead_letter import fetch_dead_letter_queue
 from maas.services.failure_memory import fetch_repeated_failure_tasks
+from maas.services.projects import resolve_project_id
 from maas.services.scheduler import adaptive_replan_feedback
 from maas.services.security import ensure_board_action_allowed
 
@@ -104,13 +105,10 @@ def _coerce_int_setting(field_name, value, minimum):
 
 
 def _resolve_project_id(connection, project_id=None):
-    if project_id is None:
-        row = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()
-    else:
-        row = connection.execute("SELECT project_id FROM projects WHERE project_id = ?", (project_id,)).fetchone()
-    if row is None:
+    resolved = resolve_project_id(connection, project_id)
+    if resolved is None:
         raise ValueError("Project not found")
-    return row["project_id"]
+    return resolved
 
 
 def _retry_delay_preview(base_seconds, attempt_limit, project_policy):

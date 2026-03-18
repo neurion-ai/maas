@@ -201,6 +201,7 @@ def create_project(
         mode=detected_mode,
         discovery=discovery,
         source_root=resolved_source_root,
+        seed_runtime_demo=False,
     )
     _write_project_metadata(project_paths, project_id, config, detected_mode, discovery)
     _activity(

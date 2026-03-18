@@ -766,7 +766,15 @@ def build_brownfield_task_specs(discovery):
     return task_specs
 
 
-def seed_project(connection, config, mode="greenfield", discovery=None, source_root=None, stable_agent_ids=False):
+def seed_project(
+    connection,
+    config,
+    mode="greenfield",
+    discovery=None,
+    source_root=None,
+    stable_agent_ids=False,
+    seed_runtime_demo=True,
+):
     project_id = generate_id("proj")
     project = config["project"]
     project_source_root = source_root or project.get("source_root") or ""
@@ -894,7 +902,7 @@ def seed_project(connection, config, mode="greenfield", discovery=None, source_r
                 granted_by="system_bootstrap",
             )
 
-    if mode == "greenfield":
+    if mode == "greenfield" and seed_runtime_demo:
         connection.execute(
             """
             INSERT INTO task_dependencies (dependency_id, project_id, source_task_id, target_task_id, dependency_type)
@@ -928,6 +936,15 @@ def seed_project(connection, config, mode="greenfield", discovery=None, source_r
             """,
             (generate_id("act"), project_id, agent_ids["agent_builder"], task_ids[2]),
         )
+        connection.execute(
+            """
+            INSERT INTO alerts (
+                alert_id, project_id, severity, title, description, status
+            ) VALUES (?, ?, 'warning', 'Broader provider integrations pending', 'Simulated adapters and explicit local CLI modes are available, but broader provider coverage is still pending.', 'open')
+            """,
+            (generate_id("alert"), project_id),
+        )
+    elif mode == "greenfield":
         connection.execute(
             """
             INSERT INTO alerts (
@@ -997,6 +1014,7 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
         discovery=discovery,
         source_root=paths.root,
         stable_agent_ids=True,
+        seed_runtime_demo=True,
     )
     connection.close()
     return {"paths": paths, "config": config, "project_id": project_id, "mode": resolved_mode, "discovery": discovery}

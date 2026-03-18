@@ -11,13 +11,16 @@ from maas.services.bootstrap import bootstrap_project
 from maas.ids import generate_id
 from maas.services.alerts import fetch_alerts
 from maas.services.lifecycle import end_session, heartbeat, produce_artifact
+from maas.services.projects import resolve_project_id
 from maas.supervisor import run_supervisor_once
 
 
 class SupervisorApiTest(unittest.TestCase):
-    def _update_recovery_config(self, connection, **updates):
+    def _update_recovery_config(self, connection, project_id=None, **updates):
+        resolved_project_id = project_id or resolve_project_id(connection)
         project = connection.execute(
-            "SELECT project_id, config_json FROM projects LIMIT 1"
+            "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+            (resolved_project_id,),
         ).fetchone()
         config = json.loads(project["config_json"] or "{}")
         recovery = {
@@ -39,17 +42,19 @@ class SupervisorApiTest(unittest.TestCase):
             (json.dumps(config), project["project_id"]),
         )
 
-    def _enable_timeout_auto_retry(self, connection, max_retries=1, cooldown_seconds=60):
+    def _enable_timeout_auto_retry(self, connection, max_retries=1, cooldown_seconds=60, project_id=None):
         self._update_recovery_config(
             connection,
+            project_id=project_id,
             auto_retry_timeout_sessions=True,
             max_timed_out_retries=max_retries,
             timed_out_retry_cooldown_seconds=cooldown_seconds,
         )
 
-    def _enable_blocked_task_auto_recovery(self, connection, cooldown_seconds=30):
+    def _enable_blocked_task_auto_recovery(self, connection, cooldown_seconds=30, project_id=None):
         self._update_recovery_config(
             connection,
+            project_id=project_id,
             auto_retry_timeout_sessions=False,
             auto_recover_blocked_tasks=True,
             recover_and_requeue_cooldown_seconds=cooldown_seconds,
@@ -1012,6 +1017,93 @@ class SupervisorApiTest(unittest.TestCase):
 
             self.assertIsNone(repeated_alert)
             self.assertIsNone(supervisor_result["stale_sessions"][0]["repeated_failure_alert"])
+
+    def test_supervisor_default_project_scope_skips_archived_projects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Project Scope Test",
+                description="Supervisor project scope test",
+                project_type="custom",
+            )
+            client = TestClient(create_app(tmpdir))
+            second_project_id = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Second Project",
+                    "description": "secondary",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                },
+            ).json()["project"]["project_id"]
+
+            connection = connect(result["paths"])
+            try:
+                first_project_id = resolve_project_id(connection)
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET status = 'completed', ended_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE project_id = ? AND status = 'active'
+                    """,
+                    (first_project_id,),
+                )
+                first_task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ? AND title = 'Define project workspace contracts'
+                    """,
+                    (first_project_id,),
+                ).fetchone()["task_id"]
+                second_task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ? AND title = 'Define project workspace contracts'
+                    """,
+                    (second_project_id,),
+                ).fetchone()["task_id"]
+                self._enable_blocked_task_auto_recovery(connection, cooldown_seconds=0, project_id=first_project_id)
+                self._enable_blocked_task_auto_recovery(connection, cooldown_seconds=0, project_id=second_project_id)
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'session_failed'
+                    WHERE task_id IN (?, ?)
+                    """,
+                    (first_task_id, second_task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            archive_response = client.post(
+                "/api/projects/{0}/actions/archive".format(first_project_id),
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(archive_response.status_code, 200)
+
+            connection = connect(result["paths"])
+            try:
+                supervisor_result = run_supervisor_once(connection, allocate_limit=0)
+                first_task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (first_task_id,),
+                ).fetchone()
+                second_task = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (second_task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(supervisor_result["auto_recovered_tasks"]), 1)
+            self.assertEqual(supervisor_result["auto_recovered_tasks"][0]["task_id"], second_task_id)
+            self.assertEqual(first_task["status"], "blocked")
+            self.assertEqual(first_task["review_state"], "session_failed")
+            self.assertIn(second_task["status"], ("planned", "ready"))
 
 
 if __name__ == "__main__":

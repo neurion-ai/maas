@@ -245,7 +245,7 @@ function buildBoardQuery(filters: BoardFiltersInput) {
   return query.toString();
 }
 
-async function postJson(path: string, body: Record<string, string | number | string[] | null>) {
+async function postJson<T = any>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -257,7 +257,7 @@ async function postJson(path: string, body: Record<string, string | number | str
   if (!response.ok) {
     throw new Error(`Unexpected status: ${response.status}`);
   }
-  return response.json();
+  return (await response.json()) as T;
 }
 
 export async function fetchBoard(filters: BoardFiltersInput = {}, signal?: AbortSignal): Promise<BoardResponse> {
@@ -286,7 +286,7 @@ export async function reviewTask(taskId: string, decision: "approve" | "reject")
 }
 
 export async function setAgentState(agentId: string, action: "pause" | "resume") {
-  await postJson(`/api/agents/${agentId}/actions/${action}`, {
+  return postJson(`/api/agents/${agentId}/actions/${action}`, {
     actor_id: DEFAULT_ACTOR_ID
   });
 }
@@ -299,14 +299,14 @@ export async function reprioritizeTask(taskId: string, priority: number) {
 }
 
 export async function reassignTask(taskId: string, agentId: string) {
-  await postJson(`/api/tasks/${taskId}/actions/reassign`, {
+  return postJson(`/api/tasks/${taskId}/actions/reassign`, {
     actor_id: DEFAULT_ACTOR_ID,
     agent_id: agentId
   });
 }
 
 export async function haltTask(taskId: string) {
-  await postJson(`/api/tasks/${taskId}/actions/halt`, {
+  return postJson(`/api/tasks/${taskId}/actions/halt`, {
     actor_id: DEFAULT_ACTOR_ID
   });
 }

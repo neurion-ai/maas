@@ -1087,10 +1087,7 @@ export async function resetTaskCircuitBreaker(taskId: string) {
   return payload;
 }
 
-type JsonPrimitive = string | number | boolean | null;
-type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
-
-async function postJson<T>(path: string, body: Record<string, JsonValue | undefined>): Promise<T | null> {
+async function postJson<T = any>(path: string, body: object): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
     headers: {
@@ -1104,7 +1101,7 @@ async function postJson<T>(path: string, body: Record<string, JsonValue | undefi
   }
 
   if (response.status === 204) {
-    return null;
+    return null as T;
   }
 
   return (await response.json()) as T;

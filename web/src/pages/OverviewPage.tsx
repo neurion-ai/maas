@@ -490,7 +490,7 @@ export function OverviewPage() {
                           >
                             {pendingOnboardingReviewUpdate === `workflow:${item.label}`
                               ? "Saving..."
-                              : overview.onboarding.review_overrides?.accepted_workflow_labels.includes(item.label)
+                              : overview.onboarding?.review_overrides?.accepted_workflow_labels.includes(item.label)
                                 ? "Exclude"
                                 : "Include"}
                           </button>
@@ -535,7 +535,7 @@ export function OverviewPage() {
                           >
                             {pendingOnboardingReviewUpdate === `runbook:${item.label}`
                               ? "Saving..."
-                              : overview.onboarding.review_overrides?.accepted_runbook_labels.includes(item.label)
+                              : overview.onboarding?.review_overrides?.accepted_runbook_labels.includes(item.label)
                                 ? "Exclude"
                                 : "Include"}
                           </button>
@@ -594,7 +594,7 @@ export function OverviewPage() {
                               >
                                 {pendingOnboardingReviewUpdate === `ignore:${item.path}`
                                   ? "Saving..."
-                                  : overview.onboarding.review_overrides?.ignored_paths.includes(item.path)
+                                  : overview.onboarding?.review_overrides?.ignored_paths.includes(item.path)
                                     ? "Unignore"
                                     : "Ignore"}
                               </button>

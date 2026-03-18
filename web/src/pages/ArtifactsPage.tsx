@@ -138,7 +138,7 @@ export function ArtifactsPage() {
     async function loadDetail() {
       setIsDetailRefreshing(true);
       try {
-        const payload = await fetchArtifactDetail(selectedArtifactId, controller.signal);
+        const payload = await fetchArtifactDetail(selectedArtifactId!, controller.signal);
         setSelectedArtifact(payload);
       } catch (error) {
         if (!(error instanceof Error && error.name === "AbortError")) {
@@ -170,7 +170,7 @@ export function ArtifactsPage() {
     async function loadComparison() {
       setIsComparisonRefreshing(true);
       try {
-        const payload = await fetchArtifactComparison(selectedArtifactId, selectedCompareArtifactId, controller.signal);
+        const payload = await fetchArtifactComparison(selectedArtifactId!, selectedCompareArtifactId!, controller.signal);
         setArtifactComparison(payload);
       } catch (error) {
         if (!(error instanceof Error && error.name === "AbortError")) {

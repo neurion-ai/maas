@@ -1,91 +1,102 @@
-import { type FormEvent, useEffect, useState } from "react";
-import { ActivityPage } from "./pages/ActivityPage";
-import { AgentRosterPage } from "./pages/AgentRosterPage";
-import { AlertsPage } from "./pages/AlertsPage";
-import { ArtifactsPage } from "./pages/ArtifactsPage";
-import { BoardPage } from "./pages/BoardPage";
-import { EscalationsPage } from "./pages/EscalationsPage";
-import { FailuresPage } from "./pages/FailuresPage";
-import { GoalTreePage } from "./pages/GoalTreePage";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { CommandPalette, type CommandPaletteAction } from "./components/CommandPalette";
+import {
+  archiveProject,
+  createProject,
+  fetchProjects,
+  restoreProject,
+  runOrchestratorPass,
+  runSupervisorPass
+} from "./lib/controlRoomApi";
+import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId } from "./lib/projectScope";
 import { LivePulseProvider, useLiveStatus } from "./lib/useLivePulse";
-import { archiveProject, createProject, fetchProjects, restoreProject } from "./lib/controlRoomApi";
-import { getSelectedProjectId, setSelectedProjectId } from "./lib/projectScope";
-import { OverviewPage } from "./pages/OverviewPage";
-import { PortfolioPage } from "./pages/PortfolioPage";
-import { ProvidersPage } from "./pages/ProvidersPage";
-import { RecoveryPage } from "./pages/RecoveryPage";
-import { TimelinePage } from "./pages/TimelinePage";
+import { HomePage } from "./pages/HomePage";
+import { IncidentsPage } from "./pages/IncidentsPage";
+import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
+import { RunsPage } from "./pages/RunsPage";
+import { WorkPage } from "./pages/WorkPage";
 import type { ProjectSummary } from "./types";
 
-type View =
-  | "portfolio"
-  | "overview"
-  | "board"
-  | "goals"
-  | "agents"
-  | "activity"
-  | "artifacts"
-  | "providers"
-  | "recovery"
-  | "timeline"
-  | "failures"
-  | "alerts"
-  | "escalations";
+type View = "home" | "work" | "runs" | "incidents" | "projects";
+type ThemeMode = "light" | "dark";
 
-const VIEWS: { id: View; label: string }[] = [
-  { id: "portfolio", label: "Portfolio" },
-  { id: "overview", label: "Overview" },
-  { id: "board", label: "Board" },
-  { id: "goals", label: "Goal Tree" },
-  { id: "agents", label: "Agent Roster" },
-  { id: "activity", label: "Activity" },
-  { id: "artifacts", label: "Artifacts" },
-  { id: "providers", label: "Providers" },
-  { id: "recovery", label: "Recovery" },
-  { id: "timeline", label: "Timeline" },
-  { id: "failures", label: "Failures" },
-  { id: "alerts", label: "Alerts" },
-  { id: "escalations", label: "Escalations" }
+const THEME_STORAGE_KEY = "maas:theme";
+
+const VIEWS: Array<{ id: View; label: string; summary: string }> = [
+  {
+    id: "home",
+    label: "Home",
+    summary: "Recommended next actions, current project state, and first-run guidance."
+  },
+  {
+    id: "work",
+    label: "Work",
+    summary: "Board, plan, task detail, and execution steering."
+  },
+  {
+    id: "runs",
+    label: "Runs",
+    summary: "Providers, workers, queueing, agents, and outputs."
+  },
+  {
+    id: "incidents",
+    label: "Incidents",
+    summary: "Failures, alerts, recovery, and timeline replay."
+  },
+  {
+    id: "projects",
+    label: "Projects",
+    summary: "Portfolio health, project lifecycle, and cross-project supervision."
+  }
 ];
 
-function getInitialView(): View {
-  const hash = window.location.hash.replace("#", "");
-  return (VIEWS.find((view) => view.id === hash)?.id ?? "overview") as View;
-}
-
-const DEFAULT_PROJECT_FORM = {
+const DEFAULT_PROJECT_FORM: ProjectFormState = {
   name: "",
   description: "",
   projectType: "custom",
-  mode: "auto" as const,
+  mode: "auto",
   sourceRoot: ""
 };
 
+function getInitialView(): View {
+  const hash = window.location.hash.replace("#", "");
+  return (VIEWS.find((view) => view.id === hash)?.id ?? "home") as View;
+}
+
+function getInitialTheme(): ThemeMode {
+  const savedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") {
+    return savedTheme;
+  }
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function AppShell() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [selectedProjectId, setSelectedProjectIdState] = useState<string | null>(getSelectedProjectId);
-  const [projectPanelOpen, setProjectPanelOpen] = useState(false);
-  const [projectForm, setProjectForm] = useState(DEFAULT_PROJECT_FORM);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(getSelectedProjectId);
+  const [projectForm, setProjectForm] = useState<ProjectFormState>(DEFAULT_PROJECT_FORM);
   const [projectNotice, setProjectNotice] = useState<string | null>(null);
   const [projectSubmitting, setProjectSubmitting] = useState(false);
   const { connected, transport } = useLiveStatus();
 
   const activeProjects = projects.filter((project) => project.state !== "archived");
-  const archivedProjects = projects.filter((project) => project.state === "archived");
+  const activeProject =
+    activeProjects.find((project) => project.project_id === selectedProjectId) ?? activeProjects[0] ?? null;
 
   async function loadProjects(preferredProjectId?: string | null) {
     const payload = await fetchProjects();
     setProjects(payload.projects);
     const existingSelection = preferredProjectId ?? getSelectedProjectId();
     const nextSelection =
-      payload.projects.find((project) => project.project_id === existingSelection && project.state !== "archived")?.project_id ??
+      payload.projects.find((project) => project.project_id === existingSelection && project.state !== "archived")
+        ?.project_id ??
       payload.projects.find((project) => project.state !== "archived")?.project_id ??
       null;
-    if (nextSelection !== getSelectedProjectId()) {
-      setSelectedProjectId(nextSelection);
-    }
-    setSelectedProjectIdState(nextSelection);
+    persistSelectedProjectId(nextSelection);
+    setSelectedProjectId(nextSelection);
     return payload.projects;
   }
 
@@ -100,13 +111,12 @@ function AppShell() {
       setProjects(payload.projects);
       const existingSelection = getSelectedProjectId();
       const nextSelection =
-        payload.projects.find((project) => project.project_id === existingSelection && project.state !== "archived")?.project_id ??
+        payload.projects.find((project) => project.project_id === existingSelection && project.state !== "archived")
+          ?.project_id ??
         payload.projects.find((project) => project.state !== "archived")?.project_id ??
         null;
-      if (nextSelection !== existingSelection) {
-        setSelectedProjectId(nextSelection);
-      }
-      setSelectedProjectIdState(nextSelection);
+      persistSelectedProjectId(nextSelection);
+      setSelectedProjectId(nextSelection);
     }
 
     void loadInitialProjects();
@@ -131,15 +141,34 @@ function AppShell() {
     };
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandPaletteOpen((current) => !current);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   const liveTransportLabel =
     transport === "websocket"
       ? connected
-        ? "Live via WebSocket"
-        : "Connecting WebSocket"
+        ? "Live transport: WebSocket"
+        : "Connecting via WebSocket"
       : transport === "sse"
         ? connected
-          ? "Live via SSE"
-          : "Connecting SSE"
+          ? "Live transport: SSE"
+          : "Connecting via SSE"
         : "Polling fallback";
 
   async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
@@ -157,9 +186,7 @@ function AppShell() {
       });
       await loadProjects(payload.project.project_id);
       setProjectForm(DEFAULT_PROJECT_FORM);
-      setProjectNotice(
-        `Created ${payload.project.name} in ${payload.mode} mode from ${payload.metadata.source_root}.`
-      );
+      setProjectNotice(`Created ${payload.project.name} in ${payload.mode} mode from ${payload.metadata.source_root}.`);
     } catch (error) {
       setProjectNotice(error instanceof Error ? error.message : "Could not create project.");
     } finally {
@@ -195,28 +222,103 @@ function AppShell() {
     }
   }
 
+  const commandActions = useMemo<CommandPaletteAction[]>(() => {
+    const navigationActions: CommandPaletteAction[] = VIEWS.map((view) => ({
+      id: `view:${view.id}`,
+      label: `Go to ${view.label}`,
+      description: view.summary,
+      keywords: [view.id, view.label.toLowerCase()],
+      run: () => setActiveView(view.id)
+    }));
+
+    const projectActions: CommandPaletteAction[] = activeProjects.map((project) => ({
+      id: `project:${project.project_id}`,
+      label: `Switch to ${project.name}`,
+      description: project.description || `${project.task_count} tasks · ${project.open_alert_count} open alerts`,
+      keywords: [project.name.toLowerCase(), project.project_type.toLowerCase(), project.onboarding_mode ?? ""],
+      run: () => {
+        persistSelectedProjectId(project.project_id);
+        setSelectedProjectId(project.project_id);
+      }
+    }));
+
+    return [
+      ...navigationActions,
+      {
+        id: "command:supervisor",
+        label: "Run supervisor pass",
+        description: "Refresh readiness and allocate the next set of tasks.",
+        keywords: ["allocate", "scheduler", "supervisor"],
+        run: () => {
+          void runSupervisorPass(3);
+        }
+      },
+      {
+        id: "command:orchestrator",
+        label: "Run orchestrator pass",
+        description: "Process project-aware orchestration, queued jobs, and assignment flow.",
+        keywords: ["orchestrator", "jobs", "queue"],
+        run: () => {
+          void runOrchestratorPass(4, 2);
+        }
+      },
+      {
+        id: "command:theme",
+        label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+        description: "Toggle the MAAS theme.",
+        keywords: ["theme", "dark", "light"],
+        run: () => setTheme((current) => (current === "dark" ? "light" : "dark"))
+      },
+      ...projectActions
+    ];
+  }, [activeProjects, theme]);
+
   return (
-    <div className="app-shell">
-      <header className="app-header">
-        <div className="app-header__top">
-          <div>
-            <span className="eyebrow">MAAS</span>
-            <h1>Multi-agent control room</h1>
-          </div>
+    <div className="product-shell">
+      <aside className="shell-sidebar">
+        <div className="brand-block">
+          <span className="eyebrow">MAAS</span>
+          <h1>AI software delivery, made operable</h1>
+          <p>Import a repo, supervise execution, recover from failures, and keep evidence attached to the work.</p>
+        </div>
+
+        <nav className="shell-nav" aria-label="Primary views">
+          {VIEWS.map((view) => (
+            <button
+              key={view.id}
+              type="button"
+              className={`shell-nav__item ${activeView === view.id ? "is-active" : ""}`}
+              onClick={() => setActiveView(view.id)}
+            >
+              <strong>{view.label}</strong>
+              <span>{view.summary}</span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="sidebar-footer">
           <div className="status-chip">
             <span className={`status-chip__dot ${connected ? "is-live" : transport === "polling" ? "is-warn" : ""}`} />
             {liveTransportLabel}
           </div>
-          {activeProjects.length > 0 ? (
-            <label className="status-chip" htmlFor="project-scope-select">
-              <span>Project</span>
+          <button type="button" className="hero-button hero-button--ghost hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
+            Command palette
+          </button>
+        </div>
+      </aside>
+
+      <main className="shell-main">
+        <header className="shell-topbar">
+          <div className="shell-topbar__project">
+            <span className="eyebrow">Current project</span>
+            <div className="shell-topbar__project-row">
               <select
-                id="project-scope-select"
-                value={selectedProjectId ?? ""}
+                aria-label="Selected project"
+                value={activeProject?.project_id ?? ""}
                 onChange={(event) => {
                   const nextProjectId = event.target.value || null;
+                  persistSelectedProjectId(nextProjectId);
                   setSelectedProjectId(nextProjectId);
-                  setSelectedProjectIdState(nextProjectId);
                 }}
               >
                 {activeProjects.map((project) => (
@@ -225,182 +327,57 @@ function AppShell() {
                   </option>
                 ))}
               </select>
-            </label>
-          ) : null}
-          <button
-            type="button"
-            className={`app-nav__button ${projectPanelOpen ? "is-active" : ""}`}
-            onClick={() => setProjectPanelOpen((current) => !current)}
-          >
-            {projectPanelOpen ? "Hide Projects" : "Manage Projects"}
-          </button>
-        </div>
-        <nav className="app-nav" aria-label="MAAS views">
-          {VIEWS.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={`app-nav__button ${activeView === view.id ? "is-active" : ""}`}
-              onClick={() => setActiveView(view.id)}
-            >
-              {view.label}
-            </button>
-          ))}
-        </nav>
-        {projectPanelOpen ? (
-          <section className="project-panel" aria-label="Project lifecycle">
-            <div className="project-panel__section">
               <div>
-                <span className="eyebrow">Project Lifecycle</span>
-                <h2>Create or import a project</h2>
-                <p>Blank source root uses the current MAAS workspace root. Brownfield mode scans an existing repo; greenfield keeps the seeded backlog path.</p>
+                <strong>{activeProject?.name ?? "No active project"}</strong>
+                <p>{activeProject?.description ?? "Create or restore a project to begin."}</p>
               </div>
-              <form className="project-form" onSubmit={handleCreateProject}>
-                <input
-                  type="text"
-                  placeholder="Project name"
-                  value={projectForm.name}
-                  onChange={(event) => setProjectForm((current) => ({ ...current, name: event.target.value }))}
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Description"
-                  value={projectForm.description}
-                  onChange={(event) => setProjectForm((current) => ({ ...current, description: event.target.value }))}
-                />
-                <div className="project-form__row">
-                  <input
-                    type="text"
-                    placeholder="Type"
-                    value={projectForm.projectType}
-                    onChange={(event) => setProjectForm((current) => ({ ...current, projectType: event.target.value }))}
-                  />
-                  <select
-                    value={projectForm.mode}
-                    onChange={(event) =>
-                      setProjectForm((current) => ({
-                        ...current,
-                        mode: event.target.value as "auto" | "greenfield" | "brownfield"
-                      }))
-                    }
-                  >
-                    <option value="auto">Auto</option>
-                    <option value="greenfield">Greenfield</option>
-                    <option value="brownfield">Brownfield</option>
-                  </select>
-                </div>
-                <input
-                  type="text"
-                  placeholder="Source root / existing repo path"
-                  value={projectForm.sourceRoot}
-                  onChange={(event) => setProjectForm((current) => ({ ...current, sourceRoot: event.target.value }))}
-                />
-                <button type="submit" disabled={projectSubmitting}>
-                  {projectSubmitting ? "Working..." : "Create project"}
-                </button>
-              </form>
-              {projectNotice ? <p className="project-panel__notice">{projectNotice}</p> : null}
             </div>
+          </div>
 
-            <div className="project-panel__lists">
-              <section className="project-panel__section">
-                <div className="project-panel__heading">
-                  <h3>Active projects</h3>
-                  <span>{activeProjects.length}</span>
-                </div>
-                {activeProjects.length === 0 ? (
-                  <p>No active projects yet.</p>
-                ) : (
-                  <div className="project-list">
-                    {activeProjects.map((project) => (
-                      <article key={project.project_id} className="project-card">
-                        <div>
-                          <strong>{project.name}</strong>
-                          <p>{project.description || "No description yet."}</p>
-                          <p>
-                            {project.onboarding_mode ?? "greenfield"} · {project.task_count} tasks · {project.open_alert_count} open alerts
-                          </p>
-                        </div>
-                        <div className="project-card__actions">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedProjectId(project.project_id);
-                              setSelectedProjectIdState(project.project_id);
-                            }}
-                          >
-                            Open
-                          </button>
-                          {activeProjects.length > 1 ? (
-                            <button
-                              type="button"
-                              className="button-danger"
-                              disabled={projectSubmitting}
-                              onClick={() => void handleArchiveProject(project.project_id)}
-                            >
-                              Archive
-                            </button>
-                          ) : null}
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
+          <div className="shell-topbar__actions">
+            <button
+              type="button"
+              className="hero-button hero-button--ghost"
+              onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+            >
+              {theme === "dark" ? "Light theme" : "Dark theme"}
+            </button>
+            <button type="button" className="hero-button" onClick={() => setCommandPaletteOpen(true)}>
+              Search and jump
+            </button>
+          </div>
+        </header>
 
-              <section className="project-panel__section">
-                <div className="project-panel__heading">
-                  <h3>Archived projects</h3>
-                  <span>{archivedProjects.length}</span>
-                </div>
-                {archivedProjects.length === 0 ? (
-                  <p>No archived projects.</p>
-                ) : (
-                  <div className="project-list">
-                    {archivedProjects.map((project) => (
-                      <article key={project.project_id} className="project-card">
-                        <div>
-                          <strong>{project.name}</strong>
-                          <p>{project.description || "No description yet."}</p>
-                          <p>
-                            Archived {project.archived_at ?? "recently"} · {project.task_count} tasks
-                          </p>
-                        </div>
-                        <div className="project-card__actions">
-                          <button
-                            type="button"
-                            disabled={projectSubmitting}
-                            onClick={() => void handleRestoreProject(project.project_id)}
-                          >
-                            Restore
-                          </button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </section>
-            </div>
-          </section>
-        ) : null}
-      </header>
+        <div className="product-content">
+          {activeView === "home" ? <HomePage onNavigate={setActiveView} /> : null}
+          {activeView === "work" ? <WorkPage /> : null}
+          {activeView === "runs" ? <RunsPage /> : null}
+          {activeView === "incidents" ? <IncidentsPage /> : null}
+          {activeView === "projects" ? (
+            <ProjectsPage
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              projectForm={projectForm}
+              projectSubmitting={projectSubmitting}
+              projectNotice={projectNotice}
+              onSelectProject={(projectId) => {
+                persistSelectedProjectId(projectId);
+                setSelectedProjectId(projectId);
+              }}
+              onProjectFormChange={setProjectForm}
+              onCreateProject={handleCreateProject}
+              onArchiveProject={handleArchiveProject}
+              onRestoreProject={handleRestoreProject}
+            />
+          ) : null}
+        </div>
+      </main>
 
-      <div className="app-content">
-        {activeView === "overview" ? <OverviewPage /> : null}
-        {activeView === "portfolio" ? <PortfolioPage /> : null}
-        {activeView === "board" ? <BoardPage /> : null}
-        {activeView === "goals" ? <GoalTreePage /> : null}
-        {activeView === "agents" ? <AgentRosterPage /> : null}
-        {activeView === "activity" ? <ActivityPage /> : null}
-        {activeView === "artifacts" ? <ArtifactsPage /> : null}
-        {activeView === "providers" ? <ProvidersPage /> : null}
-        {activeView === "recovery" ? <RecoveryPage /> : null}
-        {activeView === "failures" ? <FailuresPage /> : null}
-        {activeView === "timeline" ? <TimelinePage /> : null}
-        {activeView === "alerts" ? <AlertsPage /> : null}
-        {activeView === "escalations" ? <EscalationsPage /> : null}
-      </div>
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+        actions={commandActions}
+      />
     </div>
   );
 }

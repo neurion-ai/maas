@@ -56,6 +56,16 @@ Current stacked development chain above `main`:
 - `#104` exists on `codex/queue-worker-capacity-governance`
 - `#105` exists on `codex/queue-worker-capacity-governance`
 - `#106` exists on `codex/queue-worker-capacity-governance`
+- `#107` exists on `codex/ux-product-redesign`
+- `#108` exists on `codex/ux-product-redesign`
+- `#109` exists on `codex/ux-product-redesign`
+- `#110` exists on `codex/ux-product-redesign`
+- `#111` exists on `codex/ux-product-redesign`
+- `#112` exists on `codex/ux-product-redesign`
+- `#113` exists on `codex/ux-product-redesign`
+- `#114` exists on `codex/ux-product-redesign`
+- `#115` exists on `codex/ux-product-redesign`
+- `#116` exists on `codex/ux-product-redesign`
 
 ### Current project state
 
@@ -126,16 +136,16 @@ Current stacked development chain above `main`:
 - [x] `#104` Cost, runtime, and quota controls
 - [x] `#105` Notifications and outbound integrations
 - [x] `#106` Incident timeline and replay
-- [ ] `#107` Information architecture reset and navigation collapse
-- [ ] `#108` Design system and dual light/dark theme foundation
-- [ ] `#109` Home command center with recommended actions
-- [ ] `#110` Guided onboarding and first-run experience
-- [ ] `#111` Unified Work surface for board, plan, and task detail
-- [ ] `#112` Unified Runs surface for agents, providers, verification, and outputs
-- [ ] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
-- [ ] `#114` Portfolio and project-management UX redesign
-- [ ] `#115` Command palette, contextual actions, empty states, and inline guidance
-- [ ] `#116` Accessibility, responsiveness, and visual-polish pass
+- [x] `#107` Information architecture reset and navigation collapse
+- [x] `#108` Design system and dual light/dark theme foundation
+- [x] `#109` Home command center with recommended actions
+- [x] `#110` Guided onboarding and first-run experience
+- [x] `#111` Unified Work surface for board, plan, and task detail
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [x] `#114` Portfolio and project-management UX redesign
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass
 
 ### Current stacked branch progress
 
@@ -165,30 +175,40 @@ Current stacked development chain above `main`:
 - [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
 - [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
 - [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#107` is implemented on `codex/ux-product-redesign`
+- [x] `#108` is implemented on `codex/ux-product-redesign`
+- [x] `#109` is implemented on `codex/ux-product-redesign`
+- [x] `#110` is implemented on `codex/ux-product-redesign`
+- [x] `#111` is implemented on `codex/ux-product-redesign`
+- [x] `#112` is implemented on `codex/ux-product-redesign`
+- [x] `#113` is implemented on `codex/ux-product-redesign`
+- [x] `#114` is implemented on `codex/ux-product-redesign`
+- [x] `#115` is implemented on `codex/ux-product-redesign`
+- [x] `#116` is implemented on `codex/ux-product-redesign`
 
-The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
 
-### Next numbered UX and product-design sequence
+### UX and product-design sequence now implemented on the stacked branch
 
-- [ ] `#107` Information architecture reset and navigation collapse:
+- [x] `#107` Information architecture reset and navigation collapse:
   reduce the current top-level control-room sprawl to a smaller set of primary surfaces with clearer user-language labels and a stronger product mental model.
-- [ ] `#108` Design system and dual light/dark theme foundation:
+- [x] `#108` Design system and dual light/dark theme foundation:
   introduce semantic color, spacing, typography, and elevation tokens plus persistent light/dark modes so the UI no longer feels like an internal admin tool.
-- [ ] `#109` Home command center with recommended actions:
+- [x] `#109` Home command center with recommended actions:
   replace the current overloaded overview posture with a “what needs attention / what should I do next” landing experience.
-- [ ] `#110` Guided onboarding and first-run experience:
+- [x] `#110` Guided onboarding and first-run experience:
   add create/import/setup flows that explain what MAAS is doing, what the project state means, and what the next safe step is.
-- [ ] `#111` Unified Work surface for board, plan, and task detail:
+- [x] `#111` Unified Work surface for board, plan, and task detail:
   merge board, goal tree, and repo-grounded planning into a single execution workspace with richer task detail and evidence drawers.
-- [ ] `#112` Unified Runs surface for agents, providers, verification, and outputs:
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs:
   stop splitting execution state across separate silos and present one coherent operator view of active work and produced evidence.
-- [ ] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline:
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline:
   turn incident response into one guided workbench with clear playbooks instead of four separate mechanism-heavy pages.
-- [ ] `#114` Portfolio and project-management UX redesign:
+- [x] `#114` Portfolio and project-management UX redesign:
   improve project switching, lifecycle actions, cross-project health, and multi-project supervision without burying the user in policy forms.
-- [ ] `#115` Command palette, contextual actions, empty states, and inline guidance:
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance:
   make advanced functionality discoverable without overwhelming the default UI.
-- [ ] `#116` Accessibility, responsiveness, and visual-polish pass:
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass:
   finish the redesign with mobile/tablet behavior, keyboard-first interactions, stronger hierarchy, and usability QA.
 
 ### Extended numbered roadmap
@@ -218,6 +238,17 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] `#103` Policy-driven approval and risk routing
 - [x] `#104` Cost, runtime, and quota controls
 - [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
+- [x] `#107` Information architecture reset and navigation collapse
+- [x] `#108` Design system and dual light/dark theme foundation
+- [x] `#109` Home command center with recommended actions
+- [x] `#110` Guided onboarding and first-run experience
+- [x] `#111` Unified Work surface for board, plan, and task detail
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [x] `#114` Portfolio and project-management UX redesign
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass
 - [x] `#106` Incident timeline and replay
 
 ## Quick Start

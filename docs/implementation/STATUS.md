@@ -35,8 +35,18 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
 - [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
 - [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#107` is implemented on `codex/ux-product-redesign`
+- [x] `#108` is implemented on `codex/ux-product-redesign`
+- [x] `#109` is implemented on `codex/ux-product-redesign`
+- [x] `#110` is implemented on `codex/ux-product-redesign`
+- [x] `#111` is implemented on `codex/ux-product-redesign`
+- [x] `#112` is implemented on `codex/ux-product-redesign`
+- [x] `#113` is implemented on `codex/ux-product-redesign`
+- [x] `#114` is implemented on `codex/ux-product-redesign`
+- [x] `#115` is implemented on `codex/ux-product-redesign`
+- [x] `#116` is implemented on `codex/ux-product-redesign`
 
-The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
 
 ## Extended Numbered Roadmap
 
@@ -66,6 +76,16 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] `#104` Cost, runtime, and quota controls
 - [x] `#105` Notifications and outbound integrations
 - [x] `#106` Incident timeline and replay
+- [x] `#107` Information architecture reset and navigation collapse
+- [x] `#108` Design system and dual light/dark theme foundation
+- [x] `#109` Home command center with recommended actions
+- [x] `#110` Guided onboarding and first-run experience
+- [x] `#111` Unified Work surface for board, plan, and task detail
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [x] `#114` Portfolio and project-management UX redesign
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass
 
 ## Current Snapshot
 
@@ -77,7 +97,7 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] Adaptive scheduling feedback, manual replanning, and retry-exhaustion DLQ routing are now on `main`.
 - [x] The current prototype is roughly `85-90%` complete for the single-project greenfield/operator-supervised shape.
 - [ ] MAAS is not yet a production-ready autonomous platform.
-- [ ] MAAS still lacks a strong product UX, simple mental model, and visually polished dual-theme design.
+- [x] The stacked UX redesign now provides a simpler mental model, dual-theme shell, guided home surface, unified Work/Runs/Incidents pages, and command-palette navigation on top of the existing backend stack.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`
@@ -220,16 +240,16 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] `#104` Cost, runtime, and quota controls
 - [x] `#105` Notifications and outbound integrations
 - [x] `#106` Incident timeline and replay
-- [ ] `#107` Information architecture reset and navigation collapse
-- [ ] `#108` Design system and dual light/dark theme foundation
-- [ ] `#109` Home command center with recommended actions
-- [ ] `#110` Guided onboarding and first-run experience
-- [ ] `#111` Unified Work surface for board, plan, and task detail
-- [ ] `#112` Unified Runs surface for agents, providers, verification, and outputs
-- [ ] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
-- [ ] `#114` Portfolio and project-management UX redesign
-- [ ] `#115` Command palette, contextual actions, empty states, and inline guidance
-- [ ] `#116` Accessibility, responsiveness, and visual-polish pass
+- [x] `#107` Information architecture reset and navigation collapse
+- [x] `#108` Design system and dual light/dark theme foundation
+- [x] `#109` Home command center with recommended actions
+- [x] `#110` Guided onboarding and first-run experience
+- [x] `#111` Unified Work surface for board, plan, and task detail
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [x] `#114` Portfolio and project-management UX redesign
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass
 
 ## Batch View
 

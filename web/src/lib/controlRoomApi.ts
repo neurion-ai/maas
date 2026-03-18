@@ -158,9 +158,17 @@ const PORTFOLIO_FALLBACK: PortfolioResponse = {
     blocked_tasks: 0,
     active_sessions: 0,
     recovery_pressure: 0,
-    projects_with_issues: 0
+    projects_with_issues: 0,
+    open_escalations: 0,
+    queued_provider_jobs: 0
   },
-  projects: []
+  projects: [],
+  command_center: {
+    open_escalations: [],
+    urgent_alerts: [],
+    open_dead_letter_entries: [],
+    queued_provider_jobs: []
+  }
 };
 
 const ROSTER_FALLBACK: AgentRosterResponse = {

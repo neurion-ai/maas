@@ -50,7 +50,8 @@ Current stacked development chain above `main`:
 - `#98` exists on `codex/repo-grounded-plan-synthesis`
 - `#99` exists on `codex/verification-runners-evidence-capture`
 - `#100` exists on `codex/git-aware-task-workspaces`
-- `#101` is the next unfinished step in the current sequence
+- `#101` exists on `codex/cross-project-command-center`
+- `#102` is the next unfinished step in the current sequence
 
 ### Current project state
 
@@ -113,7 +114,7 @@ Current stacked development chain above `main`:
 - [x] `#98` Repo-grounded plan synthesis and refresh
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
-- [ ] `#101` Cross-project command center
+- [x] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls
@@ -142,7 +143,8 @@ Current stacked development chain above `main`:
 - [x] `#98` is implemented on `codex/repo-grounded-plan-synthesis`
 - [x] `#99` is implemented on `codex/verification-runners-evidence-capture`
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
-- [ ] `#101` is the next unfinished item
+- [x] `#101` is implemented on `codex/cross-project-command-center`
+- [ ] `#102` is the next unfinished item
 
 ### Extended numbered roadmap
 
@@ -166,7 +168,7 @@ Current stacked development chain above `main`:
 - [x] `#98` Repo-grounded plan synthesis and refresh
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
-- [ ] `#101` Cross-project command center
+- [x] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls

@@ -29,7 +29,8 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#98` is implemented on the stacked branch `codex/repo-grounded-plan-synthesis`
 - [x] `#99` is implemented on `codex/verification-runners-evidence-capture`
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
-- [ ] `#101` is the next unfinished item in the current stacked sequence
+- [x] `#101` is implemented on `codex/cross-project-command-center`
+- [ ] `#102` is the next unfinished item in the current stacked sequence
 
 ## Extended Numbered Roadmap
 
@@ -53,7 +54,7 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#98` Repo-grounded plan synthesis and refresh
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
-- [ ] `#101` Cross-project command center
+- [x] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls
@@ -199,7 +200,7 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#98` Repo-grounded plan synthesis and refresh
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
-- [ ] `#101` Cross-project command center
+- [x] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls

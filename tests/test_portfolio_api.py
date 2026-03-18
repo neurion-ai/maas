@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from maas.api import create_app
 from maas.db import connect
+from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.projects import create_project
 
@@ -33,6 +34,20 @@ class PortfolioApiTest(unittest.TestCase):
                     mode="greenfield",
                 )
                 second_project_id = second_project["project"]["project_id"]
+                second_task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (second_project_id,),
+                ).fetchone()["task_id"]
+                second_agent_id = connection.execute(
+                    "SELECT agent_id FROM agents WHERE project_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (second_project_id,),
+                ).fetchone()["agent_id"]
                 connection.execute(
                     """
                     INSERT INTO alerts (
@@ -40,6 +55,30 @@ class PortfolioApiTest(unittest.TestCase):
                     ) VALUES ('alert_portfolio_critical', ?, 'critical', 'Critical provider outage', 'portfolio critical test', 'open')
                     """,
                     (primary_project_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO escalation_queue (
+                        escalation_id, project_id, requested_by, action_type, resource_type, resource_id, payload_json, reason, status
+                    ) VALUES (?, ?, 'agent_allocator', 'halt_task', 'task', ?, '{}', 'portfolio escalation', 'open')
+                    """,
+                    (generate_id("esc"), primary_project_id, second_task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO provider_job_queue (
+                        job_id, project_id, provider_id, task_id, agent_id, status, queued_by
+                    ) VALUES (?, ?, 'python_script', ?, ?, 'queued', 'agent_allocator')
+                    """,
+                    (generate_id("job"), second_project_id, second_task_id, second_agent_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json, status
+                    ) VALUES (?, ?, ?, 'retry_budget_exhausted', '{}', 'open')
+                    """,
+                    (generate_id("dlq"), second_project_id, second_task_id),
                 )
                 connection.execute(
                     "UPDATE alerts SET status = 'resolved' WHERE project_id = ?",
@@ -78,9 +117,16 @@ class PortfolioApiTest(unittest.TestCase):
             self.assertGreaterEqual(primary["critical_alerts"], 1)
             self.assertGreaterEqual(primary["provider_readiness"]["ready"], 1)
 
-            self.assertEqual(secondary["health"], "healthy")
+            self.assertEqual(secondary["health"], "critical")
             self.assertEqual(secondary["open_alerts"], 0)
             self.assertEqual(secondary["blocked_tasks"], 0)
+            self.assertEqual(payload["summary"]["open_escalations"], 1)
+            self.assertEqual(payload["summary"]["queued_provider_jobs"], 1)
+            self.assertEqual(len(payload["command_center"]["open_escalations"]), 1)
+            self.assertEqual(len(payload["command_center"]["queued_provider_jobs"]), 1)
+            self.assertEqual(len(payload["command_center"]["open_dead_letter_entries"]), 1)
+            self.assertEqual(payload["command_center"]["open_escalations"][0]["project_name"], "Portfolio Primary")
+            self.assertEqual(payload["command_center"]["queued_provider_jobs"][0]["project_name"], "Portfolio Secondary")
 
 
 if __name__ == "__main__":

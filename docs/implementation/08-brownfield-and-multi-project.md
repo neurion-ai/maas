@@ -26,7 +26,8 @@
 - [x] `#98` repo-grounded plan synthesis and refresh is implemented on `codex/repo-grounded-plan-synthesis`
 - [x] `#99` verification runners and evidence capture is implemented on `codex/verification-runners-evidence-capture`
 - [x] `#100` git-aware task workspaces and diff review is implemented on `codex/git-aware-task-workspaces`
-- [ ] `#101` cross-project command center is the next unfinished step
+- [x] `#101` cross-project command center is implemented on `codex/cross-project-command-center`
+- [ ] `#102` queue and worker capacity controls is the next unfinished step
 
 ## Extended Numbered Roadmap
 
@@ -50,7 +51,7 @@
 - [x] `#98` Repo-grounded plan synthesis and refresh
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
-- [ ] `#101` Cross-project command center
+- [x] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls

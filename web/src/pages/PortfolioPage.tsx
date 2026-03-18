@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchPortfolio, runOrchestratorPass } from "../lib/controlRoomApi";
+import { fetchPortfolio, processProviderJob, runOrchestratorPass, updateEscalationStatus } from "../lib/controlRoomApi";
 import { setSelectedProjectId } from "../lib/projectScope";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OrchestratorRunResponse, PortfolioResponse } from "../types";
@@ -23,6 +23,7 @@ export function PortfolioPage() {
   const [orchestratorResult, setOrchestratorResult] = useState<OrchestratorRunResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [runningOrchestrator, setRunningOrchestrator] = useState(false);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -64,6 +65,36 @@ export function PortfolioPage() {
     }
   }
 
+  async function handleEscalationAction(escalationId: string, action: "approve" | "reject") {
+    const actionKey = `escalation:${escalationId}:${action}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await updateEscalationStatus(escalationId, action);
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Escalation ${action}d.`);
+    } catch {
+      setNotice("Escalation action failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleProcessProviderJob(jobId: string) {
+    const actionKey = `provider-job:${jobId}:process`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await processProviderJob(jobId);
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Processed provider job ${jobId} with status ${payload.status}.`);
+    } catch {
+      setNotice("Provider job processing failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -92,6 +123,8 @@ export function PortfolioPage() {
         <StatCard label="Blocked tasks" value={portfolio?.summary.blocked_tasks ?? 0} tone="warn" />
         <StatCard label="Active sessions" value={portfolio?.summary.active_sessions ?? 0} />
         <StatCard label="Recovery pressure" value={portfolio?.summary.recovery_pressure ?? 0} tone="warn" />
+        <StatCard label="Open escalations" value={portfolio?.summary.open_escalations ?? 0} tone="warn" />
+        <StatCard label="Queued jobs" value={portfolio?.summary.queued_provider_jobs ?? 0} />
       </section>
 
       <article className="data-panel">
@@ -145,6 +178,157 @@ export function PortfolioPage() {
           ))}
         </div>
       </article>
+
+      <section className="data-grid data-grid--two">
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Open escalations</h2>
+              <p>Approve or reject risky actions across every active project from one queue.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(portfolio?.command_center.open_escalations ?? []).length ? (
+              portfolio?.command_center.open_escalations.map((item) => (
+                <div key={item.escalation_id} className="data-list__item">
+                  <div>
+                    <strong>{item.project_name ?? item.project_id}</strong>
+                    <p>
+                      {item.action_type} · {item.resource_type} {item.resource_id}
+                    </p>
+                    <p>{item.reason || "No escalation reason provided."}</p>
+                  </div>
+                  <div className="data-list__meta">
+                    <button
+                      type="button"
+                      className="task-action task-action--approve"
+                      disabled={pendingActionKey === `escalation:${item.escalation_id}:approve`}
+                      onClick={() => void handleEscalationAction(item.escalation_id, "approve")}
+                    >
+                      {pendingActionKey === `escalation:${item.escalation_id}:approve` ? "Approving..." : "Approve"}
+                    </button>
+                    <button
+                      type="button"
+                      className="task-action task-action--reject"
+                      disabled={pendingActionKey === `escalation:${item.escalation_id}:reject`}
+                      onClick={() => void handleEscalationAction(item.escalation_id, "reject")}
+                    >
+                      {pendingActionKey === `escalation:${item.escalation_id}:reject` ? "Rejecting..." : "Reject"}
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-state">No open escalations.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Provider backlog</h2>
+              <p>Process queued provider work without switching into each project.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(portfolio?.command_center.queued_provider_jobs ?? []).length ? (
+              portfolio?.command_center.queued_provider_jobs.map((job) => (
+                <div key={job.job_id} className="data-list__item">
+                  <div>
+                    <strong>{job.project_name ?? job.project_id}</strong>
+                    <p>{job.provider_id} · {job.title ?? job.task_id}</p>
+                    <p>{job.status} · queued {new Date(job.created_at).toLocaleString()}</p>
+                  </div>
+                  <div className="data-list__meta">
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={job.status !== "queued" || pendingActionKey === `provider-job:${job.job_id}:process`}
+                      onClick={() => void handleProcessProviderJob(job.job_id)}
+                    >
+                      {pendingActionKey === `provider-job:${job.job_id}:process` ? "Processing..." : "Process now"}
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-state">No queued provider jobs.</p>
+            )}
+          </div>
+        </article>
+      </section>
+
+      <section className="data-grid data-grid--two">
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Urgent alerts</h2>
+              <p>Critical and warning alerts across projects, ordered by urgency.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(portfolio?.command_center.urgent_alerts ?? []).length ? (
+              portfolio?.command_center.urgent_alerts.map((alert) => (
+                <div key={alert.alert_id} className="data-list__item">
+                  <div>
+                    <strong>{alert.project_name ?? alert.project_id}</strong>
+                    <p>{alert.title}</p>
+                    <p>{alert.description}</p>
+                  </div>
+                  <div className="data-list__meta">
+                    <span>{alert.severity}</span>
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      onClick={() => setSelectedProjectId(alert.project_id ?? "")}
+                    >
+                      Open project
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-state">No urgent alerts.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Recovery hotlist</h2>
+              <p>Retry-exhausted work that still needs operator attention.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(portfolio?.command_center.open_dead_letter_entries ?? []).length ? (
+              portfolio?.command_center.open_dead_letter_entries.map((entry) => (
+                <div key={entry.dlq_id} className="data-list__item">
+                  <div>
+                    <strong>{entry.project_name ?? entry.project_id}</strong>
+                    <p>{entry.title}</p>
+                    <p>
+                      {entry.reason} · retry count {entry.retry_count ?? 0}
+                    </p>
+                  </div>
+                  <div className="data-list__meta">
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      onClick={() => setSelectedProjectId(entry.project_id)}
+                    >
+                      Open project
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-state">No open DLQ entries.</p>
+            )}
+          </div>
+        </article>
+      </section>
     </section>
   );
 }

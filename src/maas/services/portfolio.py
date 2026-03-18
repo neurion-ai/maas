@@ -1,5 +1,7 @@
 """Cross-project portfolio read model."""
 
+import json
+
 from maas.providers import list_provider_status
 from maas.services.failure_memory import repeated_failure_task_count
 from maas.services.projects import list_projects
@@ -49,6 +51,154 @@ def _health_status(project, metrics):
     ):
         return "warn"
     return "healthy"
+
+
+def _fetch_command_center_escalations(connection, limit=8):
+    rows = connection.execute(
+        """
+        SELECT
+            escalation_queue.escalation_id,
+            escalation_queue.project_id,
+            projects.name AS project_name,
+            escalation_queue.requested_by,
+            escalation_queue.action_type,
+            escalation_queue.resource_type,
+            escalation_queue.resource_id,
+            escalation_queue.payload_json,
+            escalation_queue.reason,
+            escalation_queue.status,
+            escalation_queue.created_at,
+            requester.display_name AS requester_name
+        FROM escalation_queue
+        JOIN projects ON projects.project_id = escalation_queue.project_id
+        LEFT JOIN agents requester ON requester.agent_id = escalation_queue.requested_by
+        WHERE escalation_queue.status = 'open'
+          AND projects.state = 'active'
+        ORDER BY escalation_queue.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _fetch_command_center_alerts(connection, limit=8):
+    rows = connection.execute(
+        """
+        SELECT
+            alerts.alert_id,
+            alerts.project_id,
+            projects.name AS project_name,
+            alerts.severity,
+            alerts.title,
+            alerts.description,
+            alerts.status,
+            alerts.created_at
+        FROM alerts
+        JOIN projects ON projects.project_id = alerts.project_id
+        WHERE alerts.status = 'open'
+          AND projects.state = 'active'
+        ORDER BY
+            CASE alerts.severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END,
+            alerts.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _fetch_command_center_dead_letters(connection, limit=8):
+    rows = connection.execute(
+        """
+        SELECT
+            dead_letter_queue.dlq_id,
+            dead_letter_queue.project_id,
+            projects.name AS project_name,
+            dead_letter_queue.task_id,
+            dead_letter_queue.failure_id,
+            dead_letter_queue.reason,
+            dead_letter_queue.status,
+            dead_letter_queue.detail_json,
+            dead_letter_queue.resolution_note,
+            dead_letter_queue.created_at,
+            dead_letter_queue.updated_at,
+            dead_letter_queue.resolved_at,
+            tasks.title,
+            tasks.status AS task_status,
+            tasks.review_state,
+            tasks.priority,
+            tasks.retry_count,
+            tasks.auto_retry_limit,
+            tasks.last_retry_reason,
+            tasks.next_retry_at,
+            tasks.next_retry_reason,
+            goals.title AS goal_title,
+            agents.display_name AS agent_name
+        FROM dead_letter_queue
+        JOIN projects ON projects.project_id = dead_letter_queue.project_id
+        JOIN tasks ON tasks.task_id = dead_letter_queue.task_id
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
+        WHERE dead_letter_queue.status = 'open'
+          AND projects.state = 'active'
+        ORDER BY dead_letter_queue.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        item = dict(row)
+        item["detail"] = {}
+        detail_json = item.pop("detail_json", None)
+        if detail_json:
+            try:
+                item["detail"] = json.loads(detail_json or "{}")
+            except ValueError:
+                item["detail"] = {}
+        items.append(item)
+    return items
+
+
+def _fetch_command_center_provider_jobs(connection, limit=8):
+    rows = connection.execute(
+        """
+        SELECT
+            provider_job_queue.job_id,
+            provider_job_queue.project_id,
+            projects.name AS project_name,
+            provider_job_queue.provider_id,
+            provider_job_queue.task_id,
+            tasks.title AS title,
+            goals.title AS goal_title,
+            provider_job_queue.agent_id,
+            agents.display_name AS agent_name,
+            provider_job_queue.status,
+            provider_job_queue.queued_by,
+            provider_job_queue.worker_id,
+            provider_job_queue.artifact_path,
+            provider_job_queue.session_id,
+            provider_job_queue.artifact_id,
+            provider_job_queue.created_at,
+            provider_job_queue.started_at,
+            provider_job_queue.finished_at,
+            provider_job_queue.updated_at
+        FROM provider_job_queue
+        JOIN projects ON projects.project_id = provider_job_queue.project_id
+        LEFT JOIN tasks ON tasks.task_id = provider_job_queue.task_id
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        LEFT JOIN agents ON agents.agent_id = provider_job_queue.agent_id
+        WHERE provider_job_queue.status IN ('queued', 'running')
+          AND projects.state = 'active'
+        ORDER BY
+            CASE provider_job_queue.status WHEN 'running' THEN 0 ELSE 1 END,
+            provider_job_queue.created_at DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def fetch_portfolio(connection):
@@ -162,6 +312,10 @@ def fetch_portfolio(connection):
     )
 
     active_projects = [item for item in portfolio_projects if item["state"] == "active"]
+    open_escalations = _fetch_command_center_escalations(connection)
+    urgent_alerts = _fetch_command_center_alerts(connection)
+    open_dead_letters = _fetch_command_center_dead_letters(connection)
+    provider_job_backlog = _fetch_command_center_provider_jobs(connection)
     return {
         "summary": {
             "active_projects": len(active_projects),
@@ -174,6 +328,14 @@ def fetch_portfolio(connection):
                 for item in active_projects
             ),
             "projects_with_issues": len([item for item in active_projects if item["health"] in {"critical", "warn"}]),
+            "open_escalations": len(open_escalations),
+            "queued_provider_jobs": len(provider_job_backlog),
         },
         "projects": portfolio_projects,
+        "command_center": {
+            "open_escalations": open_escalations,
+            "urgent_alerts": urgent_alerts,
+            "open_dead_letter_entries": open_dead_letters,
+            "queued_provider_jobs": provider_job_backlog,
+        },
     }

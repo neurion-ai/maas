@@ -190,8 +190,16 @@ export interface PortfolioResponse {
     active_sessions: number;
     recovery_pressure: number;
     projects_with_issues: number;
+    open_escalations: number;
+    queued_provider_jobs: number;
   };
   projects: PortfolioProject[];
+  command_center: {
+    open_escalations: EscalationItem[];
+    urgent_alerts: AlertItem[];
+    open_dead_letter_entries: DeadLetterQueueItem[];
+    queued_provider_jobs: ProviderJobItem[];
+  };
 }
 
 export interface ProjectCreateRequest {
@@ -696,6 +704,7 @@ export interface AgentRosterResponse {
 export interface AlertItem {
   alert_id: string;
   project_id?: string;
+  project_name?: string;
   severity: string;
   title: string;
   description: string;
@@ -727,6 +736,7 @@ export interface AlertsResponse {
 export interface EscalationItem {
   escalation_id: string;
   project_id?: string;
+  project_name?: string;
   requested_by: string;
   requester_name?: string | null;
   action_type: string;
@@ -825,6 +835,7 @@ export interface ProviderJobSummary {
 export interface ProviderJobItem {
   job_id: string;
   project_id: string;
+  project_name?: string | null;
   provider_id: string;
   task_id: string;
   title?: string | null;
@@ -973,6 +984,7 @@ export interface RecoveryTaskItem {
 export interface DeadLetterQueueItem {
   dlq_id: string;
   project_id: string;
+  project_name?: string | null;
   task_id: string;
   failure_id?: string | null;
   reason: string;

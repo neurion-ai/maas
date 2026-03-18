@@ -20,16 +20,30 @@ def _sort_events(events, order):
     )
 
 
-def _activity_events(connection, project_id, task_id=None, session_id=None, agent_id=None, limit=100):
+def _activity_events(connection, project_id, task_id=None, session_id=None, agent_id=None, resource_type=None, resource_id=None, limit=100):
     filters = ["project_id = ?"]
     params = [project_id]
-    if task_id:
+    if resource_type == "task" and resource_id:
+        filters.append("task_id = ?")
+        params.append(resource_id)
+    elif task_id:
         filters.append("task_id = ?")
         params.append(task_id)
-    if agent_id:
+    if resource_type == "agent" and resource_id:
+        filters.append("agent_id = ?")
+        params.append(resource_id)
+    elif agent_id:
         filters.append("agent_id = ?")
         params.append(agent_id)
-    if session_id:
+    if resource_type == "session" and resource_id:
+        filters.append("json_extract(details_json, '$.session_id') = ?")
+        params.append(resource_id)
+    elif resource_type == "provider_job" and resource_id:
+        filters.append("json_extract(details_json, '$.job_id') = ?")
+        params.append(resource_id)
+    elif resource_type in {"failure", "dead_letter"} and resource_id:
+        return []
+    elif session_id:
         filters.append("json_extract(details_json, '$.session_id') = ?")
         params.append(session_id)
     rows = connection.execute(
@@ -113,16 +127,27 @@ def _audit_events(connection, project_id, task_id=None, session_id=None, agent_i
     ]
 
 
-def _session_events(connection, project_id, task_id=None, session_id=None, agent_id=None, limit=100):
+def _session_events(connection, project_id, task_id=None, session_id=None, agent_id=None, resource_type=None, resource_id=None, limit=100):
     filters = ["project_id = ?"]
     params = [project_id]
-    if task_id:
+    if resource_type == "task" and resource_id:
+        filters.append("task_id = ?")
+        params.append(resource_id)
+    elif task_id:
         filters.append("task_id = ?")
         params.append(task_id)
-    if session_id:
+    if resource_type == "session" and resource_id:
+        filters.append("session_id = ?")
+        params.append(resource_id)
+    elif resource_type in {"failure", "dead_letter", "provider_job"} and resource_id:
+        return []
+    elif session_id:
         filters.append("session_id = ?")
         params.append(session_id)
-    if agent_id:
+    if resource_type == "agent" and resource_id:
+        filters.append("agent_id = ?")
+        params.append(resource_id)
+    elif agent_id:
         filters.append("agent_id = ?")
         params.append(agent_id)
     rows = connection.execute(
@@ -180,18 +205,32 @@ def _session_events(connection, project_id, task_id=None, session_id=None, agent
     return events
 
 
-def _failure_events(connection, project_id, task_id=None, session_id=None, agent_id=None, limit=100):
+def _failure_events(connection, project_id, task_id=None, session_id=None, agent_id=None, resource_type=None, resource_id=None, limit=100):
     filters = ["project_id = ?"]
     params = [project_id]
-    if task_id:
+    if resource_type == "task" and resource_id:
+        filters.append("task_id = ?")
+        params.append(resource_id)
+    elif task_id:
         filters.append("task_id = ?")
         params.append(task_id)
-    if session_id:
+    if resource_type == "session" and resource_id:
+        filters.append("session_id = ?")
+        params.append(resource_id)
+    elif session_id:
         filters.append("session_id = ?")
         params.append(session_id)
-    if agent_id:
+    if resource_type == "agent" and resource_id:
+        filters.append("agent_id = ?")
+        params.append(resource_id)
+    elif agent_id:
         filters.append("agent_id = ?")
         params.append(agent_id)
+    if resource_type == "failure" and resource_id:
+        filters.append("failure_id = ?")
+        params.append(resource_id)
+    elif resource_type in {"dead_letter", "provider_job"} and resource_id:
+        return []
     rows = connection.execute(
         """
         SELECT failure_id, task_id, session_id, agent_id, failure_type, summary, detail_json, created_at
@@ -222,12 +261,23 @@ def _failure_events(connection, project_id, task_id=None, session_id=None, agent
     ]
 
 
-def _dead_letter_events(connection, project_id, task_id=None, limit=100):
+def _dead_letter_events(connection, project_id, task_id=None, resource_type=None, resource_id=None, limit=100):
     filters = ["project_id = ?"]
     params = [project_id]
-    if task_id:
+    if resource_type == "task" and resource_id:
+        filters.append("task_id = ?")
+        params.append(resource_id)
+    elif task_id:
         filters.append("task_id = ?")
         params.append(task_id)
+    if resource_type == "dead_letter" and resource_id:
+        filters.append("dlq_id = ?")
+        params.append(resource_id)
+    elif resource_type == "failure" and resource_id:
+        filters.append("failure_id = ?")
+        params.append(resource_id)
+    elif resource_type in {"agent", "session", "provider_job"} and resource_id:
+        return []
     rows = connection.execute(
         """
         SELECT dlq_id, task_id, failure_id, reason, status, detail_json, resolution_note, created_at, resolved_at
@@ -343,15 +393,26 @@ def _escalation_events(connection, project_id, task_id=None, agent_id=None, reso
     return events
 
 
-def _provider_job_events(connection, project_id, task_id=None, agent_id=None, limit=100):
+def _provider_job_events(connection, project_id, task_id=None, agent_id=None, resource_type=None, resource_id=None, limit=100):
     filters = ["project_id = ?"]
     params = [project_id]
-    if task_id:
+    if resource_type == "task" and resource_id:
+        filters.append("task_id = ?")
+        params.append(resource_id)
+    elif task_id:
         filters.append("task_id = ?")
         params.append(task_id)
-    if agent_id:
+    if resource_type == "agent" and resource_id:
+        filters.append("agent_id = ?")
+        params.append(resource_id)
+    elif agent_id:
         filters.append("agent_id = ?")
         params.append(agent_id)
+    if resource_type == "provider_job" and resource_id:
+        filters.append("job_id = ?")
+        params.append(resource_id)
+    elif resource_type in {"session", "failure", "dead_letter"} and resource_id:
+        return []
     rows = connection.execute(
         """
         SELECT job_id, provider_id, task_id, agent_id, status, worker_id, created_at, started_at, finished_at
@@ -497,7 +558,18 @@ def fetch_incident_timeline(
     order="desc",
 ):
     events = []
-    events.extend(_activity_events(connection, project_id, task_id=task_id, session_id=session_id, agent_id=agent_id, limit=limit))
+    events.extend(
+        _activity_events(
+            connection,
+            project_id,
+            task_id=task_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+    )
     events.extend(
         _audit_events(
             connection,
@@ -510,9 +582,40 @@ def fetch_incident_timeline(
             limit=limit,
         )
     )
-    events.extend(_session_events(connection, project_id, task_id=task_id, session_id=session_id, agent_id=agent_id, limit=limit))
-    events.extend(_failure_events(connection, project_id, task_id=task_id, session_id=session_id, agent_id=agent_id, limit=limit))
-    events.extend(_dead_letter_events(connection, project_id, task_id=task_id, limit=limit))
+    events.extend(
+        _session_events(
+            connection,
+            project_id,
+            task_id=task_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+    )
+    events.extend(
+        _failure_events(
+            connection,
+            project_id,
+            task_id=task_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+    )
+    events.extend(
+        _dead_letter_events(
+            connection,
+            project_id,
+            task_id=task_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+    )
     events.extend(
         _escalation_events(
             connection,
@@ -524,7 +627,17 @@ def fetch_incident_timeline(
             limit=limit,
         )
     )
-    events.extend(_provider_job_events(connection, project_id, task_id=task_id, agent_id=agent_id, limit=limit))
+    events.extend(
+        _provider_job_events(
+            connection,
+            project_id,
+            task_id=task_id,
+            agent_id=agent_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            limit=limit,
+        )
+    )
     events.extend(
         _notification_events(
             connection,

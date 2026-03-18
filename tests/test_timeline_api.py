@@ -125,6 +125,91 @@ class TimelineApiTest(unittest.TestCase):
             self.assertEqual(asc_activity[0]["event_id"], "act_timeline_old")
             self.assertEqual(desc_activity[0]["event_id"], "act_timeline_new")
 
+    def test_timeline_endpoint_resource_scope_filters_all_event_sources(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Timeline Resource Scope Test", description="timeline resource scope test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                first_task_id = connection.execute("SELECT task_id FROM tasks ORDER BY created_at ASC LIMIT 1").fetchone()["task_id"]
+                second_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE task_id != ? ORDER BY created_at ASC LIMIT 1",
+                    (first_task_id,),
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, task_id, action, category, description, severity
+                    ) VALUES
+                        ('act_scope_first', ?, ?, 'scope_marker_first', 'runtime', 'First scoped marker', 'info'),
+                        ('act_scope_second', ?, ?, 'scope_marker_second', 'runtime', 'Second scoped marker', 'info')
+                    """,
+                    (project_id, first_task_id, project_id, second_task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message, ended_at
+                    ) VALUES
+                        ('sess_scope_first', ?, 'agent_allocator', ?, 'completed', 'python_script', 100, 'First session', CURRENT_TIMESTAMP),
+                        ('sess_scope_second', ?, 'agent_allocator', ?, 'completed', 'python_script', 100, 'Second session', CURRENT_TIMESTAMP)
+                    """,
+                    (project_id, first_task_id, project_id, second_task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES
+                        ('failure_scope_first', ?, ?, 'sess_scope_first', 'agent_allocator', 'session_failed', 'First failure', '{}'),
+                        ('failure_scope_second', ?, ?, 'sess_scope_second', 'agent_allocator', 'session_failed', 'Second failure', '{}')
+                    """,
+                    (project_id, first_task_id, project_id, second_task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, failure_id, reason, detail_json
+                    ) VALUES
+                        ('dlq_scope_first', ?, ?, 'failure_scope_first', 'retry_budget_exhausted', '{}'),
+                        ('dlq_scope_second', ?, ?, 'failure_scope_second', 'retry_budget_exhausted', '{}')
+                    """,
+                    (project_id, first_task_id, project_id, second_task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO provider_job_queue (
+                        job_id, project_id, provider_id, task_id, agent_id, status, queued_by
+                    ) VALUES
+                        ('job_scope_first', ?, 'python_script', ?, 'agent_allocator', 'queued', 'agent_allocator'),
+                        ('job_scope_second', ?, 'python_script', ?, 'agent_allocator', 'queued', 'agent_allocator')
+                    """,
+                    (project_id, first_task_id, project_id, second_task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get(
+                "/api/timeline",
+                params={"resource_type": "task", "resource_id": first_task_id, "limit": 100},
+            ).json()
+
+            event_ids = {item["event_id"] for item in payload["events"]}
+            self.assertIn("act_scope_first", event_ids)
+            self.assertIn("sess_scope_first:started", event_ids)
+            self.assertIn("failure_scope_first", event_ids)
+            self.assertIn("dlq_scope_first:opened", event_ids)
+            self.assertIn("job_scope_first:queued", event_ids)
+            self.assertNotIn("act_scope_second", event_ids)
+            self.assertNotIn("sess_scope_second:started", event_ids)
+            self.assertNotIn("failure_scope_second", event_ids)
+            self.assertNotIn("dlq_scope_second:opened", event_ids)
+            self.assertNotIn("job_scope_second:queued", event_ids)
+            self.assertEqual(payload["filters"]["resource_type"], "task")
+            self.assertEqual(payload["filters"]["resource_id"], first_task_id)
+
 
 if __name__ == "__main__":
     unittest.main()

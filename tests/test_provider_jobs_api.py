@@ -213,6 +213,109 @@ class ProviderJobQueueApiTest(unittest.TestCase):
             self.assertEqual(first_status, "queued")
             self.assertEqual(second_status, "completed")
 
+    def test_process_next_provider_job_skips_blocked_project_in_global_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Job Global Skip Test", description="Provider job global skip test", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                first_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                first_goal_id = connection.execute(
+                    "SELECT goal_id FROM goals WHERE project_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (first_project_id,),
+                ).fetchone()["goal_id"]
+                first_task_id = _insert_assigned_task(
+                    connection,
+                    first_project_id,
+                    first_goal_id,
+                    "agent_reviewer",
+                    "First project blocked queued provider run",
+                )
+
+                second_project = create_project(
+                    connection,
+                    paths,
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="Second project",
+                    project_type="custom",
+                    mode="greenfield",
+                    source_root=tmpdir,
+                )["project"]
+                second_project_id = second_project["project_id"]
+                second_goal_id = connection.execute(
+                    "SELECT goal_id FROM goals WHERE project_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (second_project_id,),
+                ).fetchone()["goal_id"]
+                second_agent_id = connection.execute(
+                    "SELECT agent_id FROM agents WHERE project_id = ? AND role = 'reviewer' LIMIT 1",
+                    (second_project_id,),
+                ).fetchone()["agent_id"]
+                second_task_id = _insert_assigned_task(
+                    connection,
+                    second_project_id,
+                    second_goal_id,
+                    second_agent_id,
+                    "Second project runnable queued provider run",
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            first_job = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": first_project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": first_task_id,
+                },
+            ).json()
+            second_job = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": second_project_id,
+                    "agent_id": second_agent_id,
+                    "task_id": second_task_id,
+                },
+            ).json()
+            capacity_response = client.post(
+                f"/api/projects/{first_project_id}/actions/update-provider-capacity",
+                json={
+                    "actor_id": "agent_allocator",
+                    "queue_mode": "paused",
+                    "max_running_jobs": 1,
+                },
+            )
+            self.assertEqual(capacity_response.status_code, 200)
+
+            response = client.post(
+                "/api/provider-jobs/actions/process-next",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertTrue(payload["processed"])
+            self.assertEqual(payload["job"]["job_id"], second_job["job_id"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                first_status = connection.execute(
+                    "SELECT status FROM provider_job_queue WHERE job_id = ?",
+                    (first_job["job_id"],),
+                ).fetchone()["status"]
+                second_status = connection.execute(
+                    "SELECT status FROM provider_job_queue WHERE job_id = ?",
+                    (second_job["job_id"],),
+                ).fetchone()["status"]
+            finally:
+                connection.close()
+
+            self.assertEqual(first_status, "queued")
+            self.assertEqual(second_status, "completed")
+
     def test_process_job_marks_failure_when_runtime_errors(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Job Failure Test", description="Provider job failure test", project_type="custom")
@@ -301,6 +404,51 @@ class ProviderJobQueueApiTest(unittest.TestCase):
             self.assertEqual(providers_payload["worker_summary"]["idle_workers"], 1)
             self.assertEqual(providers_payload["worker_pool"][0]["worker_id"], "worker:python_script")
             self.assertEqual(providers_payload["worker_pool"][0]["last_job_status"], "completed")
+
+    def test_provider_worker_once_clears_busy_state_when_job_claim_is_lost(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Worker Claim Race Test", description="Provider worker claim race test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Worker claim race provider run")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queued_job = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            ).json()
+
+            with mock.patch("maas.services.provider_runtime.start_provider_job", return_value=None):
+                response = client.post(
+                    "/api/provider-workers/actions/run-once",
+                    json={
+                        "worker_id": "worker:python_script",
+                        "project_id": project_id,
+                        "provider_id": "python_script",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertFalse(payload["processed"])
+            self.assertEqual(payload["job"]["job_id"], queued_job["job_id"])
+            self.assertEqual(payload["job"]["status"], "queued")
+
+            providers_payload = client.get("/api/providers").json()
+            self.assertEqual(providers_payload["worker_summary"]["busy_workers"], 0)
+            self.assertEqual(providers_payload["worker_summary"]["idle_workers"], 1)
+            self.assertIsNone(providers_payload["worker_pool"][0]["current_job_id"])
+            self.assertEqual(providers_payload["worker_pool"][0]["last_job_status"], "queued")
 
     def test_process_next_and_worker_respect_project_provider_capacity(self):
         with tempfile.TemporaryDirectory() as tmpdir:

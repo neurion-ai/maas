@@ -1153,6 +1153,31 @@ def process_provider_job(connection, project_paths, job_id, actor_id, worker_id=
     return completed_job
 
 
+def _next_startable_provider_job_id(connection, provider_id=None):
+    parameters = []
+    provider_clause = ""
+    if provider_id:
+        provider_clause = "AND provider_job_queue.provider_id = ?"
+        parameters.append(provider_id)
+    rows = connection.execute(
+        """
+        SELECT provider_job_queue.job_id, provider_job_queue.project_id
+        FROM provider_job_queue
+        JOIN projects ON projects.project_id = provider_job_queue.project_id
+        WHERE provider_job_queue.status = 'queued'
+          AND projects.state = 'active'
+          {provider_clause}
+        ORDER BY provider_job_queue.created_at ASC, provider_job_queue.rowid ASC
+        """.format(provider_clause=provider_clause),
+        tuple(parameters),
+    ).fetchall()
+    for row in rows:
+        can_start, _snapshot = can_start_provider_jobs(connection, row["project_id"])
+        if can_start:
+            return row["job_id"], row["project_id"]
+    return None, None
+
+
 def process_next_provider_job(connection, project_paths, actor_id, project_id=None, provider_id=None, worker_id=None):
     resource_id = provider_id or "provider_queue"
     if project_id:
@@ -1165,15 +1190,11 @@ def process_next_provider_job(connection, project_paths, actor_id, project_id=No
             return {"processed": False, "job": None}
         job_id = next_queued_provider_job_id(connection, project_id=resolved_project_id, provider_id=provider_id)
     else:
-        job_id = next_queued_provider_job_id(connection, project_id=None, provider_id=provider_id)
+        job_id, job_project_id = _next_startable_provider_job_id(connection, provider_id=provider_id)
         if job_id is not None:
-            job = fetch_provider_job(connection, job_id, include_archived=False)
-            if job is None:
+            if job_project_id is None:
                 return {"processed": False, "job": None}
-            can_start, _snapshot = can_start_provider_jobs(connection, job["project_id"])
-            if not can_start:
-                return {"processed": False, "job": None}
-            ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", resource_id)
+            ensure_board_action_allowed(connection, actor_id, job_project_id, "process_provider_job", "provider", resource_id)
     if job_id is None:
         return {"processed": False, "job": None}
     job = process_provider_job(connection, project_paths, job_id, actor_id, worker_id=worker_id)

@@ -3,7 +3,7 @@
 from datetime import datetime
 import json
 
-from maas.services.provider_jobs import next_queued_provider_job_id
+from maas.services.provider_jobs import fetch_provider_job, next_queued_provider_job_id
 from maas.services.projects import list_projects, resolve_project_id
 from maas.services.queue_capacity import can_start_provider_jobs
 
@@ -217,13 +217,42 @@ def run_provider_worker_once(connection, project_paths, worker_id, project_id=No
         metadata={"mode": "provider_worker"},
     )
     connection.commit()
-    job = process_provider_job(
-        connection,
-        project_paths,
-        job_id,
-        actor_id="agent_allocator",
-        worker_id=worker_id,
-    )
+    try:
+        job = process_provider_job(
+            connection,
+            project_paths,
+            job_id,
+            actor_id="agent_allocator",
+            worker_id=worker_id,
+        )
+    except ValueError as exc:
+        latest_job = None
+        if str(exc) == "Provider job is no longer queued":
+            latest_job = fetch_provider_job(connection, job_id, include_archived=True)
+            upsert_provider_worker(
+                connection,
+                worker_id,
+                project_id=job_project_id,
+                provider_id=provider_id,
+                status="idle",
+                current_job_id=None,
+                last_job_id=job_id,
+                last_job_status=latest_job["status"] if latest_job else None,
+                metadata={"mode": "provider_worker"},
+            )
+            connection.commit()
+            return {"processed": False, "job": latest_job, "worker_id": worker_id}
+        upsert_provider_worker(
+            connection,
+            worker_id,
+            project_id=job_project_id,
+            provider_id=provider_id,
+            status="idle",
+            current_job_id=None,
+            metadata={"mode": "provider_worker"},
+        )
+        connection.commit()
+        raise
     upsert_provider_worker(
         connection,
         worker_id,

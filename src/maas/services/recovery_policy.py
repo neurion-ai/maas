@@ -21,6 +21,8 @@ DEFAULT_RECOVERY_POLICY = {
     "auto_retry_failed_sessions": False,
     "auto_recover_blocked_tasks": False,
     "auto_dlq_retry_exhausted_tasks": False,
+    "auto_open_task_circuit_breakers": False,
+    "circuit_breaker_failure_threshold": 3,
     "max_timed_out_retries": 1,
     "max_failed_session_retries": 1,
     "timed_out_retry_cooldown_seconds": 60,
@@ -36,6 +38,8 @@ RECOVERY_POLICY_FIELD_RULES = {
     "auto_retry_failed_sessions": {"type": "bool"},
     "auto_recover_blocked_tasks": {"type": "bool"},
     "auto_dlq_retry_exhausted_tasks": {"type": "bool"},
+    "auto_open_task_circuit_breakers": {"type": "bool"},
+    "circuit_breaker_failure_threshold": {"type": "int", "minimum": 2},
     "max_timed_out_retries": {"type": "int", "minimum": 0},
     "max_failed_session_retries": {"type": "int", "minimum": 0},
     "timed_out_retry_cooldown_seconds": {"type": "int", "minimum": 0},
@@ -129,7 +133,19 @@ def _recovery_summary(connection, project_id):
         """
         SELECT COUNT(*)
         FROM dead_letter_queue
-        WHERE project_id = ? AND status = 'open'
+        WHERE project_id = ?
+          AND status = 'open'
+          AND reason = 'retry_budget_exhausted'
+        """,
+        (project_id,),
+    ).fetchone()[0]
+    open_circuit_breakers = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM dead_letter_queue
+        WHERE project_id = ?
+          AND status = 'open'
+          AND reason = 'circuit_breaker_open'
         """,
         (project_id,),
     ).fetchone()[0]
@@ -138,6 +154,7 @@ def _recovery_summary(connection, project_id):
         SELECT
             SUM(CASE WHEN review_state = 'retry_backoff' THEN 1 ELSE 0 END) AS retry_backoff_tasks,
             SUM(CASE WHEN status = 'blocked' AND review_state = 'needs_replan' THEN 1 ELSE 0 END) AS needs_replan_tasks,
+            SUM(CASE WHEN status = 'blocked' AND review_state = 'circuit_breaker_open' THEN 1 ELSE 0 END) AS circuit_breaker_tasks,
             SUM(
                 CASE
                     WHEN status NOT IN ('done', 'cancelled', 'in_progress', 'review')
@@ -218,11 +235,13 @@ def _recovery_summary(connection, project_id):
     return {
         "retry_backoff_tasks": tasks_row["retry_backoff_tasks"] or 0,
         "needs_replan_tasks": tasks_row["needs_replan_tasks"] or 0,
+        "circuit_breaker_tasks": tasks_row["circuit_breaker_tasks"] or 0,
         "replanning_candidates": tasks_row["replanning_candidates"] or 0,
         "tasks_with_retry_history": tasks_row["tasks_with_retry_history"] or 0,
         "recoverable_blocked_tasks": tasks_row["recoverable_blocked_tasks"] or 0,
         "auto_recovery_candidates": len(auto_recovery_candidates),
         "open_dead_letter_entries": open_dead_letter_entries or 0,
+        "open_circuit_breakers": open_circuit_breakers or 0,
         "tasks_with_retry_overrides": tasks_with_retry_overrides or 0,
         "open_quarantine_entries": open_quarantine_entries or 0,
         "open_failure_alerts": open_failure_alerts or 0,
@@ -483,6 +502,40 @@ def _needs_replan_tasks(connection, project_id, limit=8):
     return items
 
 
+def _circuit_breaker_tasks(connection, project_id, limit=8):
+    items = _recovery_task_items(
+        connection,
+        project_id,
+        "tasks.status = 'blocked' AND tasks.review_state = 'circuit_breaker_open'",
+        [],
+        limit=limit,
+    )
+    for item in items:
+        item["replan_reason"] = "Automation is halted behind an open circuit breaker until an operator resets it."
+        detail_row = connection.execute(
+            """
+            SELECT detail_json
+            FROM dead_letter_queue
+            WHERE project_id = ?
+              AND task_id = ?
+              AND status = 'open'
+              AND reason = 'circuit_breaker_open'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (project_id, item["task_id"]),
+        ).fetchone()
+        detail = {}
+        if detail_row is not None:
+            try:
+                detail = json.loads(detail_row["detail_json"] or "{}")
+            except ValueError:
+                detail = {}
+        if detail:
+            item["circuit_breaker_detail"] = detail
+    return items
+
+
 def fetch_project_recovery_overview(connection, project_id=None):
     project_id = _resolve_project_id(connection, project_id)
     policy = fetch_project_recovery_policy(connection, project_id)
@@ -529,6 +582,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
         ),
         "replanning_candidates": _replanning_candidate_tasks(connection, project_id),
         "needs_replan_tasks": _needs_replan_tasks(connection, project_id),
+        "circuit_breaker_tasks": _circuit_breaker_tasks(connection, project_id),
         "active_retry_backoff": _recovery_task_items(
             connection,
             project_id,
@@ -538,7 +592,7 @@ def fetch_project_recovery_overview(connection, project_id=None):
             ),
             [],
         ),
-        "dead_letter_entries": fetch_dead_letter_queue(connection, project_id),
+        "dead_letter_entries": fetch_dead_letter_queue(connection, project_id, reason="retry_budget_exhausted"),
         "open_quarantine_entries": _recovery_quarantine_entries(connection, project_id),
         "open_failure_alerts": _recovery_open_failure_alerts(connection, project_id),
         "open_stale_agent_alerts": _recovery_stale_agent_alerts(connection, project_id),
@@ -645,6 +699,15 @@ def fetch_project_recovery_policy(connection, project_id):
         "auto_dlq_retry_exhausted_tasks": _parse_bool(
             recovery.get("auto_dlq_retry_exhausted_tasks"),
             DEFAULT_RECOVERY_POLICY["auto_dlq_retry_exhausted_tasks"],
+        ),
+        "auto_open_task_circuit_breakers": _parse_bool(
+            recovery.get("auto_open_task_circuit_breakers"),
+            DEFAULT_RECOVERY_POLICY["auto_open_task_circuit_breakers"],
+        ),
+        "circuit_breaker_failure_threshold": _parse_int(
+            recovery.get("circuit_breaker_failure_threshold"),
+            DEFAULT_RECOVERY_POLICY["circuit_breaker_failure_threshold"],
+            minimum=2,
         ),
         "max_timed_out_retries": _parse_int(
             recovery.get("max_timed_out_retries"),

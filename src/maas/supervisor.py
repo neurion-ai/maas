@@ -5,6 +5,7 @@ import json
 
 from maas.constants import HEARTBEAT_STALE_SECONDS
 from maas.ids import generate_id
+from maas.services.lifecycle import _maybe_open_task_circuit_breaker
 from maas.services.dead_letter import upsert_dead_letter_entry
 from maas.services.failure_memory import (
     maybe_raise_repeated_failure_alert,
@@ -368,7 +369,28 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None, 
                     actor_id="system_supervisor",
                     failure_id=failure_id,
                 )
-            if auto_retry is None and dead_letter is None:
+            circuit_breaker = None
+            if auto_retry is None and dead_letter is not None:
+                circuit_breaker = _maybe_open_task_circuit_breaker(
+                    connection,
+                    row["project_id"],
+                    row["task_id"],
+                    actor_id="system_supervisor",
+                    trigger="retry_budget_exhausted",
+                    retry_limit=dead_letter["retry_limit"],
+                    failure_id=failure_id,
+                )
+            if auto_retry is None and dead_letter is None and repeated_alert is not None:
+                circuit_breaker = _maybe_open_task_circuit_breaker(
+                    connection,
+                    row["project_id"],
+                    row["task_id"],
+                    actor_id="system_supervisor",
+                    trigger="repeated_failures",
+                    failure_count=repeated_alert["failure_count"],
+                    failure_id=failure_id,
+                )
+            if auto_retry is None and dead_letter is None and circuit_breaker is None:
                 connection.execute(
                     """
                     UPDATE tasks

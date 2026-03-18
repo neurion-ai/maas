@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from maas.api import create_app
 from maas.db import connect
+from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.security import revoke_task_capabilities
@@ -584,6 +585,99 @@ class LifecycleStateTransitionTest(unittest.TestCase):
             self.assertEqual(dead_letter["status"], "open")
             self.assertEqual(json.loads(dead_letter["detail_json"])["failure_type"], "session_failed")
             self.assertEqual(alert["status"], "resolved")
+
+    def test_failed_session_opens_circuit_breaker_after_repeated_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Lifecycle Circuit Breaker Test",
+                description="Lifecycle circuit breaker test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_open_task_circuit_breakers=True,
+                    circuit_breaker_failure_threshold=2,
+                )
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE status = 'ready' LIMIT 1"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES (?, ?, ?, NULL, 'agent_allocator', 'session_failed', 'Earlier failure', '{}')
+                    """,
+                    (generate_id("fail"), project_id, task_id),
+                )
+                connection.commit()
+                session_id = start_session(
+                    connection,
+                    project_id=project_id,
+                    agent_id="agent_allocator",
+                    task_id=task_id,
+                    provider_type="python_script",
+                    status_message="Starting lifecycle circuit breaker test",
+                )
+
+                end_session(connection, session_id, "failed", "Failure threshold reached")
+
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT reason, status, detail_json
+                    FROM dead_letter_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+                failure_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Task session failed'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                repeated_alert = connection.execute(
+                    """
+                    SELECT status
+                    FROM alerts
+                    WHERE title = 'Repeated task failures'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "circuit_breaker_open")
+            self.assertEqual(task["retry_count"], 0)
+            self.assertIsNone(task["last_retry_reason"])
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(dead_letter["reason"], "circuit_breaker_open")
+            self.assertEqual(dead_letter["status"], "open")
+            self.assertEqual(
+                json.loads(dead_letter["detail_json"]),
+                {"trigger": "repeated_failures", "failure_count": 2, "threshold": 2, "retry_limit": None, "retry_count": 0},
+            )
+            self.assertEqual(failure_alert["status"], "resolved")
+            self.assertEqual(repeated_alert["status"], "open")
 
     def test_reset_retry_state_restores_failed_session_auto_retry_budget(self):
         with tempfile.TemporaryDirectory() as tmpdir:

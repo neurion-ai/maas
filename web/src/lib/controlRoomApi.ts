@@ -409,6 +409,8 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     auto_retry_failed_sessions: false,
     auto_recover_blocked_tasks: false,
     auto_dlq_retry_exhausted_tasks: false,
+    auto_open_task_circuit_breakers: false,
+    circuit_breaker_failure_threshold: 3,
     max_timed_out_retries: 1,
     max_failed_session_retries: 1,
     timed_out_retry_cooldown_seconds: 60,
@@ -422,6 +424,8 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
     auto_retry_failed_sessions: false,
     auto_recover_blocked_tasks: false,
     auto_dlq_retry_exhausted_tasks: false,
+    auto_open_task_circuit_breakers: false,
+    circuit_breaker_failure_threshold: 3,
     max_timed_out_retries: 1,
     max_failed_session_retries: 1,
     timed_out_retry_cooldown_seconds: 60,
@@ -433,11 +437,13 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   summary: {
     retry_backoff_tasks: 0,
     needs_replan_tasks: 0,
+    circuit_breaker_tasks: 0,
     replanning_candidates: 0,
     tasks_with_retry_history: 0,
     recoverable_blocked_tasks: 0,
     auto_recovery_candidates: 0,
     open_dead_letter_entries: 0,
+    open_circuit_breakers: 0,
     tasks_with_retry_overrides: 0,
     open_quarantine_entries: 0,
     open_failure_alerts: 0,
@@ -459,6 +465,7 @@ const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
   task_retry_history: [],
   replanning_candidates: [],
   needs_replan_tasks: [],
+  circuit_breaker_tasks: [],
   active_retry_backoff: [],
   dead_letter_entries: [],
   open_quarantine_entries: [],
@@ -783,6 +790,13 @@ export async function releaseTaskRetryBackoff(taskId: string) {
 
 export async function resetTaskRetryState(taskId: string) {
   const payload = await postJson(`/api/tasks/${taskId}/actions/reset-retry-state`, {
+    actor_id: "agent_allocator"
+  });
+  return payload;
+}
+
+export async function resetTaskCircuitBreaker(taskId: string) {
+  const payload = await postJson(`/api/tasks/${taskId}/actions/reset-circuit-breaker`, {
     actor_id: "agent_allocator"
   });
   return payload;

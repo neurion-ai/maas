@@ -73,9 +73,8 @@ def resolve_dead_letter_entries_for_task(connection, project_id, task_id, resolu
     return [row["dlq_id"] for row in rows]
 
 
-def fetch_dead_letter_queue(connection, project_id, limit=8):
-    rows = connection.execute(
-        """
+def fetch_dead_letter_queue(connection, project_id, limit=8, reason=None):
+    query = """
         SELECT
             dead_letter_queue.dlq_id,
             dead_letter_queue.project_id,
@@ -105,11 +104,14 @@ def fetch_dead_letter_queue(connection, project_id, limit=8):
         LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
         WHERE dead_letter_queue.project_id = ?
           AND dead_letter_queue.status = 'open'
-        ORDER BY dead_letter_queue.created_at DESC
-        LIMIT ?
-        """,
-        (project_id, limit),
-    ).fetchall()
+    """
+    parameters = [project_id]
+    if reason is not None:
+        query += "\n  AND dead_letter_queue.reason = ?"
+        parameters.append(reason)
+    query += "\n        ORDER BY dead_letter_queue.created_at DESC\n        LIMIT ?"
+    parameters.append(limit)
+    rows = connection.execute(query, tuple(parameters)).fetchall()
     items = []
     for row in rows:
         item = dict(row)

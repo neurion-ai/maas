@@ -583,6 +583,101 @@ def reset_task_retry_state(connection, task_id, actor_id):
     }
 
 
+def reset_task_circuit_breaker(connection, task_id, actor_id):
+    task = connection.execute(
+        """
+        SELECT task_id, project_id, assigned_agent_id, status, review_state, retry_count
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "reset_task_circuit_breaker", "task", task_id)
+    if task["status"] != "blocked" or task["review_state"] != "circuit_breaker_open":
+        raise ValueError("Task does not currently have an open circuit breaker")
+
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'planned',
+            review_state = NULL,
+            assigned_agent_id = NULL,
+            retry_count = 0,
+            last_retry_at = NULL,
+            last_retry_reason = NULL,
+            next_retry_at = NULL,
+            next_retry_reason = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    )
+    refreshed = refresh_ready_tasks(connection, commit=False)
+    task_after = connection.execute(
+        """
+        SELECT status, review_state, retry_count, next_retry_at, next_retry_reason
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    resolved_dlq_entries = resolve_dead_letter_entries_for_task(
+        connection,
+        task["project_id"],
+        task_id,
+        "circuit_breaker_reset",
+    )
+    resolve_repeated_failure_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        resolution_reason="circuit_breaker_reset",
+    )
+    resolve_task_session_failed_alerts(
+        connection,
+        task["project_id"],
+        task_id,
+        actor_id,
+        reason="circuit_breaker_reset",
+        activity_description="Task failure alerts resolved after circuit breaker reset.",
+    )
+    _audit(
+        connection,
+        task["project_id"],
+        actor_id,
+        "reset_task_circuit_breaker",
+        "task",
+        task_id,
+        {
+            "previous_status": task["status"],
+            "previous_review_state": task["review_state"],
+            "previous_retry_count": task["retry_count"],
+            "resolved_dead_letter_entries": resolved_dlq_entries,
+            "ready_changes": refreshed,
+        },
+    )
+    _activity(
+        connection,
+        task["project_id"],
+        task["assigned_agent_id"],
+        task_id,
+        "circuit_breaker_reset",
+        "Task circuit breaker reset by operator and returned to readiness evaluation.",
+    )
+    connection.commit()
+    return {
+        "task_id": task_id,
+        "status": task_after["status"],
+        "review_state": task_after["review_state"],
+        "retry_count": task_after["retry_count"],
+        "next_retry_at": task_after["next_retry_at"],
+        "next_retry_reason": task_after["next_retry_reason"],
+    }
+
+
 def mark_task_for_replan(connection, task_id, actor_id):
     task = connection.execute(
         """

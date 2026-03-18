@@ -730,6 +730,8 @@ export interface RecoveryPolicySettings {
   auto_retry_failed_sessions: boolean;
   auto_recover_blocked_tasks: boolean;
   auto_dlq_retry_exhausted_tasks: boolean;
+  auto_open_task_circuit_breakers: boolean;
+  circuit_breaker_failure_threshold: number;
   max_timed_out_retries: number;
   max_failed_session_retries: number;
   timed_out_retry_cooldown_seconds: number;
@@ -759,6 +761,13 @@ export interface RecoveryTaskItem {
   latest_failure_at?: string | null;
   replan_strategy?: string | null;
   replan_summary?: string | null;
+  circuit_breaker_detail?: {
+    trigger?: string;
+    failure_count?: number;
+    threshold?: number;
+    retry_limit?: number;
+    retry_count?: number;
+  };
 }
 
 export interface DeadLetterQueueItem {
@@ -798,11 +807,13 @@ export interface RecoveryPolicyResponse {
   summary: {
     retry_backoff_tasks: number;
     needs_replan_tasks: number;
+    circuit_breaker_tasks: number;
     replanning_candidates: number;
     tasks_with_retry_history: number;
     recoverable_blocked_tasks: number;
     auto_recovery_candidates: number;
     open_dead_letter_entries: number;
+    open_circuit_breakers: number;
     tasks_with_retry_overrides: number;
     open_quarantine_entries: number;
     open_failure_alerts: number;
@@ -820,6 +831,7 @@ export interface RecoveryPolicyResponse {
   task_retry_history: RecoveryTaskItem[];
   replanning_candidates: RecoveryTaskItem[];
   needs_replan_tasks: RecoveryTaskItem[];
+  circuit_breaker_tasks: RecoveryTaskItem[];
   active_retry_backoff: RecoveryTaskItem[];
   dead_letter_entries: DeadLetterQueueItem[];
   open_quarantine_entries: QuarantineQueueItem[];

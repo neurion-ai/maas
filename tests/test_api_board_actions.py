@@ -523,6 +523,108 @@ lint = "example:main"
             self.assertEqual(response.status_code, 400)
             self.assertIn("no retry state", response.json()["detail"])
 
+    def test_reset_circuit_breaker_clears_block_and_resolves_incidents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Reset Circuit Breaker Test", description="Reset circuit breaker", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_at = CURRENT_TIMESTAMP,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES ('dlq_reset_circuit_breaker', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, task_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES
+                        ('alert_reset_circuit_failure', ?, 'warning', 'Task session failed', ?, 'open'),
+                        ('alert_reset_circuit_repeated', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        f"Task {task_id} failed in session sess_reset_circuit. Failure.",
+                        project_id,
+                        f"Task {task_id} (Wire the scheduler and board read model) has failed 3 times. Latest failure: Failure",
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/tasks/{task_id}/actions/reset-circuit-breaker",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["status"], "ready")
+            self.assertIsNone(payload["review_state"])
+            self.assertEqual(payload["retry_count"], 0)
+            self.assertIsNone(payload["next_retry_at"])
+            self.assertIsNone(payload["next_retry_reason"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letter = connection.execute(
+                    """
+                    SELECT status, resolution_note
+                    FROM dead_letter_queue
+                    WHERE dlq_id = 'dlq_reset_circuit_breaker'
+                    """
+                ).fetchone()
+                alerts = connection.execute(
+                    """
+                    SELECT title, status
+                    FROM alerts
+                    WHERE alert_id IN ('alert_reset_circuit_failure', 'alert_reset_circuit_repeated')
+                    ORDER BY alert_id
+                    """
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(task["status"], "ready")
+            self.assertIsNone(task["review_state"])
+            self.assertEqual(task["retry_count"], 0)
+            self.assertIsNone(task["last_retry_reason"])
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual(dead_letter["status"], "resolved")
+            self.assertEqual(dead_letter["resolution_note"], "circuit_breaker_reset")
+            self.assertEqual([(row["title"], row["status"]) for row in alerts], [
+                ("Task session failed", "resolved"),
+                ("Repeated task failures", "resolved"),
+            ])
+
     def test_mark_for_replan_and_finish_replan_move_task_through_replanning_queue(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Replan Task Test", description="Replan task steering", project_type="custom")

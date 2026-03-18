@@ -26,11 +26,15 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertFalse(payload["policy"]["auto_retry_failed_sessions"])
             self.assertFalse(payload["policy"]["auto_recover_blocked_tasks"])
             self.assertFalse(payload["policy"]["auto_dlq_retry_exhausted_tasks"])
+            self.assertFalse(payload["policy"]["auto_open_task_circuit_breakers"])
+            self.assertEqual(payload["policy"]["circuit_breaker_failure_threshold"], 3)
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 1)
             self.assertEqual(payload["policy"]["retry_backoff_multiplier"], 2)
             self.assertEqual(payload["summary"]["retry_backoff_tasks"], 0)
             self.assertEqual(payload["summary"]["auto_recovery_candidates"], 0)
             self.assertEqual(payload["summary"]["open_dead_letter_entries"], 0)
+            self.assertEqual(payload["summary"]["circuit_breaker_tasks"], 0)
+            self.assertEqual(payload["summary"]["open_circuit_breakers"], 0)
             self.assertEqual(payload["summary"]["open_quarantine_entries"], 0)
             self.assertEqual(
                 payload["backoff_preview"]["timed_out_retry_delays"],
@@ -77,6 +81,8 @@ class RecoveryPolicyApiTest(unittest.TestCase):
                         "auto_retry_failed_sessions": True,
                         "auto_recover_blocked_tasks": True,
                         "auto_dlq_retry_exhausted_tasks": True,
+                        "auto_open_task_circuit_breakers": True,
+                        "circuit_breaker_failure_threshold": 4,
                         "max_timed_out_retries": 3,
                         "max_failed_session_retries": 2,
                         "timed_out_retry_cooldown_seconds": 30,
@@ -93,6 +99,8 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertTrue(payload["policy"]["auto_retry_failed_sessions"])
             self.assertTrue(payload["policy"]["auto_recover_blocked_tasks"])
             self.assertTrue(payload["policy"]["auto_dlq_retry_exhausted_tasks"])
+            self.assertTrue(payload["policy"]["auto_open_task_circuit_breakers"])
+            self.assertEqual(payload["policy"]["circuit_breaker_failure_threshold"], 4)
             self.assertEqual(payload["policy"]["max_timed_out_retries"], 3)
             self.assertEqual(payload["policy"]["retry_backoff_max_seconds"], 120)
             self.assertEqual(
@@ -123,6 +131,8 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(config["recovery"]["retry_backoff_multiplier"], 3)
             self.assertTrue(config["recovery"]["auto_recover_blocked_tasks"])
             self.assertTrue(config["recovery"]["auto_dlq_retry_exhausted_tasks"])
+            self.assertTrue(config["recovery"]["auto_open_task_circuit_breakers"])
+            self.assertEqual(config["recovery"]["circuit_breaker_failure_threshold"], 4)
 
     def test_recovery_policy_endpoint_includes_dead_letter_entries(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -185,6 +195,67 @@ class RecoveryPolicyApiTest(unittest.TestCase):
             self.assertEqual(entry["detail"]["failure_type"], "session_failed")
             self.assertEqual(entry["detail"]["retry_limit"], 1)
             self.assertEqual(entry["detail"]["retry_count"], 1)
+
+    def test_recovery_policy_endpoint_separates_dead_letter_and_circuit_breaker_queues(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Recovery Policy Test", description="Recovery policy test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                dead_letter_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Wire the scheduler and board read model'"
+                ).fetchone()["task_id"]
+                circuit_breaker_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'needs_replan'
+                    WHERE task_id = ?
+                    """,
+                    (dead_letter_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'circuit_breaker_open',
+                        retry_count = 3,
+                        last_retry_reason = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (circuit_breaker_task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO dead_letter_queue (
+                        dlq_id, project_id, task_id, reason, detail_json
+                    ) VALUES
+                        ('dlq_retry_exhausted', ?, ?, 'retry_budget_exhausted', '{"failure_type":"session_failed","retry_limit":1,"retry_count":1}'),
+                        ('dlq_circuit_breaker', ?, ?, 'circuit_breaker_open', '{"trigger":"repeated_failures","failure_count":3,"threshold":3}')
+                    """,
+                    (project_id, dead_letter_task_id, project_id, circuit_breaker_task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.get("/api/recovery-policy").json()
+
+            self.assertEqual(payload["summary"]["open_dead_letter_entries"], 1)
+            self.assertEqual(payload["summary"]["open_circuit_breakers"], 1)
+            self.assertEqual(payload["summary"]["circuit_breaker_tasks"], 1)
+            self.assertEqual(len(payload["dead_letter_entries"]), 1)
+            self.assertEqual(payload["dead_letter_entries"][0]["task_id"], dead_letter_task_id)
+            self.assertEqual(payload["dead_letter_entries"][0]["reason"], "retry_budget_exhausted")
+            self.assertEqual(len(payload["circuit_breaker_tasks"]), 1)
+            self.assertEqual(payload["circuit_breaker_tasks"][0]["task_id"], circuit_breaker_task_id)
+            self.assertEqual(
+                payload["circuit_breaker_tasks"][0]["circuit_breaker_detail"],
+                {"trigger": "repeated_failures", "failure_count": 3, "threshold": 3},
+            )
 
     def test_recovery_policy_endpoint_includes_task_overrides_retry_history_and_active_backoff_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -435,6 +435,89 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(dead_letter["status"], "open")
             self.assertEqual(json.loads(dead_letter["detail_json"])["failure_type"], "session_timed_out")
 
+    def test_supervisor_opens_circuit_breaker_when_timeout_retry_budget_is_exhausted(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Circuit Breaker Test",
+                description="Supervisor circuit breaker test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                self._update_recovery_config(
+                    connection,
+                    auto_retry_timeout_sessions=True,
+                    auto_dlq_retry_exhausted_tasks=True,
+                    auto_open_task_circuit_breakers=True,
+                    max_timed_out_retries=1,
+                    timed_out_retry_cooldown_seconds=60,
+                )
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET retry_count = 1, last_retry_reason = 'session_timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE sessions
+                    SET last_heartbeat_at = '2000-01-01 00:00:00'
+                    WHERE task_id = ? AND status = 'active'
+                    """,
+                    (task_id,),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, stale_after_seconds=90, allocate_limit=0)
+                task = connection.execute(
+                    """
+                    SELECT status, review_state, retry_count, last_retry_reason, next_retry_at, next_retry_reason
+                    FROM tasks
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                ).fetchone()
+                dead_letters = connection.execute(
+                    """
+                    SELECT reason, status, detail_json
+                    FROM dead_letter_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (task_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertFalse(supervisor_result["stale_sessions"][0]["auto_retried"])
+            self.assertTrue(supervisor_result["stale_sessions"][0]["dead_lettered"])
+            self.assertEqual(task["status"], "blocked")
+            self.assertEqual(task["review_state"], "circuit_breaker_open")
+            self.assertEqual(task["retry_count"], 1)
+            self.assertEqual(task["last_retry_reason"], "session_timed_out")
+            self.assertIsNone(task["next_retry_at"])
+            self.assertIsNone(task["next_retry_reason"])
+            self.assertEqual([item["reason"] for item in dead_letters], ["retry_budget_exhausted", "circuit_breaker_open"])
+            self.assertEqual(dead_letters[0]["status"], "open")
+            self.assertEqual(dead_letters[1]["status"], "open")
+            self.assertEqual(json.loads(dead_letters[0]["detail_json"])["failure_type"], "session_timed_out")
+            self.assertEqual(
+                json.loads(dead_letters[1]["detail_json"]),
+                {
+                    "trigger": "retry_budget_exhausted",
+                    "failure_count": None,
+                    "threshold": 3,
+                    "retry_limit": 1,
+                    "retry_count": 1,
+                },
+            )
+
     def test_supervisor_auto_recovers_safe_blocked_failed_task_when_policy_allows(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

@@ -27,6 +27,7 @@ from maas.services.steering import (
     recover_task,
     release_task_retry_backoff,
     reset_task_retry_state,
+    reset_task_circuit_breaker,
     resolve_task_repeated_failures,
     set_task_retry_limit,
     restore_and_requeue_quarantine_entry,
@@ -142,6 +143,11 @@ def build_parser():
     task_reset_retry_state_parser.add_argument("--project-root", default=".")
     task_reset_retry_state_parser.add_argument("--task-id", required=True)
     task_reset_retry_state_parser.add_argument("--actor-id", required=True)
+
+    task_reset_circuit_breaker_parser = task_subparsers.add_parser("reset-circuit-breaker")
+    task_reset_circuit_breaker_parser.add_argument("--project-root", default=".")
+    task_reset_circuit_breaker_parser.add_argument("--task-id", required=True)
+    task_reset_circuit_breaker_parser.add_argument("--actor-id", required=True)
 
     task_mark_for_replan_parser = task_subparsers.add_parser("mark-for-replan")
     task_mark_for_replan_parser.add_argument("--project-root", default=".")
@@ -412,6 +418,8 @@ def command_task(args):
             print(json.dumps(release_task_retry_backoff(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "reset-retry-state":
             print(json.dumps(reset_task_retry_state(connection, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "reset-circuit-breaker":
+            print(json.dumps(reset_task_circuit_breaker(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "mark-for-replan":
             print(json.dumps(mark_task_for_replan(connection, args.task_id, args.actor_id), indent=2))
         elif args.task_command == "finish-replan":

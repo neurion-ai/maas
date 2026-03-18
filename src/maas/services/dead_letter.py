@@ -3,6 +3,7 @@
 import json
 
 from maas.ids import generate_id
+from maas.services.notifications import queue_notification_event
 
 
 def upsert_dead_letter_entry(connection, project_id, task_id, reason, detail=None, failure_id=None):
@@ -40,6 +41,17 @@ def upsert_dead_letter_entry(connection, project_id, task_id, reason, detail=Non
         ) VALUES (?, ?, ?, ?, ?, ?)
         """,
         (dlq_id, project_id, task_id, failure_id, reason, detail_json),
+    )
+    queue_notification_event(
+        connection,
+        project_id,
+        event_type="dead_letter_opened",
+        severity="warning",
+        title="Dead-letter entry opened",
+        body="Task {0} entered the dead-letter queue for reason {1}.".format(task_id, reason),
+        resource_type="task",
+        resource_id=task_id,
+        payload={"dlq_id": dlq_id, "reason": reason, "detail": detail or {}, "failure_id": failure_id},
     )
     return dlq_id
 

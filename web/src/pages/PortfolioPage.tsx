@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
 import {
   fetchPortfolio,
+  processNotification,
   processProviderJob,
   runOrchestratorPass,
   updateEscalationStatus,
+  updateProjectNotificationPolicy,
   updateProjectProviderCapacity,
   updateProjectRiskPolicy,
   updateProjectRuntimeQuotas
@@ -44,6 +46,9 @@ export function PortfolioPage() {
       }
     >
   >({});
+  const [notificationDrafts, setNotificationDrafts] = useState<
+    Record<string, { webhookUrls: string; minimumSeverity: "info" | "warning" | "critical"; enabledEvents: string[] }>
+  >({});
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -75,6 +80,20 @@ export function PortfolioPage() {
                   dailyLiveRunLimit: project.runtime_quotas.daily_live_run_limit,
                   dailyRuntimeSecondsLimit: project.runtime_quotas.daily_runtime_seconds_limit,
                   maxTaskSessionAttempts: project.runtime_quotas.max_task_session_attempts
+                };
+              }
+            });
+            return next;
+          });
+          setNotificationDrafts((current) => {
+            const next = { ...current };
+            payload.projects.forEach((project) => {
+              if (!next[project.project_id]) {
+                next[project.project_id] = {
+                  webhookUrls: (project.notification_policy?.webhook_urls ?? []).join(", "),
+                  minimumSeverity:
+                    (project.notification_policy?.minimum_severity as "info" | "warning" | "critical") ?? "warning",
+                  enabledEvents: project.notification_policy?.enabled_events ?? []
                 };
               }
             });
@@ -213,6 +232,47 @@ export function PortfolioPage() {
     }
   }
 
+  async function handleUpdateNotificationPolicy(projectId: string) {
+    const actionKey = `notifications:${projectId}`;
+    const draft = notificationDrafts[projectId];
+    if (!draft) {
+      return;
+    }
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await updateProjectNotificationPolicy(projectId, {
+        webhook_urls: draft.webhookUrls
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean),
+        minimum_severity: draft.minimumSeverity,
+        enabled_events: draft.enabledEvents
+      });
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Updated notification policy for ${projectId}.`);
+    } catch {
+      setNotice("Notification policy update failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleProcessNotification(notificationId: string) {
+    const actionKey = `notification:${notificationId}:process`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await processNotification(notificationId);
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Processed notification ${notificationId} with status ${payload.status}.`);
+    } catch {
+      setNotice("Notification delivery failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -243,6 +303,8 @@ export function PortfolioPage() {
         <StatCard label="Recovery pressure" value={portfolio?.summary.recovery_pressure ?? 0} tone="warn" />
         <StatCard label="Open escalations" value={portfolio?.summary.open_escalations ?? 0} tone="warn" />
         <StatCard label="Queued jobs" value={portfolio?.summary.queued_provider_jobs ?? 0} />
+        <StatCard label="Queued notifications" value={portfolio?.summary.queued_notifications ?? 0} />
+        <StatCard label="Failed notifications" value={portfolio?.summary.failed_notifications ?? 0} tone="warn" />
       </section>
 
       <article className="data-panel">
@@ -303,6 +365,12 @@ export function PortfolioPage() {
                   {project.runtime_quotas.daily_runtime_seconds_limit
                     ? ` / ${Math.round(project.runtime_quotas.daily_runtime_seconds_limit / 60)}`
                     : " / unlimited"}
+                </p>
+                <p>
+                  Notifications: {project.notification_policy?.webhook_urls?.length ?? 0} webhooks
+                  {project.notification_policy?.enabled_events?.length
+                    ? ` · ${project.notification_policy.enabled_events.join(", ")}`
+                    : " · no events enabled"}
                 </p>
               </div>
               <div className="data-list__meta">
@@ -508,6 +576,92 @@ export function PortfolioPage() {
                 >
                   Save quotas
                 </button>
+                <label className="task-inline-control">
+                  <span>Webhook URLs</span>
+                  <input
+                    type="text"
+                    value={notificationDrafts[project.project_id]?.webhookUrls ?? ""}
+                    disabled={pendingActionKey === `notifications:${project.project_id}`}
+                    onChange={(event) =>
+                      setNotificationDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          webhookUrls: event.target.value,
+                          minimumSeverity:
+                            current[project.project_id]?.minimumSeverity ??
+                            ((project.notification_policy?.minimum_severity as "info" | "warning" | "critical") ??
+                              "warning"),
+                          enabledEvents:
+                            current[project.project_id]?.enabledEvents ??
+                            (project.notification_policy?.enabled_events ?? [])
+                        }
+                      }))
+                    }
+                  />
+                </label>
+                <label className="task-inline-control">
+                  <span>Notify from</span>
+                  <select
+                    value={
+                      notificationDrafts[project.project_id]?.minimumSeverity ??
+                      ((project.notification_policy?.minimum_severity as "info" | "warning" | "critical") ?? "warning")
+                    }
+                    disabled={pendingActionKey === `notifications:${project.project_id}`}
+                    onChange={(event) =>
+                      setNotificationDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          webhookUrls:
+                            current[project.project_id]?.webhookUrls ??
+                            (project.notification_policy?.webhook_urls ?? []).join(", "),
+                          minimumSeverity: event.target.value as "info" | "warning" | "critical",
+                          enabledEvents:
+                            current[project.project_id]?.enabledEvents ??
+                            (project.notification_policy?.enabled_events ?? [])
+                        }
+                      }))
+                    }
+                  >
+                    <option value="info">info</option>
+                    <option value="warning">warning</option>
+                    <option value="critical">critical</option>
+                  </select>
+                </label>
+                <label className="task-inline-control">
+                  <span>Events</span>
+                  <select
+                    multiple
+                    value={notificationDrafts[project.project_id]?.enabledEvents ?? (project.notification_policy?.enabled_events ?? [])}
+                    disabled={pendingActionKey === `notifications:${project.project_id}`}
+                    onChange={(event) =>
+                      setNotificationDrafts((current) => ({
+                        ...current,
+                        [project.project_id]: {
+                          webhookUrls:
+                            current[project.project_id]?.webhookUrls ??
+                            (project.notification_policy?.webhook_urls ?? []).join(", "),
+                          minimumSeverity:
+                            current[project.project_id]?.minimumSeverity ??
+                            ((project.notification_policy?.minimum_severity as "info" | "warning" | "critical") ??
+                              "warning"),
+                          enabledEvents: Array.from(event.target.selectedOptions).map((option) => option.value)
+                        }
+                      }))
+                    }
+                  >
+                    <option value="escalation_requested">escalation_requested</option>
+                    <option value="dead_letter_opened">dead_letter_opened</option>
+                    <option value="circuit_breaker_opened">circuit_breaker_opened</option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  className="task-action task-action--secondary"
+                  disabled={pendingActionKey === `notifications:${project.project_id}`}
+                  onClick={() => void handleUpdateNotificationPolicy(project.project_id)}
+                >
+                  Save notifications
+                </button>
                 <button
                   type="button"
                   className="task-action task-action--secondary"
@@ -597,6 +751,51 @@ export function PortfolioPage() {
               ))
             ) : (
               <p className="empty-state">No queued provider jobs.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="data-panel">
+          <header className="data-panel__header">
+            <div>
+              <h2>Notification deliveries</h2>
+              <p>Retry queued or failed outbound webhook deliveries across all active projects.</p>
+            </div>
+          </header>
+          <div className="data-list">
+            {(portfolio?.command_center.notification_deliveries ?? []).length ? (
+              portfolio?.command_center.notification_deliveries.map((item) => (
+                <div key={item.notification_id} className="data-list__item">
+                  <div>
+                    <strong>{item.title}</strong>
+                    <p>{item.project_name ?? item.project_id}</p>
+                    <p>
+                      {item.event_type} · {item.severity} · {item.status}
+                    </p>
+                    <p>{item.body}</p>
+                    <p>{item.target_url}</p>
+                    {item.last_error ? <p>Last error: {item.last_error}</p> : null}
+                  </div>
+                  <div className="data-list__meta">
+                    <span>{item.attempts} attempts</span>
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingActionKey === `notification:${item.notification_id}:process`}
+                      onClick={() => void handleProcessNotification(item.notification_id)}
+                    >
+                      Process delivery
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="data-list__item">
+                <div>
+                  <strong>No notification deliveries are queued.</strong>
+                  <p>Configured webhooks will appear here when escalation, DLQ, or circuit-breaker events fire.</p>
+                </div>
+              </div>
             )}
           </div>
         </article>

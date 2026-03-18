@@ -199,6 +199,11 @@ export interface PortfolioProject {
     live_runs_today: number;
     runtime_seconds_today: number;
   };
+  notification_policy?: {
+    webhook_urls?: string[];
+    minimum_severity?: string;
+    enabled_events?: string[];
+  };
   at_scheduler_capacity: boolean;
 }
 
@@ -213,6 +218,8 @@ export interface PortfolioResponse {
     projects_with_issues: number;
     open_escalations: number;
     queued_provider_jobs: number;
+    queued_notifications: number;
+    failed_notifications: number;
   };
   projects: PortfolioProject[];
   command_center: {
@@ -220,6 +227,7 @@ export interface PortfolioResponse {
     urgent_alerts: AlertItem[];
     open_dead_letter_entries: DeadLetterQueueItem[];
     queued_provider_jobs: ProviderJobItem[];
+    notification_deliveries: NotificationItem[];
   };
 }
 
@@ -781,6 +789,27 @@ export interface EscalationsResponse {
     approved: number;
     rejected: number;
   };
+}
+
+export interface NotificationItem {
+  notification_id: string;
+  project_id: string;
+  project_name?: string | null;
+  target_url: string;
+  event_type: string;
+  severity: string;
+  title: string;
+  body: string;
+  payload: Record<string, unknown>;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  status: string;
+  attempts: number;
+  last_error?: string | null;
+  last_response_code?: number | null;
+  created_at: string;
+  updated_at?: string | null;
+  sent_at?: string | null;
 }
 
 export interface ProviderRuntimeControls {

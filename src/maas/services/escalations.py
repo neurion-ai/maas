@@ -5,6 +5,7 @@ import json
 from maas.ids import generate_id
 from maas.services.security import ensure_board_action_allowed, resolve_board_actor
 from maas.services.steering import halt_task, pause_agent, reassign_task, resume_agent
+from maas.services.notifications import queue_notification_event
 
 
 SUPPORTED_ESCALATION_ACTIONS = {
@@ -162,6 +163,17 @@ def request_escalation(connection, project_id, actor_id, action_type, resource_t
         "Escalation requested for {0}.".format(action_type),
         details={"escalation_id": escalation_id, "resource_id": resource_id},
         severity="warning",
+    )
+    queue_notification_event(
+        connection,
+        project_id,
+        event_type="escalation_requested",
+        severity="warning",
+        title="Escalation requested",
+        body="Escalation requested for {0} on {1} {2}.".format(action_type, resource_type, resource_id),
+        resource_type=resource_type,
+        resource_id=resource_id,
+        payload={"escalation_id": escalation_id, "action_type": action_type, "requested_by": requester["agent_id"]},
     )
     connection.commit()
     return {"escalation_id": escalation_id, "status": "open"}

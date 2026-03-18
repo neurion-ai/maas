@@ -29,6 +29,12 @@ from maas.services.projects import (
     restore_project,
     update_brownfield_onboarding_review,
 )
+from maas.services.notifications import (
+    fetch_notification_outbox,
+    process_next_notification,
+    process_notification,
+    update_project_notification_policy,
+)
 from maas.services.queue_capacity import update_project_queue_capacity_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
@@ -165,6 +171,19 @@ def build_parser():
     project_runtime_quota_parser.add_argument("--daily-runtime-seconds-limit", type=int, required=True)
     project_runtime_quota_parser.add_argument("--max-task-session-attempts", type=int, required=True)
 
+    project_notification_policy_parser = project_subparsers.add_parser("set-notification-policy")
+    project_notification_policy_parser.add_argument("--project-root", default=".")
+    project_notification_policy_parser.add_argument("--project-id", required=True)
+    project_notification_policy_parser.add_argument("--actor-id", default="agent_allocator")
+    project_notification_policy_parser.add_argument("--webhook-url", action="append", default=[])
+    project_notification_policy_parser.add_argument("--minimum-severity", choices=("info", "warning", "critical"), required=True)
+    project_notification_policy_parser.add_argument(
+        "--enabled-event",
+        action="append",
+        default=[],
+        choices=("escalation_requested", "dead_letter_opened", "circuit_breaker_opened"),
+    )
+
     project_refresh_repo_plan_parser = project_subparsers.add_parser("refresh-repo-plan")
     project_refresh_repo_plan_parser.add_argument("--project-root", default=".")
     project_refresh_repo_plan_parser.add_argument("--project-id", required=True)
@@ -263,6 +282,24 @@ def build_parser():
 
     verification_list_parser = verification_subparsers.add_parser("list")
     verification_list_parser.add_argument("--project-root", default=".")
+
+    notification_parser = subparsers.add_parser("notification")
+    notification_subparsers = notification_parser.add_subparsers(dest="notification_command", required=True)
+
+    notification_list_parser = notification_subparsers.add_parser("list")
+    notification_list_parser.add_argument("--project-root", default=".")
+    notification_list_parser.add_argument("--project-id")
+    notification_list_parser.add_argument("--status")
+
+    notification_process_parser = notification_subparsers.add_parser("process")
+    notification_process_parser.add_argument("--project-root", default=".")
+    notification_process_parser.add_argument("--notification-id", required=True)
+    notification_process_parser.add_argument("--actor-id", default="agent_allocator")
+
+    notification_process_next_parser = notification_subparsers.add_parser("process-next")
+    notification_process_next_parser.add_argument("--project-root", default=".")
+    notification_process_next_parser.add_argument("--actor-id", default="agent_allocator")
+    notification_process_next_parser.add_argument("--project-id")
     verification_list_parser.add_argument("--project-id")
     verification_list_parser.add_argument("--task-id")
     verification_list_parser.add_argument("--limit", type=int, default=20)
@@ -644,6 +681,22 @@ def command_project(args):
                     indent=2,
                 )
             )
+        elif args.project_command == "set-notification-policy":
+            print(
+                json.dumps(
+                    update_project_notification_policy(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "webhook_urls": args.webhook_url,
+                            "minimum_severity": args.minimum_severity,
+                            "enabled_events": args.enabled_event,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
         elif args.project_command == "refresh-repo-plan":
             print(
                 json.dumps(
@@ -655,6 +708,32 @@ def command_project(args):
                     indent=2,
                 )
             )
+    finally:
+        connection.close()
+
+
+def command_notification(args):
+    connection = connect(project_paths(args.project_root))
+    try:
+        if args.notification_command == "list":
+            print(
+                json.dumps(
+                    {
+                        "notifications": fetch_notification_outbox(
+                            connection,
+                            project_id=args.project_id,
+                            status=args.status,
+                            limit=20,
+                            include_archived=False,
+                        )
+                    },
+                    indent=2,
+                )
+            )
+        elif args.notification_command == "process":
+            print(json.dumps(process_notification(connection, args.notification_id, args.actor_id), indent=2))
+        elif args.notification_command == "process-next":
+            print(json.dumps(process_next_notification(connection, args.actor_id, project_id=args.project_id), indent=2))
     finally:
         connection.close()
 
@@ -980,6 +1059,8 @@ def main(argv=None):
         command_failure(args)
     elif args.command == "verification":
         command_verification(args)
+    elif args.command == "notification":
+        command_notification(args)
     elif args.command == "quarantine":
         command_quarantine(args)
     elif args.command == "escalation":

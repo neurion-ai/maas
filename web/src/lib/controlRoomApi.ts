@@ -160,14 +160,17 @@ const PORTFOLIO_FALLBACK: PortfolioResponse = {
     recovery_pressure: 0,
     projects_with_issues: 0,
     open_escalations: 0,
-    queued_provider_jobs: 0
+    queued_provider_jobs: 0,
+    queued_notifications: 0,
+    failed_notifications: 0
   },
   projects: [],
   command_center: {
     open_escalations: [],
     urgent_alerts: [],
     open_dead_letter_entries: [],
-    queued_provider_jobs: []
+    queued_provider_jobs: [],
+    notification_deliveries: []
   }
 };
 
@@ -676,6 +679,35 @@ export async function updateProjectRuntimeQuotas(
     daily_live_run_limit: payload.daily_live_run_limit,
     daily_runtime_seconds_limit: payload.daily_runtime_seconds_limit,
     max_task_session_attempts: payload.max_task_session_attempts
+  });
+}
+
+export async function updateProjectNotificationPolicy(
+  projectId: string,
+  payload: {
+    webhook_urls: string[];
+    minimum_severity: "info" | "warning" | "critical";
+    enabled_events: string[];
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-notification-policy`, {
+    actor_id: "agent_allocator",
+    webhook_urls: payload.webhook_urls,
+    minimum_severity: payload.minimum_severity,
+    enabled_events: payload.enabled_events
+  });
+}
+
+export async function processNotification(notificationId: string) {
+  return postJson(`/api/notifications/${notificationId}/actions/process`, {
+    actor_id: "agent_allocator"
+  });
+}
+
+export async function processNextNotification(projectId?: string) {
+  return postJson("/api/notifications/actions/process-next", {
+    actor_id: "agent_allocator",
+    project_id: projectId ?? null
   });
 }
 

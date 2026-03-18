@@ -4,6 +4,11 @@ import json
 
 from maas.providers import list_provider_status
 from maas.services.failure_memory import repeated_failure_task_count
+from maas.services.notifications import (
+    count_notification_outbox,
+    fetch_notification_outbox,
+    notification_policy_from_row,
+)
 from maas.services.projects import list_projects
 from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.risk_policy import risk_policy_from_row
@@ -204,6 +209,10 @@ def _fetch_command_center_provider_jobs(connection, limit=8):
     return [dict(row) for row in rows]
 
 
+def _fetch_command_center_notifications(connection, limit=8):
+    return fetch_notification_outbox(connection, project_id=None, limit=limit, include_archived=False)
+
+
 def fetch_portfolio(connection):
     projects = list_projects(connection, include_archived=True)
     blocked_counts = _count_by_project(
@@ -291,6 +300,7 @@ def fetch_portfolio(connection):
         provider_capacity = queue_capacity_snapshot(connection, project_id)
         risk_policy = risk_policy_from_row(project_row)
         runtime_quota_view = runtime_quota_snapshot(connection, project_id)
+        notification_policy = notification_policy_from_row(project_row)
         item = {
             **project,
             "blocked_tasks": blocked_counts.get(project_id, 0),
@@ -312,6 +322,7 @@ def fetch_portfolio(connection):
                 "live_runs_today": runtime_quota_view["usage"]["live_runs_today"],
                 "runtime_seconds_today": runtime_quota_view["usage"]["runtime_seconds_today"],
             },
+            "notification_policy": notification_policy,
             "at_scheduler_capacity": active_session_counts.get(project_id, 0) >= scheduler_policy["max_active_sessions"],
         }
         item["health"] = _health_status(project, item)
@@ -330,6 +341,8 @@ def fetch_portfolio(connection):
     urgent_alerts = _fetch_command_center_alerts(connection)
     open_dead_letters = _fetch_command_center_dead_letters(connection)
     provider_job_backlog = _fetch_command_center_provider_jobs(connection)
+    notification_counts = count_notification_outbox(connection)
+    notification_outbox = _fetch_command_center_notifications(connection)
     return {
         "summary": {
             "active_projects": len(active_projects),
@@ -344,6 +357,8 @@ def fetch_portfolio(connection):
             "projects_with_issues": len([item for item in active_projects if item["health"] in {"critical", "warn"}]),
             "open_escalations": len(open_escalations),
             "queued_provider_jobs": len(provider_job_backlog),
+            "queued_notifications": notification_counts["queued"],
+            "failed_notifications": notification_counts["failed"],
         },
         "projects": portfolio_projects,
         "command_center": {
@@ -351,5 +366,6 @@ def fetch_portfolio(connection):
             "urgent_alerts": urgent_alerts,
             "open_dead_letter_entries": open_dead_letters,
             "queued_provider_jobs": provider_job_backlog,
+            "notification_deliveries": notification_outbox,
         },
     }

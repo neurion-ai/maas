@@ -349,6 +349,36 @@ lint = "imported:lint"
             self.assertEqual(project_row["runtime_quotas"]["daily_runtime_seconds_limit"], 1800)
             self.assertEqual(project_row["runtime_quotas"]["max_task_session_attempts"], 3)
 
+    def test_update_notification_policy_persists_and_is_visible_in_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-notification-policy",
+                json={
+                    "actor_id": "agent_allocator",
+                    "webhook_urls": ["https://example.test/maas"],
+                    "minimum_severity": "critical",
+                    "enabled_events": ["escalation_requested", "circuit_breaker_opened"],
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["notification_policy"],
+                {
+                    "webhook_urls": ["https://example.test/maas"],
+                    "minimum_severity": "critical",
+                    "enabled_events": ["escalation_requested", "circuit_breaker_opened"],
+                },
+            )
+
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["notification_policy"]["webhook_urls"], ["https://example.test/maas"])
+            self.assertEqual(project_row["notification_policy"]["minimum_severity"], "critical")
+
     def test_refresh_repo_plan_endpoint_preserves_progressed_synthesized_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._create_brownfield_repo(tmpdir)

@@ -24,6 +24,12 @@ from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_que
 from maas.services.git_workspaces import capture_task_git_diff, fetch_task_git_workspace, prepare_task_git_workspace
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
+from maas.services.notifications import (
+    fetch_notification_outbox,
+    process_next_notification,
+    process_notification,
+    update_project_notification_policy,
+)
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.provider_runtime import (
     process_next_provider_job,
@@ -218,6 +224,11 @@ class ProviderWorkerRunRequest(BaseModel):
     provider_id: Optional[str] = None
 
 
+class NotificationProcessRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    project_id: Optional[str] = None
+
+
 class ProviderModeRequest(BaseModel):
     actor_id: str
     mode: str
@@ -281,6 +292,13 @@ class ProjectRuntimeQuotasRequest(BaseModel):
     daily_live_run_limit: int
     daily_runtime_seconds_limit: int
     max_task_session_attempts: int
+
+
+class ProjectNotificationPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    webhook_urls: List[str] = []
+    minimum_severity: str
+    enabled_events: List[str] = []
 
 
 def _parse_limit(value, default):
@@ -484,6 +502,25 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.post("/api/projects/{project_id}/actions/update-notification-policy")
+    def projects_update_notification_policy(project_id: str, payload: ProjectNotificationPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_notification_policy(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "webhook_urls": payload.webhook_urls,
+                    "minimum_severity": payload.minimum_severity,
+                    "enabled_events": payload.enabled_events,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.post("/api/projects/{project_id}/actions/refresh-repo-plan")
     def projects_refresh_repo_plan(project_id: str, payload: AgentActionRequest):
         connection = connect(paths)
@@ -626,6 +663,23 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_portfolio(connection)
+        finally:
+            connection.close()
+
+    @app.get("/api/notifications")
+    def notifications(project_id: str = None, status: str = None, limit: str = None):
+        parsed_limit = _parse_limit(limit, 20)
+        connection = connect(paths)
+        try:
+            return {
+                "notifications": fetch_notification_outbox(
+                    connection,
+                    project_id=_selected_project_id(connection, project_id) if project_id else None,
+                    status=status,
+                    limit=parsed_limit,
+                    include_archived=False,
+                )
+            }
         finally:
             connection.close()
 
@@ -1107,6 +1161,37 @@ def create_app(project_root="."):
                 project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
                 provider_id=payload.provider_id,
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/notifications/{notification_id}/actions/process")
+    def notification_process_action(notification_id: str, payload: NotificationProcessRequest):
+        connection = connect(paths)
+        try:
+            result = process_notification(connection, notification_id, payload.actor_id)
+            if result is None:
+                raise HTTPException(status_code=404, detail="notification not found")
+            return result
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/notifications/actions/process-next")
+    def notification_process_next_action(payload: NotificationProcessRequest):
+        connection = connect(paths)
+        try:
+            return process_next_notification(
+                connection,
+                payload.actor_id,
+                project_id=_selected_project_id(connection, payload.project_id) if payload.project_id else None,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

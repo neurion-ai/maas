@@ -6,6 +6,7 @@ from maas.ids import generate_id
 from maas.providers import get_provider
 from maas.services.alerts import resolve_task_session_failed_alerts
 from maas.services.dead_letter import upsert_dead_letter_entry
+from maas.services.notifications import queue_notification_event
 from maas.services.recovery_policy import (
     failed_session_retry_cooldown_seconds,
     fetch_project_recovery_policy,
@@ -297,6 +298,23 @@ def _maybe_open_task_circuit_breaker(
             "Task automation halted behind a circuit breaker.",
             json.dumps({"dlq_id": dlq_id, "trigger": trigger, "failure_count": failure_count, "threshold": threshold}),
         ),
+    )
+    queue_notification_event(
+        connection,
+        project_id,
+        event_type="circuit_breaker_opened",
+        severity="critical",
+        title="Task circuit breaker opened",
+        body="Task {0} is blocked behind a circuit breaker after {1}.".format(task_id, trigger),
+        resource_type="task",
+        resource_id=task_id,
+        payload={
+            "dlq_id": dlq_id,
+            "trigger": trigger,
+            "failure_count": failure_count,
+            "threshold": threshold,
+            "retry_limit": retry_limit,
+        },
     )
     return {"task_id": task_id, "dlq_id": dlq_id, "trigger": trigger}
 

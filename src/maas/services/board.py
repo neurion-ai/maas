@@ -5,6 +5,7 @@ import json
 
 from maas.constants import BOARD_COLUMNS
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
+from maas.services.verification import fetch_latest_verification_by_task
 
 
 def _parse_timestamp(value):
@@ -213,6 +214,7 @@ def fetch_board(connection, filters=None, project_id=None):
         scheduler_rows.append(item)
 
     scheduler_decisions = scheduler_decisions_for_tasks(scheduler_rows, agent_rows)
+    latest_verification_by_task = fetch_latest_verification_by_task(connection, project_id=project_id)
 
     cards_by_status = {}
     filtered_rows = [row for row in scheduler_rows if _matches_filters(row, filters or {})]
@@ -221,6 +223,7 @@ def fetch_board(connection, filters=None, project_id=None):
         column_key = _board_column_key(row["status"])
         scheduler = describe_task_scheduler(row, scheduler_decisions.get(row["task_id"]))
         replan_feedback = adaptive_replan_feedback(row)
+        latest_verification = latest_verification_by_task.get(row["task_id"]) or {}
         card = {
             "task_id": row["task_id"],
             "title": row["title"],
@@ -263,6 +266,10 @@ def fetch_board(connection, filters=None, project_id=None):
             "replan_summary": replan_feedback.get("replan_summary") if replan_feedback else None,
             "scoped_paths": _scoped_paths_from_acceptance(row["acceptance_criteria_json"]),
             "validation_commands": _validation_commands_from_acceptance(row["acceptance_criteria_json"]),
+            "has_verification_recipe": bool(_validation_commands_from_acceptance(row["acceptance_criteria_json"])),
+            "latest_verification_status": latest_verification.get("status"),
+            "latest_verification_at": latest_verification.get("finished_at"),
+            "latest_verification_command": latest_verification.get("command"),
         }
         cards_by_status.setdefault(column_key, []).append(card)
 

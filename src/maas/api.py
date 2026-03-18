@@ -78,6 +78,7 @@ from maas.services.steering import (
     review_task,
 )
 from maas.supervisor import run_supervisor_once
+from maas.services.verification import fetch_verification_runs, run_task_verification
 
 
 class LifecycleHeartbeatRequest(BaseModel):
@@ -640,6 +641,17 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/verifications")
+    def verifications(limit=20, task_id: str = None, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id) if project_id is not None else None
+            return {"runs": fetch_verification_runs(connection, project_id=scoped_project_id, task_id=task_id, limit=int(limit))}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.get("/api/artifacts")
     def artifacts(
         limit=100,
@@ -1169,6 +1181,18 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return review_task(connection, task_id, payload.actor_id, payload.decision)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/run-verification")
+    def task_run_verification_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return run_task_verification(connection, paths, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

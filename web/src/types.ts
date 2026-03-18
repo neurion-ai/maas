@@ -54,6 +54,10 @@ export interface BoardTask {
   replan_summary?: string | null;
   scoped_paths?: string[];
   validation_commands?: string[];
+  has_verification_recipe?: boolean;
+  latest_verification_status?: string | null;
+  latest_verification_at?: string | null;
+  latest_verification_command?: string | null;
 }
 
 export interface BoardColumn {

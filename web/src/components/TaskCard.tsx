@@ -73,6 +73,7 @@ interface TaskCardProps {
   onRecoverAndRequeue?: (taskId: string) => void;
   onMarkForReplan?: (taskId: string) => void;
   onFinishReplan?: (taskId: string) => void;
+  onRunVerification?: (taskId: string) => void;
   onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
@@ -89,6 +90,7 @@ export function TaskCard({
   onRecoverAndRequeue,
   onMarkForReplan,
   onFinishReplan,
+  onRunVerification,
   onRetryLimitChange
 }: TaskCardProps) {
   const reviewApproveKey = `review:${task.task_id}:approve`;
@@ -101,6 +103,7 @@ export function TaskCard({
   const recoverAndRequeueKey = `recover-and-requeue:${task.task_id}`;
   const markForReplanKey = `mark-for-replan:${task.task_id}`;
   const finishReplanKey = `finish-replan:${task.task_id}`;
+  const runVerificationKey = `run-verification:${task.task_id}`;
   const retryLimitKey = `retry-limit:${task.task_id}`;
   const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
   const isPendingReviewReject = pendingActionKey === reviewRejectKey;
@@ -112,6 +115,7 @@ export function TaskCard({
   const isPendingRecoverAndRequeue = pendingActionKey === recoverAndRequeueKey;
   const isPendingMarkForReplan = pendingActionKey === markForReplanKey;
   const isPendingFinishReplan = pendingActionKey === finishReplanKey;
+  const isPendingRunVerification = pendingActionKey === runVerificationKey;
   const isPendingRetryLimit = pendingActionKey === retryLimitKey;
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
@@ -135,6 +139,7 @@ export function TaskCard({
       task.review_state === "retry_backoff" ||
       RECOVERABLE_REVIEW_STATES.has(task.review_state ?? ""));
   const canFinishReplan = task.status === "blocked" && task.review_state === "needs_replan" && !!onFinishReplan;
+  const canRunVerification = !!task.has_verification_recipe && !!onRunVerification;
   const canSetRetryLimit = canSteerTask && !!onRetryLimitChange;
   const retryLimitOptions = Array.from(
     new Set(
@@ -239,6 +244,16 @@ export function TaskCard({
             <dd>{formatCompactList(task.validation_commands, 2)}</dd>
           </div>
         ) : null}
+        {task.latest_verification_status ? (
+          <div>
+            <dt>Verified</dt>
+            <dd>
+              {task.latest_verification_status}
+              {task.latest_verification_command ? ` | ${task.latest_verification_command}` : ""}
+              {task.latest_verification_at ? ` | ${new Date(task.latest_verification_at).toLocaleString()}` : ""}
+            </dd>
+          </div>
+        ) : null}
       </dl>
       {(canReview ||
         canToggleAgent ||
@@ -249,6 +264,7 @@ export function TaskCard({
         canRecoverAndRequeue ||
         canMarkForReplan ||
         canFinishReplan ||
+        canRunVerification ||
         canSetRetryLimit) && (
         <div className="task-card__actions">
           {canReview && (
@@ -393,6 +409,16 @@ export function TaskCard({
               onClick={() => onRecoverAndRequeue?.(task.task_id)}
             >
               {isPendingRecoverAndRequeue ? "Requeueing..." : "Recover + requeue"}
+            </button>
+          )}
+          {canRunVerification && (
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              disabled={isPendingRunVerification}
+              onClick={() => onRunVerification?.(task.task_id)}
+            >
+              {isPendingRunVerification ? "Running verification..." : "Run verification"}
             </button>
           )}
         </div>

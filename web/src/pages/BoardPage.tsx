@@ -9,6 +9,7 @@ import {
   recoverTask,
   reprioritizeTask,
   reviewTask,
+  runTaskVerification,
   setTaskRetryLimit,
   setAgentState
 } from "../lib/boardApi";
@@ -232,6 +233,25 @@ export function BoardPage() {
     }
   }
 
+  async function handleRunVerification(taskId: string) {
+    const actionKey = `run-verification:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await runTaskVerification(taskId);
+      setNotice(
+        payload.overall_passed
+          ? `Verification passed for ${taskId}.`
+          : `Verification recorded failures for ${taskId}.`
+      );
+      await loadBoard();
+    } catch {
+      setNotice("Task verification failed to run; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   async function handleRetryLimitChange(taskId: string, autoRetryLimit: number | null) {
     const actionKey = `retry-limit:${taskId}`;
     setPendingActionKey(actionKey);
@@ -367,13 +387,14 @@ export function BoardPage() {
             onPriorityChange={handlePriorityChange}
             onReassign={handleReassign}
               onHalt={handleHalt}
-              onRecover={handleRecover}
-              onRecoverAndRequeue={handleRecoverAndRequeue}
-              onMarkForReplan={handleMarkForReplan}
-              onFinishReplan={handleFinishReplan}
-              onRetryLimitChange={handleRetryLimitChange}
-            />
-          ))}
+            onRecover={handleRecover}
+            onRecoverAndRequeue={handleRecoverAndRequeue}
+            onMarkForReplan={handleMarkForReplan}
+            onFinishReplan={handleFinishReplan}
+            onRunVerification={handleRunVerification}
+            onRetryLimitChange={handleRetryLimitChange}
+          />
+        ))}
       </section>
     </main>
   );

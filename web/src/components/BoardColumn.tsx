@@ -14,6 +14,7 @@ interface BoardColumnProps {
   onRecoverAndRequeue?: (taskId: string) => void;
   onMarkForReplan?: (taskId: string) => void;
   onFinishReplan?: (taskId: string) => void;
+  onRunVerification?: (taskId: string) => void;
   onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
@@ -30,6 +31,7 @@ export function BoardColumn({
   onRecoverAndRequeue,
   onMarkForReplan,
   onFinishReplan,
+  onRunVerification,
   onRetryLimitChange
 }: BoardColumnProps) {
   return (
@@ -57,6 +59,7 @@ export function BoardColumn({
             onRecoverAndRequeue={onRecoverAndRequeue}
             onMarkForReplan={onMarkForReplan}
             onFinishReplan={onFinishReplan}
+            onRunVerification={onRunVerification}
             onRetryLimitChange={onRetryLimitChange}
           />
         ))}

@@ -24,7 +24,8 @@
 - [x] `#96` remote executor or worker pool is implemented on `codex/remote-executor-worker-pool`
 - [x] `#97` cross-project scheduler fairness and capacity policy is implemented on `codex/cross-project-scheduler-fairness`
 - [x] `#98` repo-grounded plan synthesis and refresh is implemented on `codex/repo-grounded-plan-synthesis`
-- [ ] `#99` verification runners and evidence capture is the next unfinished step
+- [x] `#99` verification runners and evidence capture is implemented on `codex/verification-runners-evidence-capture`
+- [ ] `#100` git-aware task workspaces and diff review is the next unfinished step
 
 ## Extended Numbered Roadmap
 
@@ -46,7 +47,7 @@
 - [x] `#96` Remote executor or worker pool
 - [x] `#97` Cross-project scheduler fairness and capacity policy
 - [x] `#98` Repo-grounded plan synthesis and refresh
-- [ ] `#99` Verification runners and evidence capture
+- [x] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review
 - [ ] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls

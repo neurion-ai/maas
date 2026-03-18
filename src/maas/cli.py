@@ -52,6 +52,7 @@ from maas.services.steering import (
     restore_failure_artifacts,
 )
 from maas.supervisor import run_supervisor_once
+from maas.services.verification import fetch_verification_runs, run_task_verification
 
 
 def build_parser():
@@ -214,6 +215,20 @@ def build_parser():
     task_allocate_parser.add_argument("--agent-id")
     task_allocate_parser.add_argument("--actor-id", default="system_allocator")
     task_allocate_parser.add_argument("--limit", type=int)
+
+    task_verify_parser = task_subparsers.add_parser("run-verification")
+    task_verify_parser.add_argument("--project-root", default=".")
+    task_verify_parser.add_argument("--task-id", required=True)
+    task_verify_parser.add_argument("--actor-id", required=True)
+
+    verification_parser = subparsers.add_parser("verification")
+    verification_subparsers = verification_parser.add_subparsers(dest="verification_command", required=True)
+
+    verification_list_parser = verification_subparsers.add_parser("list")
+    verification_list_parser.add_argument("--project-root", default=".")
+    verification_list_parser.add_argument("--project-id")
+    verification_list_parser.add_argument("--task-id")
+    verification_list_parser.add_argument("--limit", type=int, default=20)
 
     failure_parser = subparsers.add_parser("failure")
     failure_subparsers = failure_parser.add_subparsers(dest="failure_command", required=True)
@@ -602,6 +617,8 @@ def command_task(args):
                 print(json.dumps(assign_next_task(connection, args.agent_id, actor_id=args.actor_id), indent=2))
             else:
                 print(json.dumps(allocate_ready_tasks(connection, actor_id=args.actor_id, limit=args.limit), indent=2))
+        elif args.task_command == "run-verification":
+            print(json.dumps(run_task_verification(connection, paths, args.task_id, args.actor_id), indent=2))
     finally:
         connection.close()
 
@@ -624,6 +641,21 @@ def command_failure(args):
             print(json.dumps(fetch_failure_log(connection, limit=args.limit), indent=2))
         elif args.failure_command == "restore-artifacts":
             print(json.dumps(restore_failure_artifacts(connection, paths, args.failure_id, args.actor_id), indent=2))
+    finally:
+        connection.close()
+
+
+def command_verification(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.verification_command == "list":
+            print(
+                json.dumps(
+                    {"runs": fetch_verification_runs(connection, project_id=args.project_id, task_id=args.task_id, limit=args.limit)},
+                    indent=2,
+                )
+            )
     finally:
         connection.close()
 
@@ -858,6 +890,8 @@ def main(argv=None):
         command_task(args)
     elif args.command == "failure":
         command_failure(args)
+    elif args.command == "verification":
+        command_verification(args)
     elif args.command == "quarantine":
         command_quarantine(args)
     elif args.command == "escalation":

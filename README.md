@@ -48,7 +48,8 @@ Current stacked development chain above `main`:
 - `#96` exists on `codex/remote-executor-worker-pool`
 - `#97` exists on `codex/cross-project-scheduler-fairness`
 - `#98` exists on `codex/repo-grounded-plan-synthesis`
-- `#99` is the next unfinished step in the current sequence
+- `#99` exists on `codex/verification-runners-evidence-capture`
+- `#100` is the next unfinished step in the current sequence
 
 ### Current project state
 
@@ -109,7 +110,7 @@ Current stacked development chain above `main`:
 - [x] `#96` Remote executor or worker pool
 - [x] `#97` Cross-project scheduler fairness and capacity policy
 - [x] `#98` Repo-grounded plan synthesis and refresh
-- [ ] `#99` Verification runners and evidence capture
+- [x] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review
 - [ ] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls
@@ -138,7 +139,8 @@ Current stacked development chain above `main`:
 - [x] `#96` is implemented on `codex/remote-executor-worker-pool`
 - [x] `#97` is implemented on `codex/cross-project-scheduler-fairness`
 - [x] `#98` is implemented on `codex/repo-grounded-plan-synthesis`
-- [ ] `#99` is the next unfinished item
+- [x] `#99` is implemented on `codex/verification-runners-evidence-capture`
+- [ ] `#100` is the next unfinished item
 
 ### Extended numbered roadmap
 
@@ -160,7 +162,7 @@ Current stacked development chain above `main`:
 - [x] `#96` Remote executor or worker pool
 - [x] `#97` Cross-project scheduler fairness and capacity policy
 - [x] `#98` Repo-grounded plan synthesis and refresh
-- [ ] `#99` Verification runners and evidence capture
+- [x] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review
 - [ ] `#101` Cross-project command center
 - [ ] `#102` Queue and worker capacity controls

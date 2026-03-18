@@ -328,6 +328,24 @@ export async function markTaskForReplan(taskId: string) {
   });
 }
 
+export async function runTaskVerification(taskId: string) {
+  const response = await fetch(`/api/tasks/${taskId}/actions/run-verification`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      actor_id: DEFAULT_ACTOR_ID
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unexpected status: ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export async function finishTaskReplan(taskId: string) {
   await postJson(`/api/tasks/${taskId}/actions/finish-replan`, {
     actor_id: DEFAULT_ACTOR_ID

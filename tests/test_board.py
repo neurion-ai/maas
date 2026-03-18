@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+import json
 
 from maas.db import connect
 from maas.ids import generate_id
@@ -324,6 +325,78 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertIsNotNone(matching_cards[0]["last_retry_at"])
             self.assertEqual(matching_cards[0]["next_retry_at"], "2999-01-01 00:00:00")
             self.assertEqual(matching_cards[0]["next_retry_reason"], "session_timed_out")
+
+    def test_board_cards_include_latest_verification_evidence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Verification Test", description="Board verification test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id, project_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {
+                                    "type": "test_passes",
+                                    "command": "python -c \"print('ok')\"",
+                                    "timeout_seconds": 30,
+                                }
+                            ]
+                        ),
+                        task_id["task_id"],
+                    ),
+                )
+                artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, 'verification_log', ?, '{}')
+                    """,
+                    (
+                        artifact_id,
+                        task_id["project_id"],
+                        task_id["task_id"],
+                        os.path.join(tmpdir, "verification.log"),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code,
+                        output_excerpt, artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (?, ?, ?, ?, 'passed', 0, 'ok', ?, 'agent_allocator', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        generate_id("verify"),
+                        task_id["project_id"],
+                        task_id["task_id"],
+                        "python -c \"print('ok')\"",
+                        artifact_id,
+                    ),
+                )
+                connection.commit()
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            matching_cards = [
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id["task_id"]
+            ]
+            self.assertTrue(matching_cards[0]["has_verification_recipe"])
+            self.assertEqual(matching_cards[0]["latest_verification_status"], "passed")
+            self.assertEqual(matching_cards[0]["latest_verification_command"], "python -c \"print('ok')\"")
+            self.assertIsNotNone(matching_cards[0]["latest_verification_at"])
 
 
 if __name__ == "__main__":

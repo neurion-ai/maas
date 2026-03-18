@@ -13,7 +13,9 @@
 - [x] `#83` is implemented on the stacked branch `codex/brownfield-file-backed-planning`
 - [x] `#84` is implemented on the stacked branch `codex/recovery-circuit-breakers`
 - [x] `#85` is implemented on the stacked branch `codex/project-isolated-provider-runtime`
-- [ ] `#86` is the next unfinished item in the current stacked sequence
+- [x] `#86` is implemented on the stacked branch `codex/provider-job-queue`
+- [x] `#87` is implemented on the stacked branch `codex/provider-job-queue`
+- [ ] `#88` is the next unfinished item in the current stacked sequence
 
 ## Current Snapshot
 

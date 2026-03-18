@@ -33,7 +33,9 @@ Current stacked development chain above `main`:
 - `#83` exists on `codex/brownfield-file-backed-planning`
 - `#84` exists on `codex/recovery-circuit-breakers`
 - `#85` exists on `codex/project-isolated-provider-runtime`
-- `#86` is the next unfinished step in the current sequence
+- `#86` exists on `codex/provider-job-queue`
+- `#87` exists on `codex/provider-job-queue`
+- `#88` is the next unfinished step in the current sequence
 
 ### Current project state
 
@@ -90,7 +92,9 @@ Current stacked development chain above `main`:
 - [x] `#83` is implemented on `codex/brownfield-file-backed-planning`
 - [x] `#84` is implemented on `codex/recovery-circuit-breakers`
 - [x] `#85` is implemented on `codex/project-isolated-provider-runtime`
-- [ ] `#86` is the next unfinished item
+- [x] `#86` is implemented on `codex/provider-job-queue`
+- [x] `#87` is implemented on `codex/provider-job-queue`
+- [ ] `#88` is the next unfinished item
 
 ## Quick Start
 

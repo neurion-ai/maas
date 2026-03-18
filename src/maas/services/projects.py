@@ -6,6 +6,7 @@ import os
 from maas.config import DEFAULT_PROJECT_TYPE, build_default_project_config
 from maas.ids import generate_id
 from maas.services.bootstrap import (
+    BROWNFIELD_REVIEW_TASK_TITLE,
     build_discovery_summary,
     build_understanding_markdown,
     detect_bootstrap_mode,
@@ -164,6 +165,164 @@ def _activity(connection, project_id, action, description):
         """,
         (generate_id("act"), project_id, action, description),
     )
+
+
+def _save_project_config(connection, project_id, config):
+    connection.execute(
+        "UPDATE projects SET config_json = ?, updated_at = CURRENT_TIMESTAMP WHERE project_id = ?",
+        (json.dumps(config), project_id),
+    )
+
+
+def _discovery_drift(previous_summary, current_summary, scanned_at):
+    previous_summary = previous_summary or {}
+    current_summary = current_summary or {}
+
+    previous_workflows = set(previous_summary.get("workflow_labels") or [])
+    current_workflows = set(current_summary.get("workflow_labels") or [])
+    previous_repo_areas = set(previous_summary.get("repo_areas") or [])
+    current_repo_areas = set(current_summary.get("repo_areas") or [])
+    previous_packages = set(previous_summary.get("package_managers") or [])
+    current_packages = set(current_summary.get("package_managers") or [])
+    previous_map = set(item.get("name") for item in (previous_summary.get("codebase_map") or []) if item.get("name"))
+    current_map = set(item.get("name") for item in (current_summary.get("codebase_map") or []) if item.get("name"))
+
+    file_count_before = previous_summary.get("total_files") or 0
+    file_count_after = current_summary.get("total_files") or 0
+    file_count_delta = file_count_after - file_count_before
+    primary_language_before = previous_summary.get("primary_language")
+    primary_language_after = current_summary.get("primary_language")
+
+    workflow_labels_added = sorted(current_workflows - previous_workflows)
+    workflow_labels_removed = sorted(previous_workflows - current_workflows)
+    repo_areas_added = sorted(current_repo_areas - previous_repo_areas)
+    repo_areas_removed = sorted(previous_repo_areas - current_repo_areas)
+    package_managers_added = sorted(current_packages - previous_packages)
+    package_managers_removed = sorted(previous_packages - current_packages)
+    codebase_map_added = sorted(current_map - previous_map)
+    codebase_map_removed = sorted(previous_map - current_map)
+
+    changes = []
+    if primary_language_before != primary_language_after:
+        changes.append(
+            "Primary language changed from {0} to {1}".format(
+                primary_language_before or "unknown",
+                primary_language_after or "unknown",
+            )
+        )
+    if file_count_delta:
+        direction = "increased" if file_count_delta > 0 else "decreased"
+        changes.append("Scanned file count {0} by {1}".format(direction, abs(file_count_delta)))
+    if workflow_labels_added:
+        changes.append("New workflow signals: {0}".format(", ".join(workflow_labels_added[:4])))
+    if workflow_labels_removed:
+        changes.append("Removed workflow signals: {0}".format(", ".join(workflow_labels_removed[:4])))
+    if repo_areas_added:
+        changes.append("New repo areas: {0}".format(", ".join(repo_areas_added[:4])))
+    if repo_areas_removed:
+        changes.append("Removed repo areas: {0}".format(", ".join(repo_areas_removed[:4])))
+    if package_managers_added:
+        changes.append("New package managers: {0}".format(", ".join(package_managers_added[:4])))
+    if package_managers_removed:
+        changes.append("Removed package managers: {0}".format(", ".join(package_managers_removed[:4])))
+    if codebase_map_added:
+        changes.append("New codebase map entries: {0}".format(", ".join(codebase_map_added[:4])))
+    if codebase_map_removed:
+        changes.append("Removed codebase map entries: {0}".format(", ".join(codebase_map_removed[:4])))
+
+    detected = bool(changes)
+    return {
+        "detected": detected,
+        "scanned_at": scanned_at,
+        "summary": changes[0] if changes else "No brownfield drift detected.",
+        "changes": changes,
+        "file_count_delta": file_count_delta,
+        "primary_language_before": primary_language_before,
+        "primary_language_after": primary_language_after,
+        "workflow_labels_added": workflow_labels_added,
+        "workflow_labels_removed": workflow_labels_removed,
+        "repo_areas_added": repo_areas_added,
+        "repo_areas_removed": repo_areas_removed,
+        "package_managers_added": package_managers_added,
+        "package_managers_removed": package_managers_removed,
+        "codebase_map_added": codebase_map_added,
+        "codebase_map_removed": codebase_map_removed,
+    }
+
+
+def _ensure_brownfield_review_alert(connection, project_id, description):
+    existing = connection.execute(
+        """
+        SELECT alert_id, status
+        FROM alerts
+        WHERE project_id = ?
+          AND title = 'Brownfield onboarding review pending'
+        ORDER BY
+            CASE status
+                WHEN 'open' THEN 0
+                WHEN 'acknowledged' THEN 1
+                ELSE 2
+            END,
+            rowid DESC
+        LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if existing is not None:
+        if existing["status"] == "resolved":
+            connection.execute(
+                """
+                UPDATE alerts
+                SET status = 'open',
+                    description = ?
+                WHERE alert_id = ?
+                """,
+                (description, existing["alert_id"]),
+            )
+        return existing["alert_id"]
+
+    alert_id = generate_id("alert")
+    connection.execute(
+        """
+        INSERT INTO alerts (
+            alert_id, project_id, severity, title, description, status
+        ) VALUES (?, ?, 'info', 'Brownfield onboarding review pending', ?, 'open')
+        """,
+        (alert_id, project_id, description),
+    )
+    return alert_id
+
+
+def _reopen_brownfield_review_task(connection, project_id):
+    review_task = connection.execute(
+        """
+        SELECT task_id, status, review_state
+        FROM tasks
+        WHERE project_id = ? AND title = ?
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (project_id, BROWNFIELD_REVIEW_TASK_TITLE),
+    ).fetchone()
+    if review_task is None:
+        return None
+    if review_task["status"] == "review" and review_task["review_state"] == "awaiting_review":
+        return dict(review_task)
+    connection.execute(
+        """
+        UPDATE tasks
+        SET status = 'review',
+            review_state = 'awaiting_review',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE task_id = ?
+        """,
+        (review_task["task_id"],),
+    )
+    return {
+        "task_id": review_task["task_id"],
+        "status": "review",
+        "review_state": "awaiting_review",
+    }
 
 
 def create_project(
@@ -334,3 +493,77 @@ def restore_project(connection, project_id, actor_id):
     _audit(connection, project_id, actor_id, "restore_project", "project", project_id, {})
     connection.commit()
     return {"project_id": project_id, "state": "active"}
+
+
+def rescan_brownfield_project(connection, project_paths, project_id, actor_id):
+    project = resolve_project(connection, project_id, include_archived=False)
+    if project is None:
+        raise ValueError("project not found")
+
+    config = _load_project_config(project["config_json"])
+    onboarding = dict(config.get("onboarding") or {})
+    if (onboarding.get("mode") or "greenfield") != "brownfield":
+        raise ValueError("project is not in brownfield mode")
+
+    source_root = os.path.abspath(project["source_root"] or config.get("project", {}).get("source_root") or "")
+    if not source_root or not os.path.isdir(source_root):
+        raise ValueError("project source root is not available")
+
+    scanned_at = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
+    previous_summary = onboarding.get("discovery_summary") or {}
+    discovery = discover_brownfield_project(source_root)
+    discovery_summary = build_discovery_summary(discovery)
+    drift = _discovery_drift(previous_summary, discovery_summary, scanned_at)
+
+    onboarding["discovery_summary"] = discovery_summary
+    onboarding["last_scanned_at"] = scanned_at
+    onboarding["last_scanned_by"] = actor_id
+    onboarding["drift_summary"] = drift
+    review_task = None
+    if drift["detected"]:
+        onboarding["review_status"] = "review_pending"
+        review_task = _reopen_brownfield_review_task(connection, project_id)
+        if review_task is not None:
+            onboarding["review_task_id"] = review_task["task_id"]
+        _ensure_brownfield_review_alert(
+            connection,
+            project_id,
+            "Imported repository drift was detected during rescan. Review the updated understanding artifact before expanding automation.",
+        )
+
+    config["onboarding"] = onboarding
+    _save_project_config(connection, project_id, config)
+    _write_project_metadata(project_paths, project_id, config, "brownfield", discovery)
+    _activity(
+        connection,
+        project_id,
+        "brownfield_rescanned",
+        (
+            "Brownfield repository rescanned; drift detected and review reopened."
+            if drift["detected"]
+            else "Brownfield repository rescanned with no material drift detected."
+        ),
+    )
+    _audit(
+        connection,
+        project_id,
+        actor_id,
+        "rescan_brownfield_project",
+        "project",
+        project_id,
+        {"source_root": source_root, "drift": drift},
+    )
+    connection.commit()
+    return {
+        "project_id": project_id,
+        "mode": "brownfield",
+        "review_status": onboarding.get("review_status") or "review_pending",
+        "review_task_id": review_task["task_id"] if review_task else onboarding.get("review_task_id"),
+        "review_task_status": review_task["status"] if review_task else None,
+        "drift": drift,
+        "metadata": {
+            "understanding_path": project_paths.project_understanding_path(project_id),
+            "discovery_path": project_paths.project_discovery_path(project_id),
+            "source_root": source_root,
+        },
+    }

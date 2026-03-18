@@ -24,13 +24,17 @@ from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_que
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
 from maas.services.provider_runtime import (
+    process_next_provider_job,
+    process_provider_job,
     provider_runtime_overview,
+    provider_job_queue,
+    queue_provider_task,
     run_provider_preflight,
     run_provider_task,
     set_provider_mode,
     set_provider_settings,
 )
-from maas.services.projects import archive_project, create_project, list_projects, resolve_project_id, restore_project
+from maas.services.projects import archive_project, create_project, list_projects, rescan_brownfield_project, resolve_project_id, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -166,6 +170,24 @@ class ProviderRunRequest(BaseModel):
     artifact_path: Optional[str] = None
 
 
+class ProviderQueueRequest(BaseModel):
+    actor_id: str
+    project_id: str
+    agent_id: str
+    task_id: str
+    artifact_path: Optional[str] = None
+
+
+class ProviderJobProcessRequest(BaseModel):
+    actor_id: str
+
+
+class ProviderJobProcessNextRequest(BaseModel):
+    actor_id: str
+    project_id: Optional[str] = None
+    provider_id: Optional[str] = None
+
+
 class ProviderModeRequest(BaseModel):
     actor_id: str
     mode: str
@@ -288,6 +310,16 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return restore_project(connection, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/rescan-brownfield")
+    def projects_rescan_brownfield(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return rescan_brownfield_project(connection, paths, project_id, payload.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -701,6 +733,23 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/provider-jobs")
+    def provider_jobs(project_id: str = None, provider_id: str = None, status: str = None, limit: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return {
+                "jobs": provider_job_queue(
+                    connection,
+                    project_id=scoped_project_id,
+                    provider_id=provider_id,
+                    status=status,
+                    limit=_parse_limit(limit, 20),
+                )
+            }
+        finally:
+            connection.close()
+
     @app.get("/api/recovery-policy")
     def recovery_policy(project_id: str = None):
         connection = connect(paths)
@@ -769,6 +818,62 @@ def create_app(project_root="."):
                 task_id=payload.task_id,
                 provider_type=provider_id,
                 artifact_path=payload.artifact_path,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/providers/{provider_id}/actions/queue-task")
+    def provider_queue_task_action(provider_id: str, payload: ProviderQueueRequest):
+        connection = connect(paths)
+        try:
+            return queue_provider_task(
+                connection,
+                project_paths=paths,
+                provider_id=provider_id,
+                actor_id=payload.actor_id,
+                project_id=payload.project_id,
+                agent_id=payload.agent_id,
+                task_id=payload.task_id,
+                artifact_path=payload.artifact_path,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/provider-jobs/{job_id}/actions/process")
+    def provider_process_job_action(job_id: str, payload: ProviderJobProcessRequest):
+        connection = connect(paths)
+        try:
+            return process_provider_job(
+                connection,
+                project_paths=paths,
+                job_id=job_id,
+                actor_id=payload.actor_id,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/provider-jobs/actions/process-next")
+    def provider_process_next_job_action(payload: ProviderJobProcessNextRequest):
+        connection = connect(paths)
+        try:
+            return process_next_provider_job(
+                connection,
+                project_paths=paths,
+                actor_id=payload.actor_id,
+                project_id=_selected_project_id(connection, payload.project_id),
+                provider_id=payload.provider_id,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))

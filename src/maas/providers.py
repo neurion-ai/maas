@@ -7,6 +7,7 @@ import re
 
 from maas.config import DEFAULT_PROVIDER_SETTINGS
 from maas.ids import generate_id
+from maas.services.provider_jobs import default_provider_job_summary, fetch_provider_job_summaries, fetch_provider_jobs
 from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
@@ -631,6 +632,7 @@ def fetch_provider_runtime_overview(connection=None, project_id=None):
     return {
         "providers": list_provider_status(connection=connection, project_id=project_id),
         "run_targets": _provider_run_targets(connection, project_id),
+        "job_queue": fetch_provider_jobs(connection, project_id=project_id, limit=12),
     }
 
 
@@ -838,6 +840,7 @@ def list_provider_status(connection=None, project_id=None):
     provider_config = _project_provider_config(connection, project_id)
     run_history = _provider_run_history(connection, project_id)
     preflight_history = _provider_preflight_history(connection, project_id)
+    job_summaries = fetch_provider_job_summaries(connection, project_id)
     providers = []
     for provider in list_providers():
         resolved_provider, _ = _resolve_provider_status(provider, provider_config.get(provider["id"]) or {})
@@ -860,5 +863,6 @@ def list_provider_status(connection=None, project_id=None):
         )
         resolved_provider["recent_runs"] = run_history.get("recent_runs", {}).get(provider["id"], [])
         resolved_provider["latest_preflight"] = preflight_history.get(provider["id"])
+        resolved_provider["job_summary"] = job_summaries.get(provider["id"], default_provider_job_summary())
         providers.append(resolved_provider)
     return providers

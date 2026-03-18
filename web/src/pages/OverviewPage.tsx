@@ -3,6 +3,7 @@ import {
   fetchOverview,
   fetchRepoFile,
   fetchRepoTree,
+  rescanBrownfieldProject,
   runAlertOperatorAction,
   runFailureOperatorAction,
   runSupervisorPass
@@ -20,6 +21,7 @@ export function OverviewPage() {
   const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
   const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const [pendingOnboardingReview, setPendingOnboardingReview] = useState<string | null>(null);
+  const [pendingBrownfieldRescan, setPendingBrownfieldRescan] = useState(false);
   const [repoTree, setRepoTree] = useState<RepoTreeResponse | null>(null);
   const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
   const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
@@ -167,6 +169,38 @@ export function OverviewPage() {
     }
   }
 
+  async function handleBrownfieldRescan() {
+    const projectId = overview?.project?.project_id;
+    if (!projectId) {
+      return;
+    }
+
+    setPendingBrownfieldRescan(true);
+    setNotice(null);
+    try {
+      const payload = await rescanBrownfieldProject(projectId);
+      const refreshedOverview = await fetchOverview();
+      setOverview(refreshedOverview);
+      try {
+        const refreshedTree = await fetchRepoTree("");
+        setRepoTree(refreshedTree);
+        setRepoFile(null);
+      } catch {
+        setRepoTree(null);
+        setRepoFile(null);
+      }
+      setNotice(
+        payload.drift?.detected
+          ? `Brownfield rescan detected drift and reopened review: ${payload.drift?.summary ?? "changes detected"}.`
+          : "Brownfield rescan completed with no material drift detected."
+      );
+    } catch {
+      setNotice("Brownfield rescan failed; keeping the current imported understanding.");
+    } finally {
+      setPendingBrownfieldRescan(false);
+    }
+  }
+
   async function handleBrowseRepoPath(path: string) {
     setPendingRepoPath(path || ".");
     try {
@@ -227,8 +261,18 @@ export function OverviewPage() {
         {overview?.onboarding?.mode === "brownfield" ? (
           <article className="data-panel">
             <header className="data-panel__header">
-              <h2>Brownfield onboarding</h2>
-              <p>Imported repo understanding must be explicitly reviewed before the seeded work is released.</p>
+              <div>
+                <h2>Brownfield onboarding</h2>
+                <p>Imported repo understanding must be explicitly reviewed before the seeded work is released.</p>
+              </div>
+              <button
+                type="button"
+                className="task-action task-action--secondary"
+                disabled={pendingBrownfieldRescan}
+                onClick={() => void handleBrownfieldRescan()}
+              >
+                {pendingBrownfieldRescan ? "Rescanning..." : "Rescan import"}
+              </button>
             </header>
               <div className="data-list">
                 <div className="data-list__item">
@@ -253,6 +297,22 @@ export function OverviewPage() {
                     <span>{overview.onboarding.review_task_status ?? "no review task"}</span>
                   </div>
                 </div>
+                {overview.onboarding.last_scanned_at ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Latest rescan</strong>
+                      <p>{overview.onboarding.last_scanned_by ?? "unknown actor"}</p>
+                      {overview.onboarding.drift_summary?.summary ? <p>{overview.onboarding.drift_summary.summary}</p> : null}
+                      {(overview.onboarding.drift_summary?.changes?.length ?? 0) > 0
+                        ? overview.onboarding.drift_summary?.changes?.map((item) => <p key={item}>{item}</p>)
+                        : null}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{new Date(overview.onboarding.last_scanned_at).toLocaleString()}</span>
+                      <span>{overview.onboarding.drift_summary?.detected ? "drift detected" : "no drift"}</span>
+                    </div>
+                  </div>
+                ) : null}
                 {(overview.onboarding.discovery_summary.workflow_details?.length ?? 0) > 0 ||
                 (overview.onboarding.discovery_summary.workflow_labels?.length ?? 0) > 0 ? (
                   <div className="data-list__item">

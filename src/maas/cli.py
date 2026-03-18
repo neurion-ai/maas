@@ -12,8 +12,14 @@ from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
-from maas.services.provider_runtime import run_provider_task
-from maas.services.projects import archive_project, create_project, list_projects, restore_project
+from maas.services.provider_runtime import (
+    process_next_provider_job,
+    process_provider_job,
+    provider_job_queue,
+    queue_provider_task,
+    run_provider_task,
+)
+from maas.services.projects import archive_project, create_project, list_projects, rescan_brownfield_project, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -91,6 +97,11 @@ def build_parser():
     project_restore_parser.add_argument("--project-root", default=".")
     project_restore_parser.add_argument("--project-id", required=True)
     project_restore_parser.add_argument("--actor-id", required=True)
+
+    project_rescan_parser = project_subparsers.add_parser("rescan-brownfield")
+    project_rescan_parser.add_argument("--project-root", default=".")
+    project_rescan_parser.add_argument("--project-id", required=True)
+    project_rescan_parser.add_argument("--actor-id", default="agent_allocator")
 
     agent_parser = subparsers.add_parser("agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -240,6 +251,36 @@ def build_parser():
     worker_parser.add_argument("--provider-type", default="python_script")
     worker_parser.add_argument("--artifact-path", default=".maas/artifacts/example.txt")
 
+    provider_job_parser = subparsers.add_parser("provider-job")
+    provider_job_subparsers = provider_job_parser.add_subparsers(dest="provider_job_command", required=True)
+
+    provider_job_list_parser = provider_job_subparsers.add_parser("list")
+    provider_job_list_parser.add_argument("--project-root", default=".")
+    provider_job_list_parser.add_argument("--project-id")
+    provider_job_list_parser.add_argument("--provider-id")
+    provider_job_list_parser.add_argument("--status")
+    provider_job_list_parser.add_argument("--limit", type=int, default=20)
+
+    provider_job_queue_parser = provider_job_subparsers.add_parser("queue")
+    provider_job_queue_parser.add_argument("--project-root", default=".")
+    provider_job_queue_parser.add_argument("--project-id", required=True)
+    provider_job_queue_parser.add_argument("--provider-id", required=True)
+    provider_job_queue_parser.add_argument("--task-id", required=True)
+    provider_job_queue_parser.add_argument("--agent-id", required=True)
+    provider_job_queue_parser.add_argument("--actor-id", default="agent_allocator")
+    provider_job_queue_parser.add_argument("--artifact-path")
+
+    provider_job_process_parser = provider_job_subparsers.add_parser("process")
+    provider_job_process_parser.add_argument("--project-root", default=".")
+    provider_job_process_parser.add_argument("--job-id", required=True)
+    provider_job_process_parser.add_argument("--actor-id", default="agent_allocator")
+
+    provider_job_process_next_parser = provider_job_subparsers.add_parser("process-next")
+    provider_job_process_next_parser.add_argument("--project-root", default=".")
+    provider_job_process_next_parser.add_argument("--project-id")
+    provider_job_process_next_parser.add_argument("--provider-id")
+    provider_job_process_next_parser.add_argument("--actor-id", default="agent_allocator")
+
     recovery_parser = subparsers.add_parser("recovery")
     recovery_subparsers = recovery_parser.add_subparsers(dest="recovery_command", required=True)
 
@@ -383,6 +424,8 @@ def command_project(args):
             print(json.dumps(archive_project(connection, args.project_id, args.actor_id), indent=2))
         elif args.project_command == "restore":
             print(json.dumps(restore_project(connection, args.project_id, args.actor_id), indent=2))
+        elif args.project_command == "rescan-brownfield":
+            print(json.dumps(rescan_brownfield_project(connection, paths, args.project_id, args.actor_id), indent=2))
     finally:
         connection.close()
 
@@ -532,6 +575,68 @@ def command_worker(args):
         connection.close()
 
 
+def command_provider_job(args):
+    paths = project_paths(args.project_root)
+    connection = connect(paths)
+    try:
+        if args.provider_job_command == "list":
+            print(
+                json.dumps(
+                    provider_job_queue(
+                        connection,
+                        project_id=args.project_id,
+                        provider_id=args.provider_id,
+                        status=args.status,
+                        limit=args.limit,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.provider_job_command == "queue":
+            print(
+                json.dumps(
+                    queue_provider_task(
+                        connection,
+                        project_paths=paths,
+                        provider_id=args.provider_id,
+                        actor_id=args.actor_id,
+                        project_id=args.project_id,
+                        agent_id=args.agent_id,
+                        task_id=args.task_id,
+                        artifact_path=args.artifact_path,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.provider_job_command == "process":
+            print(
+                json.dumps(
+                    process_provider_job(
+                        connection,
+                        project_paths=paths,
+                        job_id=args.job_id,
+                        actor_id=args.actor_id,
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.provider_job_command == "process-next":
+            print(
+                json.dumps(
+                    process_next_provider_job(
+                        connection,
+                        project_paths=paths,
+                        actor_id=args.actor_id,
+                        project_id=args.project_id,
+                        provider_id=args.provider_id,
+                    ),
+                    indent=2,
+                )
+            )
+    finally:
+        connection.close()
+
+
 def command_recovery(args):
     paths = project_paths(args.project_root)
     connection = connect(paths)
@@ -627,6 +732,8 @@ def main(argv=None):
         command_escalation(args)
     elif args.command == "worker":
         command_worker(args)
+    elif args.command == "provider-job":
+        command_provider_job(args)
     elif args.command == "recovery":
         command_recovery(args)
     elif args.command == "lifecycle":

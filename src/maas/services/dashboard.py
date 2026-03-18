@@ -54,6 +54,9 @@ def _derive_onboarding_state(connection, project_row):
             "review_task_status": None,
             "review_task_review_state": None,
             "pending_gated_tasks": 0,
+            "last_scanned_at": onboarding.get("last_scanned_at"),
+            "last_scanned_by": onboarding.get("last_scanned_by"),
+            "drift_summary": onboarding.get("drift_summary"),
             "reviewed_by": onboarding.get("reviewed_by"),
             "reviewed_at": onboarding.get("reviewed_at"),
         }
@@ -99,6 +102,9 @@ def _derive_onboarding_state(connection, project_row):
         "review_task_status": review_task["status"] if review_task else None,
         "review_task_review_state": review_task["review_state"] if review_task else None,
         "pending_gated_tasks": pending_gated_tasks,
+        "last_scanned_at": onboarding.get("last_scanned_at"),
+        "last_scanned_by": onboarding.get("last_scanned_by"),
+        "drift_summary": onboarding.get("drift_summary"),
         "reviewed_by": onboarding.get("reviewed_by"),
         "reviewed_at": onboarding.get("reviewed_at"),
     }

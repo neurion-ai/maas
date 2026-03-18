@@ -1,16 +1,28 @@
 """Provider adapter execution helpers."""
 
+import json
 import os
 import shutil
 import subprocess
 import tempfile
 
+from maas.ids import generate_id
 from maas.providers import (
     fetch_provider_runtime_overview,
     get_provider_runtime_settings,
     list_provider_status,
     update_provider_mode,
     update_provider_settings,
+)
+from maas.services.provider_jobs import (
+    complete_provider_job,
+    fail_provider_job,
+    fetch_provider_job,
+    fetch_provider_jobs,
+    find_open_provider_job,
+    insert_provider_job,
+    next_queued_provider_job_id,
+    start_provider_job,
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.projects import resolve_project, resolve_project_id
@@ -430,6 +442,78 @@ def _task_prompt(connection, task_id):
     return "Task: {0}\n\nReturn a concise completion summary.".format(row["title"])
 
 
+def _provider_run_target(connection, project_id, task_id, agent_id):
+    return connection.execute(
+        """
+        SELECT
+            tasks.project_id,
+            tasks.task_id,
+            tasks.title,
+            tasks.status,
+            tasks.priority,
+            tasks.review_state,
+            tasks.assigned_agent_id AS agent_id
+        FROM tasks
+        WHERE tasks.project_id = ?
+          AND tasks.task_id = ?
+          AND tasks.assigned_agent_id = ?
+          AND tasks.status IN ('planned', 'ready', 'assigned')
+          AND (
+              tasks.next_retry_at IS NULL
+              OR datetime(tasks.next_retry_at) <= CURRENT_TIMESTAMP
+          )
+          AND EXISTS (
+              SELECT 1
+              FROM task_capability_grants grants
+              WHERE grants.project_id = tasks.project_id
+                AND grants.task_id = tasks.task_id
+                AND grants.agent_id = tasks.assigned_agent_id
+                AND grants.capability = 'execute'
+                AND grants.revoked_at IS NULL
+          )
+        """,
+        (project_id, task_id, agent_id),
+    ).fetchone()
+
+
+def _audit_provider_job(connection, project_id, actor_id, action_type, job_id, detail):
+    connection.execute(
+        """
+        INSERT INTO audit_trail (
+            audit_id, project_id, actor_id, action_type, resource_type, resource_id, detail_json
+        ) VALUES (?, ?, ?, ?, 'provider_job', ?, ?)
+        """,
+        (
+            generate_id("audit"),
+            project_id,
+            actor_id,
+            action_type,
+            job_id,
+            json.dumps(detail),
+        ),
+    )
+
+
+def _activity_provider_job(connection, project_id, agent_id, task_id, action, description, details, severity="info"):
+    connection.execute(
+        """
+        INSERT INTO activity_log (
+            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+        ) VALUES (?, ?, ?, ?, ?, 'runtime', ?, ?, ?)
+        """,
+        (
+            generate_id("act"),
+            project_id,
+            agent_id,
+            task_id,
+            action,
+            description,
+            json.dumps(details),
+            severity,
+        ),
+    )
+
+
 def _codex_cli_command(runtime_context, provider_settings, prompt, output_path):
     command = [
         provider_settings.get("cli_command") or "codex",
@@ -839,6 +923,152 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             "artifact_type": artifact_payload["artifact_type"],
         },
     }
+
+
+def queue_provider_task(connection, project_paths, provider_id, actor_id, project_id, agent_id, task_id, artifact_path=None):
+    resolved_project_id = resolve_project_id(connection, project_id)
+    if resolved_project_id is None:
+        raise ValueError("Project not found")
+    ensure_board_action_allowed(connection, actor_id, resolved_project_id, "queue_provider_task", "provider", provider_id)
+    provider, _provider_settings = get_provider_runtime_settings(
+        provider_id,
+        connection=connection,
+        project_id=resolved_project_id,
+    )
+    if not provider["is_runnable"]:
+        raise ValueError("; ".join(provider["config_warnings"]) or "Provider configuration is invalid.")
+    target = _provider_run_target(connection, resolved_project_id, task_id, agent_id)
+    if target is None:
+        raise ValueError("Task is not eligible for provider queueing.")
+    existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
+    if existing is not None:
+        raise ValueError("A queued or running provider job already exists for this task and provider.")
+    job = insert_provider_job(
+        connection,
+        resolved_project_id,
+        provider_id,
+        task_id,
+        agent_id,
+        queued_by=actor_id,
+        artifact_path=artifact_path,
+    )
+    _activity_provider_job(
+        connection,
+        resolved_project_id,
+        agent_id,
+        task_id,
+        "provider_job_queued",
+        "{0} queued a provider job for {1}.".format(actor_id, provider["name"]),
+        {
+            "job_id": job["job_id"],
+            "provider_id": provider_id,
+            "provider_name": provider["name"],
+            "artifact_path": artifact_path,
+        },
+    )
+    _audit_provider_job(
+        connection,
+        resolved_project_id,
+        actor_id,
+        "queue_provider_task",
+        job["job_id"],
+        {"provider_id": provider_id, "task_id": task_id, "agent_id": agent_id, "artifact_path": artifact_path},
+    )
+    connection.commit()
+    return job
+
+
+def process_provider_job(connection, project_paths, job_id, actor_id):
+    job = fetch_provider_job(connection, job_id, include_archived=False)
+    if job is None:
+        raise ValueError("Provider job not found")
+    if job["status"] != "queued":
+        raise ValueError("Provider job is not queued")
+    ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", job["provider_id"])
+    running_job = start_provider_job(connection, job_id, worker_id=actor_id)
+    if running_job is None:
+        raise ValueError("Provider job is no longer queued")
+    _activity_provider_job(
+        connection,
+        running_job["project_id"],
+        running_job["agent_id"],
+        running_job["task_id"],
+        "provider_job_started",
+        "{0} started queued provider job {1}.".format(actor_id, job_id),
+        {"job_id": job_id, "provider_id": running_job["provider_id"]},
+    )
+    _audit_provider_job(
+        connection,
+        running_job["project_id"],
+        actor_id,
+        "process_provider_job",
+        job_id,
+        {"provider_id": running_job["provider_id"], "task_id": running_job["task_id"]},
+    )
+    connection.commit()
+    try:
+        result = run_provider_task(
+            connection,
+            project_paths=project_paths,
+            project_id=running_job["project_id"],
+            agent_id=running_job["agent_id"],
+            task_id=running_job["task_id"],
+            provider_type=running_job["provider_id"],
+            artifact_path=running_job["artifact_path"],
+        )
+    except Exception as exc:
+        error = {
+            "failure_kind": getattr(exc, "kind", "runtime_error"),
+            "failure_detail": str(exc),
+        }
+        failed_job = fail_provider_job(connection, job_id, error)
+        _activity_provider_job(
+            connection,
+            failed_job["project_id"],
+            failed_job["agent_id"],
+            failed_job["task_id"],
+            "provider_job_failed",
+            "Queued provider job failed during execution.",
+            {"job_id": job_id, **error},
+            severity="error",
+        )
+        connection.commit()
+        return failed_job
+
+    completed_job = complete_provider_job(connection, job_id, result)
+    _activity_provider_job(
+        connection,
+        completed_job["project_id"],
+        completed_job["agent_id"],
+        completed_job["task_id"],
+        "provider_job_completed",
+        "Queued provider job completed successfully.",
+        {
+            "job_id": job_id,
+            "session_id": completed_job["session_id"],
+            "artifact_id": completed_job["artifact_id"],
+            "execution_mode": completed_job["execution_mode"],
+        },
+    )
+    connection.commit()
+    return completed_job
+
+
+def process_next_provider_job(connection, project_paths, actor_id, project_id=None, provider_id=None):
+    resolved_project_id = resolve_project_id(connection, project_id)
+    if resolved_project_id is None:
+        raise ValueError("Project not found")
+    resource_id = provider_id or "provider_queue"
+    ensure_board_action_allowed(connection, actor_id, resolved_project_id, "process_provider_job", "provider", resource_id)
+    job_id = next_queued_provider_job_id(connection, project_id=resolved_project_id, provider_id=provider_id)
+    if job_id is None:
+        return {"processed": False, "job": None}
+    job = process_provider_job(connection, project_paths, job_id, actor_id)
+    return {"processed": True, "job": job}
+
+
+def provider_job_queue(connection, project_id=None, provider_id=None, status=None, limit=20):
+    return fetch_provider_jobs(connection, project_id=project_id, provider_id=provider_id, status=status, limit=limit)
 
 
 def list_provider_runtime_status(connection=None, project_id=None):

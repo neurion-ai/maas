@@ -11,7 +11,9 @@
 - [x] `#83` brownfield file-backed planning and repo navigation is implemented on `codex/brownfield-file-backed-planning`
 - [x] `#84` policy-driven self-healing and circuit breakers is implemented on `codex/recovery-circuit-breakers`
 - [x] `#85` sandboxed provider runners per project is implemented on `codex/project-isolated-provider-runtime`
-- [ ] `#86` remote or queued provider execution is the next unfinished step
+- [x] `#86` remote or queued provider execution is implemented on `codex/provider-job-queue`
+- [x] `#87` brownfield rescan and drift detection is implemented on `codex/provider-job-queue`
+- [ ] `#88` file-linked task scopes and acceptance criteria is the next unfinished step
 
 ## Still To Do On `main`
 

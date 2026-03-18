@@ -212,6 +212,25 @@ export interface OverviewOnboarding {
   review_task_status?: string | null;
   review_task_review_state?: string | null;
   pending_gated_tasks: number;
+  last_scanned_at?: string | null;
+  last_scanned_by?: string | null;
+  drift_summary?: {
+    detected?: boolean;
+    scanned_at?: string;
+    summary?: string;
+    changes?: string[];
+    file_count_delta?: number;
+    primary_language_before?: string | null;
+    primary_language_after?: string | null;
+    workflow_labels_added?: string[];
+    workflow_labels_removed?: string[];
+    repo_areas_added?: string[];
+    repo_areas_removed?: string[];
+    package_managers_added?: string[];
+    package_managers_removed?: string[];
+    codebase_map_added?: string[];
+    codebase_map_removed?: string[];
+  } | null;
   reviewed_by?: string | null;
   reviewed_at?: string | null;
 }
@@ -678,6 +697,39 @@ export interface ProviderPreflightItem {
   external_runtime?: string | null;
 }
 
+export interface ProviderJobSummary {
+  queued_jobs: number;
+  running_jobs: number;
+  completed_jobs: number;
+  failed_jobs: number;
+  cancelled_jobs: number;
+  last_job_at?: string | null;
+}
+
+export interface ProviderJobItem {
+  job_id: string;
+  project_id: string;
+  provider_id: string;
+  task_id: string;
+  title?: string | null;
+  goal_title?: string | null;
+  agent_id: string;
+  agent_name?: string | null;
+  status: string;
+  queued_by: string;
+  worker_id?: string | null;
+  artifact_path?: string | null;
+  session_id?: string | null;
+  artifact_id?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+  execution_mode?: string | null;
+  failure_kind?: string | null;
+  failure_detail?: string | null;
+}
+
 export interface ProviderRunTarget {
   project_id: string;
   task_id: string;
@@ -710,6 +762,7 @@ export interface ProviderStatusItem {
   guardrails?: string[];
   is_runnable?: boolean;
   run_summary?: ProviderRunSummary;
+  job_summary?: ProviderJobSummary;
   recent_runs?: ProviderRunItem[];
   latest_preflight?: ProviderPreflightItem | null;
   notes: string;
@@ -718,6 +771,7 @@ export interface ProviderStatusItem {
 export interface ProvidersResponse {
   providers: ProviderStatusItem[];
   run_targets: ProviderRunTarget[];
+  job_queue: ProviderJobItem[];
 }
 
 export interface RecoveryDelayPreviewItem {

@@ -54,6 +54,9 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     review_task_status: null,
     review_task_review_state: null,
     pending_gated_tasks: 0,
+    last_scanned_at: null,
+    last_scanned_by: null,
+    drift_summary: null,
     reviewed_by: null,
     reviewed_at: null
   },
@@ -300,6 +303,14 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_kind: null,
         latest_failure_at: null
       },
+      job_summary: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        completed_jobs: 0,
+        failed_jobs: 0,
+        cancelled_jobs: 0,
+        last_job_at: null
+      },
       recent_runs: [],
       latest_preflight: null,
       notes: "Reference local runtime with normalized runtime phase reporting."
@@ -346,6 +357,14 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         runtime_failures: 0,
         latest_failure_kind: null,
         latest_failure_at: null
+      },
+      job_summary: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        completed_jobs: 0,
+        failed_jobs: 0,
+        cancelled_jobs: 0,
+        last_job_at: null
       },
       recent_runs: [],
       latest_preflight: null,
@@ -394,12 +413,21 @@ const PROVIDERS_FALLBACK: ProvidersResponse = {
         latest_failure_kind: null,
         latest_failure_at: null
       },
+      job_summary: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        completed_jobs: 0,
+        failed_jobs: 0,
+        cancelled_jobs: 0,
+        last_job_at: null
+      },
       recent_runs: [],
       latest_preflight: null,
       notes: "Simulated API-style adapter with normalized runtime phase reporting."
     }
   ],
-  run_targets: []
+  run_targets: [],
+  job_queue: []
 };
 
 const RECOVERY_POLICY_FALLBACK: RecoveryPolicyResponse = {
@@ -731,6 +759,43 @@ export async function runProviderTask(providerId: string, projectId: string, age
   };
 }
 
+export async function queueProviderTask(providerId: string, projectId: string, agentId: string, taskId: string) {
+  const payload = await postJson<{
+    job_id: string;
+    status: string;
+  }>(`/api/providers/${providerId}/actions/queue-task`, {
+    actor_id: "agent_allocator",
+    project_id: projectId,
+    agent_id: agentId,
+    task_id: taskId
+  });
+  return payload as {
+    job_id: string;
+    status: string;
+  };
+}
+
+export async function processProviderJob(jobId: string) {
+  const payload = await postJson<{
+    job_id: string;
+    status: string;
+    session_id?: string | null;
+    artifact_id?: string | null;
+    failure_kind?: string | null;
+    failure_detail?: string | null;
+  }>(`/api/provider-jobs/${jobId}/actions/process`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as {
+    job_id: string;
+    status: string;
+    session_id?: string | null;
+    artifact_id?: string | null;
+    failure_kind?: string | null;
+    failure_detail?: string | null;
+  };
+}
+
 export async function setProviderMode(providerId: string, mode: string) {
   const payload = await postJson(`/api/providers/${providerId}/actions/set-mode`, {
     actor_id: "agent_allocator",
@@ -880,6 +945,29 @@ export async function runSupervisorPass(allocateLimit?: number) {
     project_id: getSelectedProjectId()
   });
   return payload as SupervisorRunResponse;
+}
+
+export async function rescanBrownfieldProject(projectId: string) {
+  const payload = await postJson<{
+    project_id: string;
+    review_status: string;
+    drift?: {
+      detected?: boolean;
+      summary?: string;
+      changes?: string[];
+    };
+  }>(`/api/projects/${projectId}/actions/rescan-brownfield`, {
+    actor_id: "agent_allocator"
+  });
+  return payload as {
+    project_id: string;
+    review_status: string;
+    drift?: {
+      detected?: boolean;
+      summary?: string;
+      changes?: string[];
+    };
+  };
 }
 
 export async function assignNextTask(agentId: string) {

@@ -75,6 +75,13 @@ function formatFailureKind(kind?: string | null) {
   return kind.replace(/_/g, " ");
 }
 
+function formatStatusLabel(value?: string | null) {
+  if (!value) {
+    return "unknown";
+  }
+  return value.replace(/_/g, " ");
+}
+
 export function ProvidersPage() {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -411,7 +418,12 @@ export function ProvidersPage() {
                 })}
               </div>
             </div>
-            {workerPool.length === 0 ? <p>No provider workers have checked in yet.</p> : null}
+            {workerPool.length === 0 ? (
+              <div className="empty-state empty-state--compact">
+                <strong>No provider workers have checked in yet.</strong>
+                <p>Queue a provider job or start a worker process when you want detached execution to appear here.</p>
+              </div>
+            ) : null}
             {workerPool.map((worker: ProviderWorkerItem) => (
               <div key={worker.worker_id} className="data-list__item">
                 <div>
@@ -449,6 +461,13 @@ export function ProvidersPage() {
           <div className="data-list">
             {items.map((provider) => {
               const runtimeControls = formatRuntimeControls(provider);
+              const latestPreflight = provider.latest_preflight
+                ? `${formatStatusLabel(provider.latest_preflight.status)}${
+                    provider.latest_preflight.checked_at
+                      ? ` · ${new Date(provider.latest_preflight.checked_at).toLocaleString()}`
+                      : ""
+                  }`
+                : "No preflight recorded";
               return (
                 <div key={provider.id} className="data-list__item">
                   <div>
@@ -456,7 +475,7 @@ export function ProvidersPage() {
                     <p>{provider.notes}</p>
                     <p>
                       Configured mode: {provider.configured_execution_mode} | Effective mode:{" "}
-                      {provider.effective_execution_mode ?? "blocked"}
+                      {provider.effective_execution_mode ?? "blocked"} | Preflight: {latestPreflight}
                     </p>
                     <p>
                       Runs: {provider.run_summary?.total_runs ?? 0} total | {provider.run_summary?.completed_runs ?? 0} completed |{" "}
@@ -471,9 +490,6 @@ export function ProvidersPage() {
                       {provider.run_summary?.nonzero_exit_failures ?? 0} non-zero exit |{" "}
                       {provider.run_summary?.runtime_failures ?? 0} runtime
                     </p>
-                    {provider.run_summary?.last_run_at ? (
-                      <p>Last run: {new Date(provider.run_summary.last_run_at).toLocaleString()}</p>
-                    ) : null}
                     {provider.run_summary?.latest_failure_kind ? (
                       <p>
                         Latest failure: {formatFailureKind(provider.run_summary.latest_failure_kind)}
@@ -482,60 +498,60 @@ export function ProvidersPage() {
                           : ""}
                       </p>
                     ) : null}
-                    {provider.latest_preflight ? (
-                      <p>
-                        Preflight: {provider.latest_preflight.status.replace(/_/g, " ")}
-                        {provider.latest_preflight.checked_at
-                          ? ` | ${new Date(provider.latest_preflight.checked_at).toLocaleString()}`
-                          : ""}
-                        {provider.latest_preflight.summary ? ` | ${provider.latest_preflight.summary}` : ""}
-                      </p>
-                    ) : null}
-                    <p>Available modes: {(provider.available_execution_modes ?? []).join(", ") || "local_simulation"}</p>
                     {runtimeControls ? <p>{runtimeControls}</p> : null}
-                    {(provider.guardrails ?? []).map((guardrail) => (
-                      <p key={guardrail}>Guardrail: {guardrail}</p>
-                    ))}
-                    {provider.config_warnings?.map((warning) => (
-                      <p key={warning}>{warning}</p>
-                    ))}
-                    {provider.latest_preflight?.issues?.map((issue) => (
-                      <p key={issue}>{issue}</p>
-                    ))}
-                    {Object.keys(provider.configurable_runtime_controls ?? {}).length > 0 ? (
-                      <div>
-                        {Object.entries(provider.configurable_runtime_controls ?? {}).map(([key]) => (
-                          <label key={key}>
-                            {key}
-                            {key === "queue_paused" ? (
-                              <select
-                                value={settingsDrafts[provider.id]?.[key] ?? "false"}
-                                onChange={(event) => updateDraft(provider.id, key, event.target.value)}
-                              >
-                                <option value="false">false</option>
-                                <option value="true">true</option>
-                              </select>
-                            ) : (
-                              <input
-                                type={key === "timeout_seconds" || key === "job_limit_per_pass" ? "number" : "text"}
-                                value={settingsDrafts[provider.id]?.[key] ?? ""}
-                                onChange={(event) => updateDraft(provider.id, key, event.target.value)}
-                              />
-                            )}
-                          </label>
+                    <details className="task-card__advanced">
+                      <summary>Runtime details</summary>
+                      <div className="detail-stack">
+                        <p>Available modes: {(provider.available_execution_modes ?? []).join(", ") || "local_simulation"}</p>
+                        {provider.run_summary?.last_run_at ? (
+                          <p>Last run: {new Date(provider.run_summary.last_run_at).toLocaleString()}</p>
+                        ) : null}
+                        {provider.latest_preflight?.summary ? <p>{provider.latest_preflight.summary}</p> : null}
+                        {(provider.guardrails ?? []).map((guardrail) => (
+                          <p key={guardrail}>Guardrail: {guardrail}</p>
+                        ))}
+                        {provider.config_warnings?.map((warning) => (
+                          <p key={warning}>{warning}</p>
+                        ))}
+                        {provider.latest_preflight?.issues?.map((issue) => (
+                          <p key={issue}>{issue}</p>
+                        ))}
+                        {Object.keys(provider.configurable_runtime_controls ?? {}).length > 0 ? (
+                          <div className="field-grid field-grid--two">
+                            {Object.entries(provider.configurable_runtime_controls ?? {}).map(([key]) => (
+                              <label key={key} className="field-control">
+                                <span>{key}</span>
+                                {key === "queue_paused" ? (
+                                  <select
+                                    value={settingsDrafts[provider.id]?.[key] ?? "false"}
+                                    onChange={(event) => updateDraft(provider.id, key, event.target.value)}
+                                  >
+                                    <option value="false">false</option>
+                                    <option value="true">true</option>
+                                  </select>
+                                ) : (
+                                  <input
+                                    type={key === "timeout_seconds" || key === "job_limit_per_pass" ? "number" : "text"}
+                                    value={settingsDrafts[provider.id]?.[key] ?? ""}
+                                    onChange={(event) => updateDraft(provider.id, key, event.target.value)}
+                                  />
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                        ) : null}
+                        {(provider.recent_runs ?? []).map((run) => (
+                          <p key={run.session_id}>
+                            Recent run: {run.task_title ?? run.task_id ?? run.session_id} | {formatStatusLabel(run.status)}
+                            {run.agent_name ? ` | ${run.agent_name}` : ""}
+                            {run.execution_mode ? ` | ${run.execution_mode}` : ""}
+                            {run.failure_kind ? ` | ${formatFailureKind(run.failure_kind)}` : ""}
+                            {run.started_at ? ` | ${new Date(run.started_at).toLocaleString()}` : ""}
+                            {run.failure_detail ? ` | ${run.failure_detail}` : ""}
+                          </p>
                         ))}
                       </div>
-                    ) : null}
-                    {(provider.recent_runs ?? []).map((run) => (
-                      <p key={run.session_id}>
-                        Recent run: {run.task_title ?? run.task_id ?? run.session_id} | {run.status}
-                        {run.agent_name ? ` | ${run.agent_name}` : ""}
-                        {run.execution_mode ? ` | ${run.execution_mode}` : ""}
-                        {run.failure_kind ? ` | ${formatFailureKind(run.failure_kind)}` : ""}
-                        {run.started_at ? ` | ${new Date(run.started_at).toLocaleString()}` : ""}
-                        {run.failure_detail ? ` | ${run.failure_detail}` : ""}
-                      </p>
-                    ))}
+                    </details>
                   </div>
                   <div className="data-list__meta">
                     {(provider.available_execution_modes ?? []).map((mode) => {
@@ -579,8 +595,7 @@ export function ProvidersPage() {
                       </button>
                     ) : null}
                     <span>{provider.kind}</span>
-                    <span>{provider.status}</span>
-                    <span>{provider.lifecycle_version}</span>
+                    <span>{formatStatusLabel(provider.status)}</span>
                     <span>{provider.is_runnable ? "runnable" : "blocked"}</span>
                   </div>
                 </div>

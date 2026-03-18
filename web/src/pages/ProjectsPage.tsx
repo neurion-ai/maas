@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { StatCard } from "../components/StatCard";
 import { fetchPortfolio, runOrchestratorPass } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -56,6 +56,10 @@ export function ProjectsPage({
 
   const activeProjects = projects.filter((project) => project.state !== "archived");
   const archivedProjects = projects.filter((project) => project.state === "archived");
+  const selectedProject =
+    activeProjects.find((project) => project.project_id === selectedProjectId) ?? activeProjects[0] ?? null;
+  const selectedPortfolioProject =
+    portfolio?.projects.find((project) => project.project_id === selectedProject?.project_id) ?? null;
 
   useEffect(() => {
     let mounted = true;
@@ -94,6 +98,18 @@ export function ProjectsPage({
       setPendingActionKey(null);
     }
   }
+
+  const hotspotProjects = useMemo(() => {
+    return [...(portfolio?.projects ?? [])]
+      .sort((left, right) => {
+        const leftScore =
+          left.blocked_tasks + left.open_alerts * 2 + left.dead_letter_entries * 3 + left.provider_capacity.queued_jobs;
+        const rightScore =
+          right.blocked_tasks + right.open_alerts * 2 + right.dead_letter_entries * 3 + right.provider_capacity.queued_jobs;
+        return rightScore - leftScore;
+      })
+      .slice(0, 5);
+  }, [portfolio]);
 
   return (
     <section className="dashboard-page">
@@ -136,71 +152,66 @@ export function ProjectsPage({
         <article className="surface-card">
           <div className="surface-card__header">
             <div>
-              <span className="eyebrow">Create or import</span>
-              <h2>Start a new project</h2>
+              <span className="eyebrow">Selected workspace</span>
+              <h2>{selectedProject?.name ?? "No active project selected"}</h2>
             </div>
+            {selectedProject ? <span className="status-chip">{selectedProject.onboarding_mode ?? "greenfield"}</span> : null}
           </div>
-          <form className="project-form project-form--stack" onSubmit={onCreateProject}>
-            <label className="field-control">
-              <span>Name</span>
-              <input
-                type="text"
-                value={projectForm.name}
-                placeholder="Payments platform"
-                onChange={(event) => onProjectFormChange({ ...projectForm, name: event.target.value })}
-                required
-              />
-            </label>
-            <label className="field-control">
-              <span>Description</span>
-              <input
-                type="text"
-                value={projectForm.description}
-                placeholder="What this project is trying to accomplish"
-                onChange={(event) => onProjectFormChange({ ...projectForm, description: event.target.value })}
-              />
-            </label>
-            <div className="field-grid field-grid--two">
-              <label className="field-control">
-                <span>Project type</span>
-                <input
-                  type="text"
-                  value={projectForm.projectType}
-                  onChange={(event) => onProjectFormChange({ ...projectForm, projectType: event.target.value })}
-                />
-              </label>
-              <label className="field-control">
-                <span>Mode</span>
-                <select
-                  value={projectForm.mode}
-                  onChange={(event) =>
-                    onProjectFormChange({
-                      ...projectForm,
-                      mode: event.target.value as ProjectFormState["mode"]
-                    })
-                  }
+          {selectedProject ? (
+            <div className="detail-stack">
+              <p>{selectedProject.description || "No project description captured yet."}</p>
+              <div className="detail-grid">
+                <div>
+                  <span>Type</span>
+                  <strong>{selectedProject.project_type}</strong>
+                </div>
+                <div>
+                  <span>Mode</span>
+                  <strong>{selectedProject.onboarding_mode ?? "greenfield"}</strong>
+                </div>
+                <div>
+                  <span>Tasks</span>
+                  <strong>{selectedProject.task_count}</strong>
+                </div>
+                <div>
+                  <span>Open alerts</span>
+                  <strong>{selectedProject.open_alert_count}</strong>
+                </div>
+                <div>
+                  <span>Source root</span>
+                  <strong>{selectedProject.source_root ?? "workspace root"}</strong>
+                </div>
+                <div>
+                  <span>Health</span>
+                  <strong>{selectedPortfolioProject?.health ?? "stable"}</strong>
+                </div>
+              </div>
+              <div className="surface-card__actions">
+                <button
+                  type="button"
+                  className="hero-button hero-button--compact"
+                  onClick={() => onSelectProject(selectedProject.project_id)}
                 >
-                  <option value="auto">Auto</option>
-                  <option value="greenfield">Greenfield</option>
-                  <option value="brownfield">Brownfield</option>
-                </select>
-              </label>
+                  Active in control room
+                </button>
+                {activeProjects.length > 1 ? (
+                  <button
+                    type="button"
+                    className="hero-button hero-button--ghost hero-button--compact"
+                    disabled={projectSubmitting}
+                    onClick={() => void onArchiveProject(selectedProject.project_id)}
+                  >
+                    Archive project
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <label className="field-control">
-              <span>Source root</span>
-              <input
-                type="text"
-                value={projectForm.sourceRoot}
-                placeholder="/path/to/existing/repo"
-                onChange={(event) => onProjectFormChange({ ...projectForm, sourceRoot: event.target.value })}
-              />
-            </label>
-            <div className="surface-card__actions">
-              <button type="submit" className="hero-button hero-button--primary" disabled={projectSubmitting}>
-                {projectSubmitting ? "Working..." : "Create project"}
-              </button>
+          ) : (
+            <div className="empty-state empty-state--compact">
+              <strong>No active projects yet.</strong>
+              <p>Create or import a workspace to start supervising work.</p>
             </div>
-          </form>
+          )}
         </article>
 
         <article className="surface-card">
@@ -211,7 +222,7 @@ export function ProjectsPage({
             </div>
           </div>
           <div className="list-stack">
-            {portfolio?.projects.slice(0, 6).map((project) => (
+            {hotspotProjects.map((project) => (
               <div key={project.project_id} className="list-row">
                 <div>
                   <strong>{project.name}</strong>
@@ -227,12 +238,13 @@ export function ProjectsPage({
                   <span>{project.provider_capacity.queued_jobs} queued jobs</span>
                 </div>
               </div>
-            )) ?? (
+            ))}
+            {!hotspotProjects.length ? (
               <div className="empty-state empty-state--compact">
                 <strong>No portfolio data yet.</strong>
                 <p>Create a project to give MAAS something to supervise.</p>
               </div>
-            )}
+            ) : null}
           </div>
         </article>
       </section>
@@ -242,7 +254,7 @@ export function ProjectsPage({
           <div className="surface-card__header">
             <div>
               <span className="eyebrow">Active projects</span>
-              <h2>Jump into a workspace</h2>
+              <h2>Switch the control room</h2>
             </div>
           </div>
           <div className="card-grid">
@@ -291,6 +303,81 @@ export function ProjectsPage({
         <article className="surface-card">
           <div className="surface-card__header">
             <div>
+              <span className="eyebrow">Create or import</span>
+              <h2>Add another workspace</h2>
+            </div>
+          </div>
+          <p className="surface-card__copy">
+            Add a greenfield workspace or point MAAS at an existing repository when you want a new project in the selector.
+          </p>
+          <form className="project-form project-form--stack" onSubmit={onCreateProject}>
+            <label className="field-control">
+              <span>Name</span>
+              <input
+                type="text"
+                value={projectForm.name}
+                placeholder="Payments platform"
+                onChange={(event) => onProjectFormChange({ ...projectForm, name: event.target.value })}
+                required
+              />
+            </label>
+            <div className="field-grid field-grid--two">
+              <label className="field-control">
+                <span>Mode</span>
+                <select
+                  value={projectForm.mode}
+                  onChange={(event) =>
+                    onProjectFormChange({
+                      ...projectForm,
+                      mode: event.target.value as ProjectFormState["mode"]
+                    })
+                  }
+                >
+                  <option value="auto">Auto</option>
+                  <option value="greenfield">Greenfield</option>
+                  <option value="brownfield">Brownfield</option>
+                </select>
+              </label>
+              <label className="field-control">
+                <span>Project type</span>
+                <input
+                  type="text"
+                  value={projectForm.projectType}
+                  onChange={(event) => onProjectFormChange({ ...projectForm, projectType: event.target.value })}
+                />
+              </label>
+            </div>
+            <label className="field-control">
+              <span>Description</span>
+              <input
+                type="text"
+                value={projectForm.description}
+                placeholder="What this project is trying to accomplish"
+                onChange={(event) => onProjectFormChange({ ...projectForm, description: event.target.value })}
+              />
+            </label>
+            <label className="field-control">
+              <span>Source root</span>
+              <input
+                type="text"
+                value={projectForm.sourceRoot}
+                placeholder="/path/to/existing/repo"
+                onChange={(event) => onProjectFormChange({ ...projectForm, sourceRoot: event.target.value })}
+              />
+            </label>
+            <div className="surface-card__actions">
+              <button type="submit" className="hero-button hero-button--primary" disabled={projectSubmitting}>
+                {projectSubmitting ? "Working..." : "Create project"}
+              </button>
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <section className="two-column-grid">
+        <article className="surface-card">
+          <div className="surface-card__header">
+            <div>
               <span className="eyebrow">Archived projects</span>
               <h2>Restore when needed</h2>
             </div>
@@ -324,6 +411,36 @@ export function ProjectsPage({
               </div>
             )}
           </div>
+        </article>
+
+        <article className="surface-card">
+          <div className="surface-card__header">
+            <div>
+              <span className="eyebrow">Portfolio rhythm</span>
+              <h2>What the orchestrator will touch</h2>
+            </div>
+          </div>
+          <div className="detail-grid">
+            <div>
+              <span>Active projects</span>
+              <strong>{portfolio?.summary.active_projects ?? activeProjects.length}</strong>
+            </div>
+            <div>
+              <span>Queued jobs</span>
+              <strong>{portfolio?.summary.queued_provider_jobs ?? 0}</strong>
+            </div>
+            <div>
+              <span>Blocked tasks</span>
+              <strong>{portfolio?.summary.blocked_tasks ?? 0}</strong>
+            </div>
+            <div>
+              <span>Open escalations</span>
+              <strong>{portfolio?.summary.open_escalations ?? 0}</strong>
+            </div>
+          </div>
+          <p className="surface-card__copy">
+            Use the orchestrator when you want MAAS to refresh project readiness, assign work, and drain queued runtime jobs across the portfolio.
+          </p>
         </article>
       </section>
 

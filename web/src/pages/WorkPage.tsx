@@ -45,6 +45,13 @@ function formatPriority(priority: number) {
   return "Low";
 }
 
+function formatStatusLabel(value?: string | null) {
+  if (!value) {
+    return "Unknown";
+  }
+  return value.replaceAll("_", " ");
+}
+
 function formatList(items?: string[] | null) {
   return (items ?? []).filter(Boolean).join(", ") || "None";
 }
@@ -153,6 +160,25 @@ export function WorkPage() {
   }, [selectedTask, selectedTaskId]);
 
   const agentOptions = useMemo<FilterOption[]>(() => board?.filter_options?.agents ?? [], [board]);
+  const visibleColumns = useMemo(() => {
+    const orderedKeys = ["ready", "in_progress", "review", "blocked", "planned"] as const;
+    const byKey = new Map((board?.columns ?? []).map((column) => [column.key, column] as const));
+    const prioritized = orderedKeys
+      .map((key) => byKey.get(key))
+      .filter((column): column is NonNullable<typeof board>["columns"][number] => Boolean(column));
+    const visible = prioritized.filter(
+      (column) => column.tasks.length > 0 || ["in_progress", "review", "blocked"].includes(column.key)
+    );
+    return visible.length ? visible : prioritized.slice(0, 3);
+  }, [board]);
+  const collapsedColumns = useMemo(
+    () =>
+      (board?.columns ?? [])
+        .filter((column) => !visibleColumns.some((visible) => visible.key === column.key))
+        .map((column) => ({ key: column.key, title: column.title, count: column.tasks.length })),
+    [board, visibleColumns]
+  );
+  const boardIsFitted = visibleColumns.length > 0 && visibleColumns.length <= 3;
 
   async function reloadWithNotice(message: string) {
     await loadWork();
@@ -238,11 +264,28 @@ export function WorkPage() {
               <div>
                 <span className="eyebrow">Execution board</span>
                 <h2>Current task flow</h2>
+                {collapsedColumns.length ? (
+                  <div className="board-queue-strip board-queue-strip--work">
+                    {collapsedColumns.map((column) => (
+                      <span key={column.key} className="board-queue-pill">
+                        <strong>{column.count}</strong>
+                        <span>{column.title}</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
               <span className="status-chip">{allTasks.length} visible cards</span>
             </div>
-            <div className="board-strip">
-              {(board?.columns ?? []).map((column) => (
+            <div
+              className={`board-strip ${boardIsFitted ? "board-strip--fitted" : ""}`}
+              style={
+                boardIsFitted
+                  ? { gridTemplateColumns: `repeat(${Math.max(visibleColumns.length, 1)}, minmax(0, 1fr))` }
+                  : undefined
+              }
+            >
+              {visibleColumns.map((column) => (
                 <BoardColumn
                   key={column.key}
                   column={column}
@@ -367,7 +410,7 @@ export function WorkPage() {
                 <span className="eyebrow">Focused task</span>
                 <h2>{selectedTask?.title ?? "No task selected"}</h2>
               </div>
-              {selectedTask ? <span className="status-chip">{selectedTask.status}</span> : null}
+              {selectedTask ? <span className="status-chip">{formatStatusLabel(selectedTask.status)}</span> : null}
             </div>
             {selectedTask ? (
               <div className="detail-stack">

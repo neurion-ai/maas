@@ -99,6 +99,22 @@ function formatPriority(priority: number) {
   return "P3";
 }
 
+function formatStatusLabel(value?: string | null) {
+  if (!value) {
+    return "Unknown";
+  }
+  return value.replaceAll("_", " ");
+}
+
+function formatAgentRole(agent: AgentRosterEntry) {
+  const display = agent.display_name.trim().toLowerCase();
+  const role = agent.role.trim().toLowerCase();
+  if (!role || role === display) {
+    return null;
+  }
+  return agent.role;
+}
+
 function formatList(items?: string[] | null, limit = 4) {
   const values = (items ?? []).filter(Boolean);
   if (!values.length) {
@@ -689,30 +705,40 @@ export function HomePage({ onNavigate }: HomePageProps) {
         <div className="control-room__status-strip">
           <div className="status-panel">
             <span className={`status-dot status-dot--${projectHealth === "Stable" ? "good" : projectHealth === "Degraded" ? "warn" : "critical"}`} />
-            <div>
+            <div className="status-panel__copy">
               <strong>{projectHealth}</strong>
               <span>project health</span>
             </div>
           </div>
           <div className="status-panel">
-            <strong>{overview?.summary.tasks_in_progress ?? 0}</strong>
-            <span>active runs</span>
+            <div className="status-panel__copy">
+              <strong>{overview?.summary.tasks_in_progress ?? 0}</strong>
+              <span>active runs</span>
+            </div>
           </div>
           <div className="status-panel">
-            <strong>{overview?.summary.tasks_review ?? 0}</strong>
-            <span>waiting review</span>
+            <div className="status-panel__copy">
+              <strong>{overview?.summary.tasks_review ?? 0}</strong>
+              <span>waiting review</span>
+            </div>
           </div>
           <div className="status-panel">
-            <strong>{recovery?.summary.open_failure_alerts ?? 0}</strong>
-            <span>failure alerts</span>
+            <div className="status-panel__copy">
+              <strong>{recovery?.summary.open_failure_alerts ?? 0}</strong>
+              <span>failure alerts</span>
+            </div>
           </div>
           <div className="status-panel">
-            <strong>{portfolio?.summary.queued_provider_jobs ?? 0}</strong>
-            <span>queued jobs</span>
+            <div className="status-panel__copy">
+              <strong>{portfolio?.summary.queued_provider_jobs ?? 0}</strong>
+              <span>queued jobs</span>
+            </div>
           </div>
           <div className="status-panel">
-            <strong>{portfolio?.summary.projects_with_issues ?? 0}</strong>
-            <span>projects with issues</span>
+            <div className="status-panel__copy">
+              <strong>{portfolio?.summary.projects_with_issues ?? 0}</strong>
+              <span>projects with issues</span>
+            </div>
           </div>
         </div>
       </header>
@@ -727,7 +753,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
               <h2>Who is doing what</h2>
             </div>
             <button type="button" className="text-link" onClick={() => onNavigate("runs")}>
-              Open runtime
+              Runs
             </button>
           </div>
           <div className="agent-rail">
@@ -737,11 +763,11 @@ export function HomePage({ onNavigate }: HomePageProps) {
               return (
                 <div key={agent.agent_id} className={`agent-rail__item agent-rail__item--${context.tone}`}>
                   <div className="agent-rail__top">
-                    <div>
+                    <div className="agent-rail__identity">
                       <strong>{agent.display_name}</strong>
-                      <span>{agent.role}</span>
+                      {formatAgentRole(agent) ? <span>{formatAgentRole(agent)}</span> : null}
                     </div>
-                    <span className={`status-pill status-pill--${statusTone(agent.status)}`}>{agent.status}</span>
+                    <span className={`status-pill status-pill--${statusTone(agent.status)}`}>{formatStatusLabel(agent.status)}</span>
                   </div>
                   <div className="agent-rail__body">
                     <p>{context.subtitle}</p>
@@ -815,7 +841,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 </div>
               </div>
               <button type="button" className="text-link" onClick={() => onNavigate("work")}>
-                Open workbench
+                Work
               </button>
             </div>
             <div
@@ -860,7 +886,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 <span className="eyebrow">Inspector</span>
                 <h2>{selectedTask?.title ?? "No task selected"}</h2>
               </div>
-              {selectedTask ? <span className={`status-pill status-pill--${statusTone(selectedTask.review_state ?? selectedTask.status)}`}>{selectedTask.status}</span> : null}
+              {selectedTask ? <span className={`status-pill status-pill--${statusTone(selectedTask.review_state ?? selectedTask.status)}`}>{formatStatusLabel(selectedTask.status)}</span> : null}
             </div>
             {selectedTask ? (
               <div className="task-inspector">
@@ -1163,7 +1189,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 <h2>What needs you now</h2>
               </div>
               <button type="button" className="text-link" onClick={() => onNavigate("incidents")}>
-                Open incidents
+                Incidents
               </button>
             </div>
             <div className="attention-list">
@@ -1207,7 +1233,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
                 <h2>Meaningful system events</h2>
               </div>
               <button type="button" className="text-link" onClick={() => onNavigate("runs")}>
-                Open runs
+                Runs
               </button>
             </div>
             <div className="ticker-list">

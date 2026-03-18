@@ -2344,7 +2344,6 @@ body {
   border-radius: 999px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel-muted) 88%, transparent 12%);
-  white-space: nowrap;
 }
 
 .telemetry-chip {
@@ -2469,6 +2468,20 @@ body {
 .status-panel {
   justify-content: flex-start;
   min-width: 0;
+}
+
+.status-panel__copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.status-panel__copy strong,
+.status-panel__copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-panel strong,
@@ -2630,6 +2643,19 @@ body {
   gap: 4px;
 }
 
+.agent-rail__identity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-rail__identity strong,
+.agent-rail__identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-rail__body p,
 .attention-item p,
 .ticker-item p,
@@ -2730,6 +2756,17 @@ body {
   border-radius: 999px;
   font-size: 0.68rem;
   font-weight: 700;
+}
+
+.status-pill,
+.status-chip,
+.text-link {
+  white-space: nowrap;
+}
+
+.status-pill,
+.status-chip {
+  flex: none;
 }
 
 .compact-board-card__priority--critical {
@@ -2887,6 +2924,10 @@ body {
   margin-top: 8px;
 }
 
+.board-queue-strip--work {
+  margin-top: 10px;
+}
+
 .board-queue-pill {
   display: inline-flex;
   align-items: center;
@@ -3042,6 +3083,11 @@ body {
 .board-strip {
   gap: 8px;
   grid-auto-columns: minmax(250px, 1fr);
+}
+
+.board-strip--fitted {
+  grid-auto-flow: row;
+  overflow: visible;
 }
 
 .board-column {

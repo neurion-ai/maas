@@ -23,6 +23,7 @@ from maas.services.escalations import approve_escalation, fetch_escalations, rej
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
+from maas.services.orchestrator import run_orchestrator_once
 from maas.services.provider_runtime import (
     process_next_provider_job,
     process_provider_job,
@@ -34,6 +35,7 @@ from maas.services.provider_runtime import (
     set_provider_mode,
     set_provider_settings,
 )
+from maas.services.portfolio import fetch_portfolio
 from maas.services.projects import archive_project, create_project, list_projects, rescan_brownfield_project, resolve_project_id, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
@@ -145,6 +147,12 @@ class AllocateTasksRequest(BaseModel):
 
 class SupervisorRunRequest(BaseModel):
     allocate_limit: int = None
+    project_id: Optional[str] = None
+
+
+class OrchestratorRunRequest(BaseModel):
+    allocate_limit: int = None
+    provider_job_limit: int = 2
     project_id: Optional[str] = None
 
 
@@ -449,6 +457,29 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
+        finally:
+            connection.close()
+
+    @app.get("/api/portfolio")
+    def portfolio():
+        connection = connect(paths)
+        try:
+            return fetch_portfolio(connection)
+        finally:
+            connection.close()
+
+    @app.post("/api/orchestrator/run")
+    def orchestrator_run(payload: OrchestratorRunRequest):
+        connection = connect(paths)
+        try:
+            selected_project_id = _selected_project_id(connection, payload.project_id) if payload.project_id else None
+            return run_orchestrator_once(
+                connection,
+                paths,
+                allocate_limit=payload.allocate_limit,
+                provider_job_limit=payload.provider_job_limit,
+                project_id=selected_project_id,
+            )
         finally:
             connection.close()
 

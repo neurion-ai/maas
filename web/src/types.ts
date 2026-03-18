@@ -133,6 +133,51 @@ export interface ProjectsResponse {
   projects: ProjectSummary[];
 }
 
+export interface PortfolioProject {
+  project_id: string;
+  name: string;
+  description: string;
+  project_type: string;
+  created_at: string;
+  updated_at?: string;
+  state: "active" | "archived";
+  archived_at?: string | null;
+  source_root?: string;
+  onboarding_mode?: string;
+  task_count: number;
+  agent_count: number;
+  open_alert_count: number;
+  blocked_tasks: number;
+  in_progress_tasks: number;
+  open_alerts: number;
+  critical_alerts: number;
+  active_sessions: number;
+  running_agents: number;
+  open_quarantine_entries: number;
+  dead_letter_entries: number;
+  repeated_failure_tasks: number;
+  health: "healthy" | "warn" | "critical" | "archived";
+  provider_readiness: {
+    total: number;
+    ready: number;
+    issues: number;
+    unknown: number;
+  };
+}
+
+export interface PortfolioResponse {
+  summary: {
+    active_projects: number;
+    archived_projects: number;
+    open_alerts: number;
+    blocked_tasks: number;
+    active_sessions: number;
+    recovery_pressure: number;
+    projects_with_issues: number;
+  };
+  projects: PortfolioProject[];
+}
+
 export interface ProjectCreateRequest {
   actor_id: string;
   name: string;
@@ -984,4 +1029,20 @@ export interface SupervisorRunResponse {
     } | null;
   }>;
   project_runs: SupervisorProjectRun[];
+}
+
+export interface OrchestratorProjectRun extends SupervisorProjectRun {
+  provider_jobs_processed: number;
+  processed_jobs: Array<{
+    job_id: string;
+    provider_id: string;
+    status: string;
+    task_id: string;
+    project_id: string;
+  }>;
+}
+
+export interface OrchestratorRunResponse extends SupervisorRunResponse {
+  provider_jobs_processed: number;
+  project_runs: OrchestratorProjectRun[];
 }

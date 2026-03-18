@@ -14,6 +14,8 @@ import type {
   GoalTreeResponse,
   LiveSnapshot,
   OverviewResponse,
+  OrchestratorRunResponse,
+  PortfolioResponse,
   ProjectActionResponse,
   ProjectCreateRequest,
   ProjectCreateResponse,
@@ -141,6 +143,19 @@ const REPO_FILE_FALLBACK: RepoFileResponse = {
   content_kind: "binary",
   content: null,
   truncated: false
+};
+
+const PORTFOLIO_FALLBACK: PortfolioResponse = {
+  summary: {
+    active_projects: 0,
+    archived_projects: 0,
+    open_alerts: 0,
+    blocked_tasks: 0,
+    active_sessions: 0,
+    recovery_pressure: 0,
+    projects_with_issues: 0
+  },
+  projects: []
 };
 
 const ROSTER_FALLBACK: AgentRosterResponse = {
@@ -529,8 +544,38 @@ async function fetchJson<T>(
   }
 }
 
+async function fetchGlobalJson<T>(
+  path: string,
+  fallback: T,
+  signal?: AbortSignal,
+  onFallback?: () => void
+): Promise<T> {
+  try {
+    const response = await fetch(path, { signal });
+    if (!response.ok) {
+      throw new Error(`Unexpected status: ${response.status}`);
+    }
+    const payload = (await response.json()) as T;
+    lastSuccessfulResponses.set(path, payload);
+    return payload;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw error;
+    }
+    onFallback?.();
+    if (lastSuccessfulResponses.has(path)) {
+      return lastSuccessfulResponses.get(path) as T;
+    }
+    return fallback;
+  }
+}
+
 export function fetchProjects() {
   return fetchJson<ProjectsResponse>("/api/projects", { projects: [] });
+}
+
+export function fetchPortfolio() {
+  return fetchGlobalJson<PortfolioResponse>("/api/portfolio", PORTFOLIO_FALLBACK);
 }
 
 export async function createProject(payload: ProjectCreateRequest) {
@@ -945,6 +990,15 @@ export async function runSupervisorPass(allocateLimit?: number) {
     project_id: getSelectedProjectId()
   });
   return payload as SupervisorRunResponse;
+}
+
+export async function runOrchestratorPass(allocateLimit?: number, providerJobLimit = 2) {
+  const payload = await postJson<OrchestratorRunResponse>("/api/orchestrator/run", {
+    allocate_limit: allocateLimit ?? null,
+    provider_job_limit: providerJobLimit,
+    project_id: getSelectedProjectId()
+  });
+  return payload as OrchestratorRunResponse;
 }
 
 export async function rescanBrownfieldProject(projectId: string) {

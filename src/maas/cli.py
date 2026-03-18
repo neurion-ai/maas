@@ -22,6 +22,7 @@ from maas.services.provider_runtime import (
 from maas.services.projects import archive_project, create_project, list_projects, rescan_brownfield_project, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.orchestrator import run_orchestrator_once
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.steering import (
     dismiss_quarantine_entry,
@@ -69,6 +70,14 @@ def build_parser():
     supervisor_parser.add_argument("--once", action="store_true")
     supervisor_parser.add_argument("--allocate-limit", type=int)
     supervisor_parser.add_argument("--project-id")
+
+    orchestrator_parser = subparsers.add_parser("orchestrator")
+    orchestrator_parser.add_argument("--project-root", default=".")
+    orchestrator_parser.add_argument("--once", action="store_true")
+    orchestrator_parser.add_argument("--allocate-limit", type=int)
+    orchestrator_parser.add_argument("--provider-job-limit", type=int, default=2)
+    orchestrator_parser.add_argument("--project-id")
+    orchestrator_parser.add_argument("--interval-seconds", type=int, default=15)
 
     board_parser = subparsers.add_parser("board")
     board_parser.add_argument("--project-root", default=".")
@@ -387,6 +396,26 @@ def command_supervisor(args):
         if args.once:
             break
         time.sleep(15)
+
+
+def command_orchestrator(args):
+    paths = project_paths(args.project_root)
+    while True:
+        connection = connect(paths)
+        try:
+            findings = run_orchestrator_once(
+                connection,
+                paths,
+                allocate_limit=args.allocate_limit,
+                provider_job_limit=args.provider_job_limit,
+                project_id=args.project_id,
+            )
+            print(json.dumps(findings, indent=2))
+        finally:
+            connection.close()
+        if args.once:
+            break
+        time.sleep(args.interval_seconds)
 
 
 def command_board(args):
@@ -716,6 +745,8 @@ def main(argv=None):
         command_api(args)
     elif args.command == "supervisor":
         command_supervisor(args)
+    elif args.command == "orchestrator":
+        command_orchestrator(args)
     elif args.command == "board":
         command_board(args)
     elif args.command == "project":

@@ -21,7 +21,11 @@ Current stacked development chain above `main`:
 - `#85` exists on `codex/project-isolated-provider-runtime`
 - `#86` exists on `codex/provider-job-queue`
 - `#87` exists on `codex/provider-job-queue`
-- `#88` is the next unfinished item in sequence
+- `#88` exists on `codex/file-linked-task-scopes`
+- `#89` exists on `codex/brownfield-runbook-command-catalog`
+- `#90` exists on `codex/brownfield-runbook-command-catalog`
+- `#91` exists on `codex/brownfield-runbook-command-catalog`
+- `#92` is the next unfinished item in sequence
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -68,7 +72,11 @@ Current stacked development chain above `main`:
 - [x] `#85` is implemented on `codex/project-isolated-provider-runtime`
 - [x] `#86` is implemented on `codex/provider-job-queue`
 - [x] `#87` is implemented on `codex/provider-job-queue`
-- [ ] `#88` is the next unfinished item
+- [x] `#88` is implemented on `codex/file-linked-task-scopes`
+- [x] `#89` is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#90` is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#91` is implemented on `codex/brownfield-runbook-command-catalog`
+- [ ] `#92` is the next unfinished item
 
 ## Extended Numbered Roadmap
 

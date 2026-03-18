@@ -13,7 +13,11 @@
 - [x] `#85` sandboxed provider runners per project is implemented on `codex/project-isolated-provider-runtime`
 - [x] `#86` remote or queued provider execution is implemented on `codex/provider-job-queue`
 - [x] `#87` brownfield rescan and drift detection is implemented on `codex/provider-job-queue`
-- [ ] `#88` file-linked task scopes and acceptance criteria is the next unfinished step
+- [x] `#88` file-linked task scopes and acceptance criteria is implemented on `codex/file-linked-task-scopes`
+- [x] `#89` brownfield runbook and command catalog is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#90` portfolio view across projects is implemented on `codex/brownfield-runbook-command-catalog`
+- [x] `#91` background orchestration daemon is implemented on `codex/brownfield-runbook-command-catalog`
+- [ ] `#92` queue and worker capacity management is the next unfinished step
 
 ## Extended Numbered Roadmap
 

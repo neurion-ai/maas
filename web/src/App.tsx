@@ -11,11 +11,13 @@ import { LivePulseProvider, useLiveStatus } from "./lib/useLivePulse";
 import { archiveProject, createProject, fetchProjects, restoreProject } from "./lib/controlRoomApi";
 import { getSelectedProjectId, setSelectedProjectId } from "./lib/projectScope";
 import { OverviewPage } from "./pages/OverviewPage";
+import { PortfolioPage } from "./pages/PortfolioPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { RecoveryPage } from "./pages/RecoveryPage";
 import type { ProjectSummary } from "./types";
 
 type View =
+  | "portfolio"
   | "overview"
   | "board"
   | "goals"
@@ -29,6 +31,7 @@ type View =
   | "escalations";
 
 const VIEWS: { id: View; label: string }[] = [
+  { id: "portfolio", label: "Portfolio" },
   { id: "overview", label: "Overview" },
   { id: "board", label: "Board" },
   { id: "goals", label: "Goal Tree" },
@@ -382,6 +385,7 @@ function AppShell() {
 
       <div className="app-content">
         {activeView === "overview" ? <OverviewPage /> : null}
+        {activeView === "portfolio" ? <PortfolioPage /> : null}
         {activeView === "board" ? <BoardPage /> : null}
         {activeView === "goals" ? <GoalTreePage /> : null}
         {activeView === "agents" ? <AgentRosterPage /> : null}

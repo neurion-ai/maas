@@ -237,7 +237,7 @@ export function ProvidersPage() {
     setNotice(null);
     try {
       const draft = settingsDrafts[provider.id] ?? {};
-      const payload: Record<string, string | number> = {};
+      const payload: Record<string, string | number | boolean> = {};
       Object.entries(draft).forEach(([key, value]) => {
         if (key === "timeout_seconds" || key === "job_limit_per_pass") {
           payload[key] = Number(value);

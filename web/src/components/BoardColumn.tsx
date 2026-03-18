@@ -5,6 +5,8 @@ interface BoardColumnProps {
   column: BoardColumnType;
   agentOptions?: FilterOption[];
   pendingActionKey?: string | null;
+  focusedTaskId?: string | null;
+  onInspect?: (taskId: string) => void;
   onReviewAction?: (taskId: string, decision: "approve" | "reject") => void;
   onAgentAction?: (agentId: string, action: "pause" | "resume") => void;
   onPriorityChange?: (taskId: string, priority: number) => void;
@@ -24,6 +26,8 @@ export function BoardColumn({
   column,
   agentOptions,
   pendingActionKey,
+  focusedTaskId,
+  onInspect,
   onReviewAction,
   onAgentAction,
   onPriorityChange,
@@ -54,6 +58,8 @@ export function BoardColumn({
             task={task}
             agentOptions={agentOptions}
             pendingActionKey={pendingActionKey}
+            isFocused={focusedTaskId === task.task_id}
+            onInspect={onInspect}
             onReviewAction={onReviewAction}
             onAgentAction={onAgentAction}
             onPriorityChange={onPriorityChange}

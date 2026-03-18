@@ -23,8 +23,26 @@
 
 ## Still To Do On `main`
 
+- [ ] Product information architecture simplification and clearer top-level navigation
+- [ ] Home command center that recommends next actions instead of exposing subsystem sprawl
+- [ ] Guided onboarding and first-run operator workflow
+- [ ] Unified Work, Runs, and Incidents surfaces instead of separate mechanism-heavy pages
+- [ ] Dark/light theme system and stronger visual hierarchy
 - [ ] Multi-project board routing
 - [ ] Higher-level artifact retention controls and cleanup workflows beyond the current browser and row-level incident actions
+
+## UX/Product Sequence On `codex/ux-product-redesign`
+
+- [x] `#107` Information architecture reset and navigation collapse
+- [x] `#108` Design system and dual light/dark theme foundation
+- [x] `#109` Home command center with recommended actions
+- [x] `#110` Guided onboarding and first-run experience
+- [x] `#111` Unified Work surface for board, plan, and task detail
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [x] `#114` Portfolio and project-management UX redesign
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass
 
 ## Board Contract Checklist
 

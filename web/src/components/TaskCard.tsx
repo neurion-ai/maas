@@ -64,6 +64,8 @@ interface TaskCardProps {
   task: BoardTask;
   agentOptions?: FilterOption[];
   pendingActionKey?: string | null;
+  isFocused?: boolean;
+  onInspect?: (taskId: string) => void;
   onReviewAction?: (taskId: string, decision: "approve" | "reject") => void;
   onAgentAction?: (agentId: string, action: "pause" | "resume") => void;
   onPriorityChange?: (taskId: string, priority: number) => void;
@@ -83,6 +85,8 @@ export function TaskCard({
   task,
   agentOptions = [],
   pendingActionKey,
+  isFocused = false,
+  onInspect,
   onReviewAction,
   onAgentAction,
   onPriorityChange,
@@ -160,126 +164,175 @@ export function TaskCard({
   ) as Array<number | null>;
 
   return (
-    <article className={`task-card task-card--${task.status}`}>
+    <article className={`task-card task-card--${task.status} ${isFocused ? "is-focused" : ""}`}>
       <div className="task-card__meta">
         <span className="task-card__badge">{formatPriority(task.priority)}</span>
         <span className="task-card__id">{task.task_id}</span>
+        {task.scheduler_rank != null ? <span className="task-card__rank">#{task.scheduler_rank}</span> : null}
       </div>
-      <h3>{task.title}</h3>
-      <dl className="task-card__details">
+      <div className="task-card__header">
         <div>
-          <dt>Goal</dt>
-          <dd>{task.goal?.title ?? "Unlinked"}</dd>
+          <h3>{task.title}</h3>
+          <p className="task-card__lead">{task.goal?.title ?? "Unlinked goal"}</p>
         </div>
-        <div>
-          <dt>Agent</dt>
-          <dd>{task.agent?.name ?? "Unassigned"}</dd>
+        {onInspect ? (
+          <button
+            type="button"
+            className={`task-action task-action--ghost ${isFocused ? "is-active" : ""}`}
+            onClick={() => onInspect(task.task_id)}
+          >
+            {isFocused ? "Focused" : "Inspect"}
+          </button>
+        ) : null}
+      </div>
+      <div className="task-card__summary">
+        <span>{task.agent?.name ?? "Unassigned"}</span>
+        <span>{task.progress_pct != null ? `${task.progress_pct}% progress` : "Not started"}</span>
+        <span>{task.review_state ?? "Normal flow"}</span>
+        <span>{task.failure_count ? `${task.failure_count} failures` : "No failures"}</span>
+        <span>{task.next_retry_at ? `Retry ${new Date(task.next_retry_at).toLocaleTimeString()}` : "Ready now"}</span>
+      </div>
+      {task.scheduler_summary ? <p className="task-card__context">{task.scheduler_summary}</p> : null}
+      {(task.scoped_paths?.length || task.validation_commands?.length || task.replan_summary) ? (
+        <div className="task-card__signals">
+          {task.scoped_paths?.length ? (
+            <span className="task-signal">
+              <strong>Scope</strong>
+              <span>{formatCompactList(task.scoped_paths)}</span>
+            </span>
+          ) : null}
+          {task.validation_commands?.length ? (
+            <span className="task-signal">
+              <strong>Validate</strong>
+              <span>{formatCompactList(task.validation_commands, 2)}</span>
+            </span>
+          ) : null}
+          {task.replan_summary ? (
+            <span className="task-signal">
+              <strong>Replan</strong>
+              <span>{task.replan_summary}</span>
+            </span>
+          ) : null}
         </div>
-        <div>
-          <dt>Progress</dt>
-          <dd>{task.progress_pct != null ? `${task.progress_pct}%` : "Not started"}</dd>
-        </div>
-        <div>
-          <dt>Heartbeat</dt>
-          <dd>{formatHeartbeat(task.heartbeat_age_seconds)}</dd>
-        </div>
-        <div>
-          <dt>Age</dt>
-          <dd>{formatAge(task.age_hours)}</dd>
-        </div>
-        <div>
-          <dt>Review</dt>
-          <dd>{task.review_state ?? "Not in review"}</dd>
-        </div>
-        <div>
-          <dt>Failures</dt>
-          <dd>{task.failure_count ? `${task.failure_count} logged` : "None"}</dd>
-        </div>
-        <div>
-          <dt>Retries</dt>
-          <dd>
-            {task.retry_count
-              ? `${task.retry_count} auto retr${task.retry_count === 1 ? "y" : "ies"}${task.last_retry_reason ? ` (${task.last_retry_reason})` : ""}`
-              : "None"}
-          </dd>
-        </div>
-        <div>
-          <dt>Retry budget</dt>
-          <dd>{task.auto_retry_limit == null ? "Project default" : `${task.auto_retry_limit} max auto retries`}</dd>
-        </div>
-        <div>
-          <dt>Next retry</dt>
-          <dd>
-            {task.next_retry_at
-              ? `${new Date(task.next_retry_at).toLocaleString()}${task.next_retry_reason ? ` (${task.next_retry_reason})` : ""}`
-              : "Ready now"}
-          </dd>
-        </div>
-        <div>
-          <dt>Scheduler</dt>
-          <dd>{task.scheduler_summary ?? "No scheduler rationale yet"}</dd>
-        </div>
-        <div>
-          <dt>Score</dt>
-          <dd>
-            {task.scheduler_score != null
-              ? `${task.scheduler_score}${task.scheduler_rank != null ? ` (rank #${task.scheduler_rank})` : ""}`
-              : "N/A"}
-          </dd>
-        </div>
-        <div>
-          <dt>Fit</dt>
-          <dd>{task.scheduler_agent?.name ?? "No active match"}</dd>
-        </div>
-        <div>
-          <dt>Factors</dt>
-          <dd>{formatSchedulerFactors(task)}</dd>
-        </div>
-        {task.replan_strategy ? (
+      ) : null}
+      <details className="task-card__advanced">
+        <summary>Deep context</summary>
+        <dl className="task-card__details">
           <div>
-            <dt>Replan</dt>
+            <dt>Goal</dt>
+            <dd>{task.goal?.title ?? "Unlinked"}</dd>
+          </div>
+          <div>
+            <dt>Agent</dt>
+            <dd>{task.agent?.name ?? "Unassigned"}</dd>
+          </div>
+          <div>
+            <dt>Progress</dt>
+            <dd>{task.progress_pct != null ? `${task.progress_pct}%` : "Not started"}</dd>
+          </div>
+          <div>
+            <dt>Heartbeat</dt>
+            <dd>{formatHeartbeat(task.heartbeat_age_seconds)}</dd>
+          </div>
+          <div>
+            <dt>Age</dt>
+            <dd>{formatAge(task.age_hours)}</dd>
+          </div>
+          <div>
+            <dt>Review</dt>
+            <dd>{task.review_state ?? "Not in review"}</dd>
+          </div>
+          <div>
+            <dt>Failures</dt>
+            <dd>{task.failure_count ? `${task.failure_count} logged` : "None"}</dd>
+          </div>
+          <div>
+            <dt>Retries</dt>
             <dd>
-              {task.replan_strategy}
-              {task.replan_summary ? ` | ${task.replan_summary}` : ""}
+              {task.retry_count
+                ? `${task.retry_count} auto retr${task.retry_count === 1 ? "y" : "ies"}${task.last_retry_reason ? ` (${task.last_retry_reason})` : ""}`
+                : "None"}
             </dd>
           </div>
-        ) : null}
-        {task.scoped_paths?.length ? (
           <div>
-            <dt>Scope</dt>
-            <dd>{formatCompactList(task.scoped_paths)}</dd>
+            <dt>Retry budget</dt>
+            <dd>{task.auto_retry_limit == null ? "Project default" : `${task.auto_retry_limit} max auto retries`}</dd>
           </div>
-        ) : null}
-        {task.validation_commands?.length ? (
           <div>
-            <dt>Validate</dt>
-            <dd>{formatCompactList(task.validation_commands, 2)}</dd>
-          </div>
-        ) : null}
-        {task.latest_verification_status ? (
-          <div>
-            <dt>Verified</dt>
+            <dt>Next retry</dt>
             <dd>
-              {task.latest_verification_status}
-              {task.latest_verification_command ? ` | ${task.latest_verification_command}` : ""}
-              {task.latest_verification_at ? ` | ${new Date(task.latest_verification_at).toLocaleString()}` : ""}
+              {task.next_retry_at
+                ? `${new Date(task.next_retry_at).toLocaleString()}${task.next_retry_reason ? ` (${task.next_retry_reason})` : ""}`
+                : "Ready now"}
             </dd>
           </div>
-        ) : null}
-        {task.git_workspace_supported ? (
           <div>
-            <dt>Git workspace</dt>
+            <dt>Scheduler</dt>
+            <dd>{task.scheduler_summary ?? "No scheduler rationale yet"}</dd>
+          </div>
+          <div>
+            <dt>Score</dt>
             <dd>
-              {task.git_workspace_prepared
-                ? `${task.git_workspace_branch ?? "prepared"} | ${task.git_workspace_change_summary ?? "No diff summary"}${
-                    task.git_workspace_dirty_files ? ` | ${task.git_workspace_dirty_files} changed` : ""
-                  }${task.git_workspace_diff_artifact_id ? ` | ${task.git_workspace_diff_artifact_id}` : ""}`
-                : "Not prepared"}
+              {task.scheduler_score != null
+                ? `${task.scheduler_score}${task.scheduler_rank != null ? ` (rank #${task.scheduler_rank})` : ""}`
+                : "N/A"}
             </dd>
           </div>
-        ) : null}
-      </dl>
+          <div>
+            <dt>Fit</dt>
+            <dd>{task.scheduler_agent?.name ?? "No active match"}</dd>
+          </div>
+          <div>
+            <dt>Factors</dt>
+            <dd>{formatSchedulerFactors(task)}</dd>
+          </div>
+          {task.replan_strategy ? (
+            <div>
+              <dt>Replan</dt>
+              <dd>
+                {task.replan_strategy}
+                {task.replan_summary ? ` | ${task.replan_summary}` : ""}
+              </dd>
+            </div>
+          ) : null}
+          {task.scoped_paths?.length ? (
+            <div>
+              <dt>Scope</dt>
+              <dd>{formatCompactList(task.scoped_paths)}</dd>
+            </div>
+          ) : null}
+          {task.validation_commands?.length ? (
+            <div>
+              <dt>Validate</dt>
+              <dd>{formatCompactList(task.validation_commands, 2)}</dd>
+            </div>
+          ) : null}
+          {task.latest_verification_status ? (
+            <div>
+              <dt>Verified</dt>
+              <dd>
+                {task.latest_verification_status}
+                {task.latest_verification_command ? ` | ${task.latest_verification_command}` : ""}
+                {task.latest_verification_at ? ` | ${new Date(task.latest_verification_at).toLocaleString()}` : ""}
+              </dd>
+            </div>
+          ) : null}
+          {task.git_workspace_supported ? (
+            <div>
+              <dt>Git workspace</dt>
+              <dd>
+                {task.git_workspace_prepared
+                  ? `${task.git_workspace_branch ?? "prepared"} | ${task.git_workspace_change_summary ?? "No diff summary"}${
+                      task.git_workspace_dirty_files ? ` | ${task.git_workspace_dirty_files} changed` : ""
+                    }${task.git_workspace_diff_artifact_id ? ` | ${task.git_workspace_diff_artifact_id}` : ""}`
+                  : "Not prepared"}
+              </dd>
+            </div>
+          ) : null}
+        </dl>
+      </details>
       {(canReview ||
+        onInspect ||
         canToggleAgent ||
         canReassign ||
         canReprioritize ||
@@ -293,6 +346,15 @@ export function TaskCard({
         canRefreshGitDiff ||
         canSetRetryLimit) && (
         <div className="task-card__actions">
+          {onInspect ? (
+            <button
+              type="button"
+              className={`task-action task-action--ghost ${isFocused ? "is-active" : ""}`}
+              onClick={() => onInspect(task.task_id)}
+            >
+              {isFocused ? "Focused task" : "Inspect task"}
+            </button>
+          ) : null}
           {canReview && (
             <>
               <button

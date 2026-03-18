@@ -42,8 +42,18 @@ Current stacked development chain above `main`:
 - `#104` exists on `codex/queue-worker-capacity-governance`
 - `#105` exists on `codex/queue-worker-capacity-governance`
 - `#106` exists on `codex/queue-worker-capacity-governance`
+- `#107` exists on `codex/ux-product-redesign`
+- `#108` exists on `codex/ux-product-redesign`
+- `#109` exists on `codex/ux-product-redesign`
+- `#110` exists on `codex/ux-product-redesign`
+- `#111` exists on `codex/ux-product-redesign`
+- `#112` exists on `codex/ux-product-redesign`
+- `#113` exists on `codex/ux-product-redesign`
+- `#114` exists on `codex/ux-product-redesign`
+- `#115` exists on `codex/ux-product-redesign`
+- `#116` exists on `codex/ux-product-redesign`
 
-The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -62,7 +72,7 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] Brownfield onboarding has started on `main` with repo detection, approval gating, imported workflow/repo-area backlog seeding, and overview visibility.
 - [x] The current implementation is roughly `85-90%` complete for that prototype target.
 - [ ] The repository is still much earlier against the broader long-horizon roadmap.
-- [ ] The biggest remaining roadmap buckets are project lifecycle/orchestration, deeper brownfield execution, stronger recovery automation, stronger isolation, and broader provider/runtime coverage.
+- [ ] The biggest remaining roadmap buckets are project lifecycle/orchestration hardening, deeper brownfield execution, stronger recovery automation, stronger isolation, and broader provider/runtime coverage.
 
 ## Current Numbered Delivery Sequence
 
@@ -120,6 +130,26 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
   push important incidents out of the dashboard via webhooks or messaging integrations.
 - [x] `#106` Incident timeline and replay:
   add a correlated incident history so operators can reconstruct what happened across tasks, alerts, sessions, and recovery actions.
+- [x] `#107` Information architecture reset and navigation collapse:
+  reduce the current top-level page sprawl into a smaller set of primary surfaces with user-language labels and a clearer mental model.
+- [x] `#108` Design system and dual light/dark theme foundation:
+  introduce semantic design tokens and persistent light/dark modes so the control room feels like a real product, not an internal admin tool.
+- [x] `#109` Home command center with recommended actions:
+  create a single landing surface that prioritizes “what needs attention” and “what should I do next” over raw subsystem telemetry.
+- [x] `#110` Guided onboarding and first-run experience:
+  add a setup flow for project creation/import, brownfield review, runtime readiness, and first supervised pass.
+- [x] `#111` Unified Work surface for board, plan, and task detail:
+  merge board, goal tree, and repo-grounded planning into one execution workspace with richer task detail and evidence.
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs:
+  merge execution telemetry and output inspection into one coherent operator view.
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline:
+  replace the current mechanism-heavy page split with one incident workbench and clearer playbooks.
+- [x] `#114` Portfolio and project-management UX redesign:
+  improve multi-project supervision, lifecycle actions, and project switching without exposing policy forms as the default experience.
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance:
+  make advanced capabilities discoverable while keeping the default UI simple.
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass:
+  finish the redesign with keyboard-first interactions, mobile/tablet behavior, hierarchy cleanup, and usability QA.
 
 ## Current Stacked Branch Progress
 
@@ -149,8 +179,20 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
 - [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
 - [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#107` is implemented on `codex/ux-product-redesign`
+- [x] `#108` is implemented on `codex/ux-product-redesign`
+- [x] `#109` is implemented on `codex/ux-product-redesign`
+- [x] `#110` is implemented on `codex/ux-product-redesign`
+- [x] `#111` is implemented on `codex/ux-product-redesign`
+- [x] `#112` is implemented on `codex/ux-product-redesign`
+- [x] `#113` is implemented on `codex/ux-product-redesign`
+- [x] `#114` is implemented on `codex/ux-product-redesign`
+- [x] `#115` is implemented on `codex/ux-product-redesign`
+- [x] `#116` is implemented on `codex/ux-product-redesign`
 
-The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#116` sequence is fully implemented on the stacked branch chain above `main`.
+
+The UX and product-design `#107-#116` sequence is now implemented on `codex/ux-product-redesign`.
 
 ## Extended Numbered Roadmap
 
@@ -180,6 +222,16 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] `#104` Cost, runtime, and quota controls
 - [x] `#105` Notifications and outbound integrations
 - [x] `#106` Incident timeline and replay
+- [x] `#107` Information architecture reset and navigation collapse
+- [x] `#108` Design system and dual light/dark theme foundation
+- [x] `#109` Home command center with recommended actions
+- [x] `#110` Guided onboarding and first-run experience
+- [x] `#111` Unified Work surface for board, plan, and task detail
+- [x] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [x] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [x] `#114` Portfolio and project-management UX redesign
+- [x] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [x] `#116` Accessibility, responsiveness, and visual-polish pass
 
 ## Delivery Order
 

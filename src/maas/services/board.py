@@ -1,6 +1,7 @@
 """Board read models."""
 
 from datetime import datetime
+import json
 
 from maas.constants import BOARD_COLUMNS
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
@@ -74,6 +75,45 @@ def _board_column_key(status):
     return status
 
 
+def _parse_acceptance_criteria(raw_value):
+    try:
+        parsed = json.loads(raw_value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []
+
+
+def _scoped_paths_from_acceptance(raw_value):
+    scoped_paths = []
+    seen = set()
+    for criterion in _parse_acceptance_criteria(raw_value):
+        if criterion.get("type") != "source_path_exists":
+            continue
+        raw_paths = criterion.get("paths") or []
+        if isinstance(raw_paths, str):
+            raw_paths = [raw_paths]
+        for path in raw_paths:
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            scoped_paths.append(path)
+    return scoped_paths
+
+
+def _validation_commands_from_acceptance(raw_value):
+    commands = []
+    seen = set()
+    for criterion in _parse_acceptance_criteria(raw_value):
+        if criterion.get("type") != "test_passes":
+            continue
+        command = (criterion.get("command") or "").strip()
+        if not command or command in seen:
+            continue
+        seen.add(command)
+        commands.append(command)
+    return commands
+
+
 def fetch_board(connection, filters=None, project_id=None):
     failure_query = """
         SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
@@ -141,6 +181,7 @@ def fetch_board(connection, filters=None, project_id=None):
             tasks.next_retry_reason,
             tasks.progress_pct,
             tasks.review_state,
+            tasks.acceptance_criteria_json,
             tasks.assigned_agent_id,
             tasks.created_at,
             tasks.updated_at,
@@ -220,6 +261,8 @@ def fetch_board(connection, filters=None, project_id=None):
             "scheduler_factors": scheduler.get("scheduler_factors", []),
             "replan_strategy": replan_feedback.get("replan_strategy") if replan_feedback else None,
             "replan_summary": replan_feedback.get("replan_summary") if replan_feedback else None,
+            "scoped_paths": _scoped_paths_from_acceptance(row["acceptance_criteria_json"]),
+            "validation_commands": _validation_commands_from_acceptance(row["acceptance_criteria_json"]),
         }
         cards_by_status.setdefault(column_key, []).append(card)
 

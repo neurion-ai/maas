@@ -48,6 +48,18 @@ function formatSchedulerFactors(task: BoardTask) {
     .join(", ");
 }
 
+function formatCompactList(values?: string[] | null, limit = 3) {
+  const items = (values ?? []).filter(Boolean);
+  if (!items.length) {
+    return "None";
+  }
+  const preview = items.slice(0, limit).join(", ");
+  if (items.length <= limit) {
+    return preview;
+  }
+  return `${preview} +${items.length - limit} more`;
+}
+
 interface TaskCardProps {
   task: BoardTask;
   agentOptions?: FilterOption[];
@@ -213,6 +225,18 @@ export function TaskCard({
               {task.replan_strategy}
               {task.replan_summary ? ` | ${task.replan_summary}` : ""}
             </dd>
+          </div>
+        ) : null}
+        {task.scoped_paths?.length ? (
+          <div>
+            <dt>Scope</dt>
+            <dd>{formatCompactList(task.scoped_paths)}</dd>
+          </div>
+        ) : null}
+        {task.validation_commands?.length ? (
+          <div>
+            <dt>Validate</dt>
+            <dd>{formatCompactList(task.validation_commands, 2)}</dd>
           </div>
         ) : null}
       </dl>

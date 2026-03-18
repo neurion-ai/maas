@@ -52,6 +52,8 @@ export interface BoardTask {
   scheduler_factors?: SchedulerFactor[];
   replan_strategy?: string | null;
   replan_summary?: string | null;
+  scoped_paths?: string[];
+  validation_commands?: string[];
 }
 
 export interface BoardColumn {

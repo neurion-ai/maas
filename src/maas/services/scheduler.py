@@ -758,6 +758,54 @@ def _evaluate_artifact_exists(connection, task_row, project_paths, criterion):
     }
 
 
+def _project_source_root(connection, task_row, project_paths):
+    project_row = connection.execute(
+        """
+        SELECT source_root
+        FROM projects
+        WHERE project_id = ?
+        """,
+        (task_row["project_id"],),
+    ).fetchone()
+    source_root = os.path.abspath((project_row["source_root"] if project_row else "") or project_paths.root)
+    if not os.path.isdir(source_root):
+        return project_paths.root
+    return source_root
+
+
+def _evaluate_source_path_exists(connection, task_row, project_paths, criterion):
+    raw_paths = criterion.get("paths") or []
+    if isinstance(raw_paths, str):
+        raw_paths = [raw_paths]
+    scoped_paths = [path for path in raw_paths if path]
+    if not scoped_paths:
+        return {"type": "source_path_exists", "passed": False, "reason": "No source paths configured."}
+
+    source_root = _project_source_root(connection, task_row, project_paths)
+    missing = []
+    for scoped_path in scoped_paths:
+        normalized_path = os.path.normpath(scoped_path)
+        absolute_path = os.path.abspath(os.path.join(source_root, normalized_path))
+        try:
+            within_root = os.path.commonpath([source_root, absolute_path]) == source_root
+        except ValueError:
+            within_root = False
+        if not within_root or not os.path.exists(absolute_path):
+            missing.append(scoped_path)
+
+    if missing:
+        return {
+            "type": "source_path_exists",
+            "passed": False,
+            "reason": "Missing source paths: {0}".format(", ".join(missing[:4])),
+        }
+    return {
+        "type": "source_path_exists",
+        "passed": True,
+        "reason": "Verified source paths: {0}".format(", ".join(scoped_paths[:4])),
+    }
+
+
 def _evaluate_metric(task_row, criterion):
     metric_name = criterion.get("metric")
     operator = criterion.get("op", ">=")
@@ -838,6 +886,8 @@ def evaluate_acceptance(connection, task_row, project_paths):
         criterion_type = criterion.get("type")
         if criterion_type == "artifact_exists":
             results.append(_evaluate_artifact_exists(connection, task_row, project_paths, criterion))
+        elif criterion_type == "source_path_exists":
+            results.append(_evaluate_source_path_exists(connection, task_row, project_paths, criterion))
         elif criterion_type == "metric":
             results.append(_evaluate_metric(task_row, criterion))
         elif criterion_type == "db_query":

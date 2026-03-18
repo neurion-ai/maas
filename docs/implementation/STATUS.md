@@ -17,6 +17,35 @@
 - [x] `#87` is implemented on the stacked branch `codex/provider-job-queue`
 - [ ] `#88` is the next unfinished item in the current stacked sequence
 
+## Extended Numbered Roadmap
+
+- [x] `#81` Multi-project write path and project lifecycle
+- [x] `#82` Project-aware supervisor and background orchestration
+- [x] `#83` Brownfield file-backed planning and repo navigation
+- [x] `#84` Policy-driven self-healing and circuit breakers
+- [x] `#85` Sandboxed provider runners per project
+- [x] `#86` Remote or queued provider execution beyond local CLI paths
+- [x] `#87` Brownfield rescan and drift detection
+- [ ] `#88` File-linked task scopes and acceptance criteria
+- [ ] `#89` Brownfield runbook and command catalog
+- [ ] `#90` Portfolio view across projects
+- [ ] `#91` Background orchestration daemon
+- [ ] `#92` Queue and worker capacity management on top of the provider job queue
+- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [ ] `#94` Policy-driven self-healing v2
+- [ ] `#95` Brownfield onboarding review v2
+- [ ] `#96` Remote executor or worker pool
+- [ ] `#97` Cross-project scheduler fairness and capacity policy
+- [ ] `#98` Repo-grounded plan synthesis and refresh
+- [ ] `#99` Verification runners and evidence capture
+- [ ] `#100` Git-aware task workspaces and diff review
+- [ ] `#101` Cross-project command center
+- [ ] `#102` Queue and worker capacity controls
+- [ ] `#103` Policy-driven approval and risk routing
+- [ ] `#104` Cost, runtime, and quota controls
+- [ ] `#105` Notifications and outbound integrations
+- [ ] `#106` Incident timeline and replay
+
 ## Current Snapshot
 
 - [x] MAAS is usable today as a greenfield local prototype with a real operator-facing control room.

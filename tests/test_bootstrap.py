@@ -88,10 +88,33 @@ lint = "example:main"
                 map_task_description = connection.execute(
                     "SELECT description FROM tasks WHERE title = 'Map imported source area: src'"
                 ).fetchone()[0]
+                workflow_criteria_json = connection.execute(
+                    "SELECT acceptance_criteria_json FROM tasks WHERE title = 'Validate imported workflow: test'"
+                ).fetchone()[0]
+                map_task_criteria_json = connection.execute(
+                    "SELECT acceptance_criteria_json FROM tasks WHERE title = 'Map imported source area: src'"
+                ).fetchone()[0]
             finally:
                 connection.close()
 
             config = json.loads(config_json)
+            workflow_criteria = json.loads(workflow_criteria_json)
+            map_task_criteria = json.loads(map_task_criteria_json)
+            workflow_paths = next(
+                criterion["paths"]
+                for criterion in workflow_criteria
+                if criterion["type"] == "source_path_exists"
+            )
+            workflow_command = next(
+                criterion["command"]
+                for criterion in workflow_criteria
+                if criterion["type"] == "test_passes"
+            )
+            map_task_paths = next(
+                criterion["paths"]
+                for criterion in map_task_criteria
+                if criterion["type"] == "source_path_exists"
+            )
             self.assertEqual(config["onboarding"]["mode"], "brownfield")
             self.assertEqual(config["onboarding"]["review_status"], "review_pending")
             self.assertEqual(session_count, 0)
@@ -130,6 +153,9 @@ lint = "example:main"
             self.assertIn("Map imported source area: src", task_titles)
             self.assertIn("Map imported test surface: tests", task_titles)
             self.assertIn("Align runtime and provider settings with existing tooling", task_titles)
+            self.assertIn("Makefile", workflow_paths)
+            self.assertEqual(workflow_command, "make test")
+            self.assertIn("src/app.py", map_task_paths)
 
     def test_bootstrap_auto_detects_brownfield_from_hidden_repo_signals(self):
         with tempfile.TemporaryDirectory() as tmpdir:

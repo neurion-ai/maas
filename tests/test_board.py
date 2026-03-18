@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 
@@ -142,6 +143,44 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertIn("brownfield_bonus", factor_keys)
             self.assertEqual(card["replan_strategy"], "validate_imported_workflow")
             self.assertIn("workflow", card["replan_summary"].lower())
+
+    def test_board_cards_include_brownfield_scope_and_validation_commands(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Brownfield Board\n")
+            with open(os.path.join(tmpdir, "Makefile"), "w", encoding="utf-8") as handle:
+                handle.write("test:\n\tpytest\n")
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('ok')\n")
+
+            result = bootstrap_project(
+                tmpdir,
+                name="Board Brownfield Scope Test",
+                description="Board brownfield scope test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            workflow_card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Validate imported workflow: test"
+            )
+            map_card = next(
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Map imported source area: src"
+            )
+            self.assertIn("Makefile", workflow_card["scoped_paths"])
+            self.assertIn("make test", workflow_card["validation_commands"])
+            self.assertIn("src/app.py", map_card["scoped_paths"])
 
     def test_board_cards_match_fallback_brownfield_workflow_titles_without_colon(self):
         with tempfile.TemporaryDirectory() as tmpdir:

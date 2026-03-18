@@ -310,17 +310,37 @@ class SchedulerApiTest(unittest.TestCase):
                     """,
                     (json.dumps([{"type": "test_passes", "command": "true"}]), command_task_id),
                 )
+
+                source_path_task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Validate seeded lifecycle semantics'"
+                ).fetchone()["task_id"]
+                os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+                with open(os.path.join(tmpdir, "src", "tracked.py"), "w", encoding="utf-8") as handle:
+                    handle.write("print('tracked')\n")
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps([{"type": "source_path_exists", "paths": ["src/tracked.py"]}]),
+                        source_path_task_id,
+                    ),
+                )
                 connection.commit()
 
                 artifact_result = evaluate_task(connection, result["paths"], artifact_task_id)
-                query_result = evaluate_task(connection, result["paths"], query_task_id)
                 command_result = evaluate_task(connection, result["paths"], command_task_id)
+                query_result = evaluate_task(connection, result["paths"], query_task_id)
+                source_path_result = evaluate_task(connection, result["paths"], source_path_task_id)
             finally:
                 connection.close()
 
             self.assertTrue(artifact_result["overall_passed"])
             self.assertTrue(query_result["overall_passed"])
             self.assertTrue(command_result["overall_passed"])
+            self.assertTrue(source_path_result["overall_passed"])
 
     def test_evaluate_task_returns_failed_result_for_invalid_query_and_timeout(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -11,6 +11,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.projects import create_project
 from maas.services.provider_runtime import run_provider_task
 from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
@@ -49,8 +50,14 @@ class ProviderRuntimeTest(unittest.TestCase):
         )
         return project["project_id"]
 
-    def _enable_claude_code_cli(self, connection):
-        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+    def _enable_claude_code_cli(self, connection, project_id=None):
+        if project_id is None:
+            project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        else:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
         config = json.loads(project["config_json"] or "{}")
         providers = config.setdefault("providers", {})
         providers["claude_code"] = {
@@ -66,8 +73,14 @@ class ProviderRuntimeTest(unittest.TestCase):
         )
         return project["project_id"]
 
-    def _enable_openai_codex_cli(self, connection):
-        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+    def _enable_openai_codex_cli(self, connection, project_id=None):
+        if project_id is None:
+            project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        else:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
         config = json.loads(project["config_json"] or "{}")
         providers = config.setdefault("providers", {})
         providers["openai_codex"] = {
@@ -83,8 +96,14 @@ class ProviderRuntimeTest(unittest.TestCase):
         )
         return project["project_id"]
 
-    def _set_provider_config(self, connection, provider_id, provider_config):
-        project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+    def _set_provider_config(self, connection, provider_id, provider_config, project_id=None):
+        if project_id is None:
+            project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+        else:
+            project = connection.execute(
+                "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+                (project_id,),
+            ).fetchone()
         config = json.loads(project["config_json"] or "{}")
         providers = config.setdefault("providers", {})
         providers[provider_id] = provider_config
@@ -978,8 +997,10 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertIn("--model", command)
                 self.assertEqual(env["OPENAI_API_KEY"], "test-openai-key")
                 self.assertNotIn("UNRELATED_SECRET", env)
-                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "runtime")))
+                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "projects", project_id, "runtime")))
                 self.assertEqual(env["MAAS_PROJECT_ROOT"], tmpdir)
+                self.assertEqual(env["MAAS_PROJECT_ID"], project_id)
+                self.assertEqual(cwd, tmpdir)
                 output_file = command[command.index("-o") + 1]
                 with open(output_file, "w", encoding="utf-8") as handle:
                     handle.write("Codex completed the task.")
@@ -1073,8 +1094,10 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertIn("--add-dir", command)
                 self.assertEqual(env["ANTHROPIC_API_KEY"], "test-anthropic-key")
                 self.assertNotIn("UNRELATED_SECRET", env)
-                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "runtime")))
+                self.assertTrue(env["TMPDIR"].startswith(os.path.join(tmpdir, ".maas", "projects", project_id, "runtime")))
                 self.assertEqual(env["MAAS_PROJECT_ROOT"], tmpdir)
+                self.assertEqual(env["MAAS_PROJECT_ID"], project_id)
+                self.assertEqual(cwd, tmpdir)
                 completed = mock.Mock()
                 completed.returncode = 0
                 completed.stdout = "Claude completed the task.\n"
@@ -1141,6 +1164,77 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertTrue(
                 all(json.loads(row["details_json"]).get("external_runtime") == "claude_cli" for row in activity_rows)
             )
+
+    def test_live_provider_runtime_uses_selected_project_source_root_and_runtime_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Runtime Test", description="Provider runtime test", project_type="custom")
+            repo_root = os.path.join(tmpdir, "imported-repo")
+            os.makedirs(os.path.join(repo_root, "src"), exist_ok=True)
+            with open(os.path.join(repo_root, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_record = create_project(
+                    connection,
+                    project_paths(tmpdir),
+                    actor_id="agent_allocator",
+                    name="Imported Runtime Project",
+                    description="Imported runtime project",
+                    project_type="custom",
+                    mode="brownfield",
+                    source_root=repo_root,
+                )
+                project_id = project_record["project"]["project_id"]
+                self._enable_openai_codex_cli(connection, project_id=project_id)
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals WHERE project_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (project_id,),
+                ).fetchone()["goal_id"]
+                agent_id = connection.execute(
+                    "SELECT agent_id FROM agents WHERE project_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (project_id,),
+                ).fetchone()["agent_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, agent_id, "Run imported Codex adapter")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            os.environ["OPENAI_API_KEY"] = "test-openai-key"
+
+            def write_codex_output(command, cwd, capture_output, text, timeout, check, env):
+                self.assertEqual(cwd, repo_root)
+                self.assertEqual(env["MAAS_PROJECT_ROOT"], repo_root)
+                self.assertEqual(env["MAAS_PROJECT_ID"], project_id)
+                self.assertTrue(
+                    env["MAAS_RUNTIME_ROOT"].startswith(os.path.join(tmpdir, ".maas", "projects", project_id, "runtime"))
+                )
+                self.assertTrue(env["TMPDIR"].startswith(env["MAAS_RUNTIME_ROOT"]))
+                self.assertIn(repo_root, command)
+                output_file = command[command.index("-o") + 1]
+                self.assertTrue(output_file.startswith(env["MAAS_RUNTIME_ROOT"]))
+                with open(output_file, "w", encoding="utf-8") as handle:
+                    handle.write("Imported project Codex run completed.")
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = "done\n"
+                completed.stderr = ""
+                return completed
+
+            try:
+                with mock.patch("maas.services.provider_runtime.subprocess.run", side_effect=write_codex_output):
+                    response = client.post(
+                        "/api/providers/openai_codex/actions/run-task",
+                        json={
+                            "project_id": project_id,
+                            "agent_id": agent_id,
+                            "task_id": task_id,
+                        },
+                    )
+            finally:
+                os.environ.pop("OPENAI_API_KEY", None)
+
+            self.assertEqual(response.status_code, 200)
 
     def test_provider_run_task_rejects_paths_outside_workspace(self):
         with tempfile.TemporaryDirectory() as tmpdir:

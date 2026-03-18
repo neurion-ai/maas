@@ -37,5 +37,12 @@ class ProjectPaths(object):
     def project_discovery_path(self, project_id):
         return os.path.join(self.project_workspace(project_id), "project-discovery.json")
 
+    def project_runtime_dir(self, project_id):
+        return os.path.join(self.project_workspace(project_id), "runtime")
+
+    def project_runtime_tmp_dir(self, project_id):
+        return os.path.join(self.project_runtime_dir(project_id), "tmp")
+
     def ensure_project_workspace(self, project_id):
         os.makedirs(self.project_workspace(project_id), exist_ok=True)
+        os.makedirs(self.project_runtime_dir(project_id), exist_ok=True)

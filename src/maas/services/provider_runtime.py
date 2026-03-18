@@ -13,7 +13,7 @@ from maas.providers import (
     update_provider_settings,
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
-from maas.services.projects import resolve_project_id
+from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -136,9 +136,26 @@ def _provider_activity_details(provider, phase, **extra):
     return details
 
 
-def _runtime_env(project_paths, provider):
-    runtime_tmp_dir = os.path.join(project_paths.runtime_dir, "tmp")
+def _project_runtime_context(connection, project_paths, project_id):
+    project = resolve_project(connection, project_id)
+    if project is None:
+        raise ValueError("Project not found")
+    source_root = os.path.abspath(project["source_root"] or project_paths.root)
+    if not os.path.isdir(source_root):
+        raise ValueError("Project source root is not available for provider runtime.")
+    project_paths.ensure_project_workspace(project["project_id"])
+    runtime_dir = project_paths.project_runtime_dir(project["project_id"])
+    runtime_tmp_dir = project_paths.project_runtime_tmp_dir(project["project_id"])
     os.makedirs(runtime_tmp_dir, exist_ok=True)
+    return {
+        "project_id": project["project_id"],
+        "source_root": source_root,
+        "runtime_dir": runtime_dir,
+        "runtime_tmp_dir": runtime_tmp_dir,
+    }
+
+
+def _runtime_env(project_paths, provider, runtime_context):
     env = {}
     for key in SAFE_RUNTIME_ENV_KEYS:
         value = os.environ.get(key)
@@ -148,12 +165,13 @@ def _runtime_env(project_paths, provider):
         value = os.environ.get(key)
         if value:
             env[key] = value
-    env["MAAS_PROJECT_ROOT"] = project_paths.root
-    env["MAAS_RUNTIME_ROOT"] = project_paths.runtime_dir
+    env["MAAS_PROJECT_ID"] = runtime_context["project_id"]
+    env["MAAS_PROJECT_ROOT"] = runtime_context["source_root"]
+    env["MAAS_RUNTIME_ROOT"] = runtime_context["runtime_dir"]
     env["MAAS_ARTIFACT_ROOT"] = project_paths.artifacts_dir
-    env["TMPDIR"] = runtime_tmp_dir
-    env["TMP"] = runtime_tmp_dir
-    env["TEMP"] = runtime_tmp_dir
+    env["TMPDIR"] = runtime_context["runtime_tmp_dir"]
+    env["TMP"] = runtime_context["runtime_tmp_dir"]
+    env["TEMP"] = runtime_context["runtime_tmp_dir"]
     return env
 
 
@@ -201,6 +219,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
     scoped_project_id = resolve_project_id(connection, project_id)
     if scoped_project_id is None:
         raise ValueError("Project not found")
+    runtime_context = _project_runtime_context(connection, project_paths, scoped_project_id)
     ensure_board_action_allowed(connection, actor_id, scoped_project_id, "check_provider_runtime", "provider", provider_id)
     providers = list_provider_status(connection=connection, project_id=scoped_project_id)
     provider = next((item for item in providers if item["id"] == provider_id), None)
@@ -256,7 +275,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
             "issues": [],
         }
 
-    runtime_env = _runtime_env(project_paths, {"id": provider_id})
+    runtime_env = _runtime_env(project_paths, {"id": provider_id}, runtime_context)
     missing_env = [key for key in PROVIDER_REQUIRED_ENV_KEYS.get(provider_id, ()) if not runtime_env.get(key)]
     command = _provider_preflight_command(provider_id, provider_settings)
     issues = []
@@ -293,7 +312,7 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
     try:
         result = subprocess.run(
             command,
-            cwd=project_paths.root,
+            cwd=runtime_context["source_root"],
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -411,7 +430,7 @@ def _task_prompt(connection, task_id):
     return "Task: {0}\n\nReturn a concise completion summary.".format(row["title"])
 
 
-def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
+def _codex_cli_command(runtime_context, provider_settings, prompt, output_path):
     command = [
         provider_settings.get("cli_command") or "codex",
         "exec",
@@ -421,7 +440,7 @@ def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
         "--color",
         "never",
         "-C",
-        project_paths.root,
+        runtime_context["source_root"],
         "-o",
         output_path,
     ]
@@ -432,17 +451,19 @@ def _codex_cli_command(project_paths, provider_settings, prompt, output_path):
     return command
 
 
-def _codex_cli_activity_details(project_paths, provider_settings, task_prompt):
-    command = _codex_cli_command(project_paths, provider_settings, task_prompt, "<runtime-output>")
+def _codex_cli_activity_details(runtime_context, provider_settings, task_prompt):
+    command = _codex_cli_command(runtime_context, provider_settings, task_prompt, "<runtime-output>")
     return {
         "command": command,
         "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
         "external_runtime": "codex_cli",
         "environment_scope": "sanitized",
+        "runtime_root": runtime_context["runtime_dir"],
+        "project_root": runtime_context["source_root"],
     }
 
 
-def _claude_cli_command(project_paths, provider_settings, prompt):
+def _claude_cli_command(runtime_context, provider_settings, prompt):
     command = [
         provider_settings.get("cli_command") or "claude",
         "-p",
@@ -453,39 +474,41 @@ def _claude_cli_command(project_paths, provider_settings, prompt):
     model = (provider_settings.get("model") or "").strip()
     if model:
         command.extend(["--model", model])
-    command.extend(["--add-dir", project_paths.root])
+    command.extend(["--add-dir", runtime_context["source_root"]])
     command.append(prompt)
     return command
 
 
-def _claude_cli_activity_details(project_paths, provider_settings, task_prompt):
-    command = _claude_cli_command(project_paths, provider_settings, task_prompt)
+def _claude_cli_activity_details(runtime_context, provider_settings, task_prompt):
+    command = _claude_cli_command(runtime_context, provider_settings, task_prompt)
     return {
         "command": command,
         "timeout_seconds": int(provider_settings.get("timeout_seconds") or 300),
         "external_runtime": "claude_cli",
         "environment_scope": "sanitized",
+        "runtime_root": runtime_context["runtime_dir"],
+        "project_root": runtime_context["source_root"],
     }
 
 
-def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
+def _run_openai_codex_cli(project_paths, runtime_context, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
-    runtime_env = _runtime_env(project_paths, {"id": "openai_codex"})
-    os.makedirs(project_paths.runtime_dir, exist_ok=True)
+    runtime_env = _runtime_env(project_paths, {"id": "openai_codex"}, runtime_context)
+    os.makedirs(runtime_context["runtime_dir"], exist_ok=True)
     with tempfile.NamedTemporaryFile(
         prefix="openai-codex-",
         suffix=".txt",
-        dir=project_paths.runtime_dir,
+        dir=runtime_context["runtime_dir"],
         delete=False,
     ) as handle:
         output_path = handle.name
 
-    command = _codex_cli_command(project_paths, provider_settings, task_prompt, output_path)
+    command = _codex_cli_command(runtime_context, provider_settings, task_prompt, output_path)
     try:
         try:
             result = subprocess.run(
                 command,
-                cwd=project_paths.root,
+                cwd=runtime_context["source_root"],
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
@@ -531,14 +554,14 @@ def _run_openai_codex_cli(project_paths, provider_settings, task_prompt):
             os.remove(output_path)
 
 
-def _run_claude_code_cli(project_paths, provider_settings, task_prompt):
+def _run_claude_code_cli(project_paths, runtime_context, provider_settings, task_prompt):
     timeout_seconds = int(provider_settings.get("timeout_seconds") or 300)
-    runtime_env = _runtime_env(project_paths, {"id": "claude_code"})
-    command = _claude_cli_command(project_paths, provider_settings, task_prompt)
+    runtime_env = _runtime_env(project_paths, {"id": "claude_code"}, runtime_context)
+    command = _claude_cli_command(runtime_context, provider_settings, task_prompt)
     try:
         result = subprocess.run(
             command,
-            cwd=project_paths.root,
+            cwd=runtime_context["source_root"],
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
@@ -616,6 +639,7 @@ def _codex_cli_artifact_payload(provider, task_id, external_result):
 
 
 def run_provider_task(connection, project_paths, project_id, agent_id, task_id, provider_type, artifact_path=None):
+    runtime_context = _project_runtime_context(connection, project_paths, project_id)
     provider, provider_settings = get_provider_runtime_settings(
         provider_type,
         connection=connection,
@@ -629,10 +653,10 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     codex_cli_enabled = effective_mode == "codex_cli"
     if claude_cli_enabled:
         task_prompt = _task_prompt(connection, task_id)
-        extra_activity_details = _claude_cli_activity_details(project_paths, provider_settings, task_prompt)
+        extra_activity_details = _claude_cli_activity_details(runtime_context, provider_settings, task_prompt)
     elif codex_cli_enabled:
         task_prompt = _task_prompt(connection, task_id)
-        extra_activity_details = _codex_cli_activity_details(project_paths, provider_settings, task_prompt)
+        extra_activity_details = _codex_cli_activity_details(runtime_context, provider_settings, task_prompt)
     else:
         task_prompt = None
         extra_activity_details = {}
@@ -701,10 +725,10 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             **extra_activity_details
         )
         if claude_cli_enabled:
-            external_result = _run_claude_code_cli(project_paths, provider_settings, task_prompt)
+            external_result = _run_claude_code_cli(project_paths, runtime_context, provider_settings, task_prompt)
             artifact_payload = _claude_cli_artifact_payload(provider, task_id, external_result)
         elif codex_cli_enabled:
-            external_result = _run_openai_codex_cli(project_paths, provider_settings, task_prompt)
+            external_result = _run_openai_codex_cli(project_paths, runtime_context, provider_settings, task_prompt)
             artifact_payload = _codex_cli_artifact_payload(provider, task_id, external_result)
         else:
             artifact_payload = _provider_artifact_payload(provider, task_title, task_id)

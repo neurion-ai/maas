@@ -62,8 +62,30 @@ Current stacked development chain above `main`:
 - `#124` exists on `codex/dense-control-room-redesign`
 - `#125` exists on `codex/dense-control-room-redesign`
 - `#126` exists on `codex/dense-control-room-redesign`
+- `#127` exists on `codex/dense-control-room-redesign`
+- `#128` exists on `codex/dense-control-room-redesign`
+- `#129` exists on `codex/dense-control-room-redesign`
+- `#130` exists on `codex/dense-control-room-redesign`
+- `#131` exists on `codex/dense-control-room-redesign`
+- `#132` exists on `codex/dense-control-room-redesign`
+- `#133` exists on `codex/dense-control-room-redesign`
+- `#134` exists on `codex/dense-control-room-redesign`
+- `#135` exists on `codex/dense-control-room-redesign`
+- `#136` exists on `codex/dense-control-room-redesign`
+- `#137` exists on `codex/dense-control-room-redesign`
+- `#138` exists on `codex/dense-control-room-redesign`
+- `#139` exists on `codex/dense-control-room-redesign`
+- `#140` exists on `codex/dense-control-room-redesign`
+- `#141` exists on `codex/dense-control-room-redesign`
+- `#142` exists on `codex/dense-control-room-redesign`
+- `#143` exists on `codex/dense-control-room-redesign`
+- `#144` exists on `codex/dense-control-room-redesign`
+- `#145` exists on `codex/dense-control-room-redesign`
+- `#146` exists on `codex/dense-control-room-redesign`
 
-The current numbered `#81-#126` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#146` sequence is fully implemented on the stacked branch chain above `main`.
+
+The current product-modeling sequence on `codex/dense-control-room-redesign` now covers both the Seraph-style cockpit pivot (`#127-#136`) and the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`).
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -180,6 +202,46 @@ The current numbered `#81-#126` sequence is fully implemented on the stacked bra
   move project selection, health, alert load, and transport/runtime status into a compact top command strip.
 - [x] `#126` Remove legacy hero UX and final dense visual pass:
   shrink typography, card heights, and button scale across the control room so the product reads like an operations cockpit instead of a landing page.
+- [x] `#127` Seraph-style cockpit shell pivot:
+  replace the page-and-card shell with a fixed-height cockpit shell, compact top bar, internal scroll regions, and explicit workspace modes such as ops, focus, and review.
+- [x] `#128` Panel workspace and windowed composition:
+  reorganize the default experience into persistent left-rail, center-workspace, and right-rail panels with panel-scoped overflow instead of stacked sections.
+- [x] `#129` Cockpit command bar and telemetry strip:
+  collapse navigation, project switching, live transport state, run controls, and quick commands into one dense operator bar.
+- [x] `#130` Dense agent rail:
+  rebuild agent visibility as a compact live rail with status, current work, recent meaningful events, and fast intervention hooks.
+- [x] `#131` Center kanban workspace rewrite:
+  make the board the primary workspace with denser cards, fewer empty lanes, scoped backlog access, and better ops/focus/review modes.
+- [x] `#132` Right ops rail for incidents and ticker:
+  merge the curated feed, approvals, alerts, and incident shortcuts into one compact ops rail instead of separate dashboard blocks.
+- [x] `#133` Inspector and evidence workspace:
+  turn selected-task context into a true inspector with goal path, repo scope, verification, git diff, artifacts, and history in one persistent panel.
+- [x] `#134` Utility drawers for projects, providers, and settings:
+  move lifecycle forms, provider settings, quotas, and policy editors out of the primary workspace into drawers and advanced utility windows.
+- [x] `#135` Cockpit typography and theme system:
+  replace the current generic card styling with a denser mono-forward cockpit system inspired by Seraph’s shell without copying its game flavor.
+- [x] `#136` Remove legacy page surfaces and finish the cockpit interaction model:
+  delete or demote the old dashboard/page paradigm so MAAS reads as one coherent cockpit instead of multiple competing UI systems.
+- [x] `#137` Guided onboarding takeover:
+  make import and first-run feel like one flow by surfacing the selected project, onboarding status, and next action before portfolio administration.
+- [x] `#138` Compact issue cards and inspector-first steering:
+  turn task cards into compact summaries and move steering controls into a persistent inspector instead of embedding forms in every card.
+- [x] `#139` Board-first workflow defaults:
+  make the board and cockpit the obvious operating destinations while demoting advanced portfolio and settings surfaces.
+- [x] `#140` Import and create drawers:
+  move repo import and project creation into compact secondary panels with folder picking and clearer CTA text.
+- [x] `#141` Project next-step workflow:
+  show one clear “what to do next” block for the selected project, especially for brownfield onboarding and gated imported work.
+- [x] `#142` Curated live-ops priorities:
+  keep agents, incidents, and feed visible while suppressing low-value control clutter and backend-first terminology.
+- [x] `#143` Linear/Vibekanban-inspired board polish:
+  tighten lane summaries, card hierarchy, and workspace density so the main board reads like an issue system instead of an admin dashboard.
+- [x] `#144` Utility and settings demotion:
+  keep provider, portfolio, and policy controls available, but push them behind advanced panes instead of default workflow surfaces.
+- [x] `#145` Dense typography and dark-theme cleanup:
+  reduce oversized type and blank space while fixing dark-theme readability and panel contrast.
+- [x] `#146` Remove remaining inline control clutter:
+  strip default work surfaces down to the minimum needed to scan, inspect, and act quickly.
 
 ## Current Stacked Branch Progress
 

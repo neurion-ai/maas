@@ -19,23 +19,24 @@ import type { ProjectSummary } from "./types";
 
 type View = "home" | "work" | "runs" | "incidents" | "projects";
 type ThemeMode = "light" | "dark";
+type CockpitMode = "ops" | "focus" | "review";
 
 const THEME_STORAGE_KEY = "maas:theme";
 
 const VIEWS: Array<{ id: View; label: string; summary: string }> = [
   {
     id: "home",
-    label: "Control room",
-    summary: "Agents, board, incidents, live feed, and selected-task evidence."
+    label: "Cockpit",
+    summary: "Agents, active board, incidents, live feed, and selected-task evidence."
   },
   {
     id: "work",
-    label: "Work",
-    summary: "Full planning surface, board steering, and repo-grounded task context."
+    label: "Board",
+    summary: "Full board, filters, and task steering in a dedicated workspace."
   },
   {
     id: "runs",
-    label: "Runs",
+    label: "Execution",
     summary: "Providers, workers, queued jobs, and runtime outputs."
   },
   {
@@ -58,6 +59,12 @@ const DEFAULT_PROJECT_FORM: ProjectFormState = {
   sourceRoot: ""
 };
 
+const COCKPIT_MODES: Array<{ id: CockpitMode; label: string; summary: string }> = [
+  { id: "ops", label: "Ops", summary: "Full operator cockpit with agents, board, incidents, and inspector." },
+  { id: "focus", label: "Focus", summary: "Trim the cockpit down to the active workspace and inspector." },
+  { id: "review", label: "Review", summary: "Bias the cockpit toward incidents, evidence, and inspection." }
+];
+
 function getInitialView(): View {
   const hash = window.location.hash.replace("#", "");
   return (VIEWS.find((view) => view.id === hash)?.id ?? "home") as View;
@@ -73,6 +80,7 @@ function getInitialTheme(): ThemeMode {
 
 function AppShell() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
+  const [cockpitMode, setCockpitMode] = useState<CockpitMode>("ops");
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -186,6 +194,7 @@ function AppShell() {
       });
       await loadProjects(payload.project.project_id);
       setProjectForm(DEFAULT_PROJECT_FORM);
+      setActiveView("home");
       setProjectNotice(`Created ${payload.project.name} in ${payload.mode} mode from ${payload.metadata.source_root}.`);
     } catch (error) {
       setProjectNotice(error instanceof Error ? error.message : "Could not create project.");
@@ -269,81 +278,106 @@ function AppShell() {
         keywords: ["theme", "dark", "light"],
         run: () => setTheme((current) => (current === "dark" ? "light" : "dark"))
       },
+      ...COCKPIT_MODES.map((mode) => ({
+        id: `cockpit:${mode.id}`,
+        label: `Switch cockpit to ${mode.label}`,
+        description: mode.summary,
+        keywords: ["cockpit", mode.id, mode.label.toLowerCase()],
+        run: () => setCockpitMode(mode.id)
+      })),
       ...projectActions
     ];
   }, [activeProjects, theme]);
 
   return (
-    <div className="cockpit-shell">
+    <div className={`cockpit-shell cockpit-shell--${cockpitMode}`}>
       <header className="cockpit-shell__topbar">
-        <div className="cockpit-shell__brand">
-          <strong>MAAS</strong>
-          <span>dense operator control room</span>
+        <div className="cockpit-shell__topbar-main">
+          <div className="cockpit-shell__brand">
+            <span className="cockpit-shell__eyebrow">MAAS operator system</span>
+            <strong>MAAS</strong>
+            <span>board-first multi-agent cockpit</span>
+          </div>
+
+          <div className="cockpit-shell__project">
+            <label htmlFor="active-project-select">Workspace</label>
+            <div className="cockpit-shell__project-row">
+              <select
+                id="active-project-select"
+                aria-label="Selected project"
+                value={activeProject?.project_id ?? ""}
+                onChange={(event) => {
+                  const nextProjectId = event.target.value || null;
+                  persistSelectedProjectId(nextProjectId);
+                  setSelectedProjectId(nextProjectId);
+                }}
+              >
+                {activeProjects.map((project) => (
+                  <option key={project.project_id} value={project.project_id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+              <div className="cockpit-shell__project-copy">
+                <strong>{activeProject?.name ?? "No active project"}</strong>
+                <span>{activeProject?.description ?? "Create or restore a project to begin."}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div className="cockpit-shell__project">
-          <label htmlFor="active-project-select">Project</label>
-          <div className="cockpit-shell__project-row">
-            <select
-              id="active-project-select"
-              aria-label="Selected project"
-              value={activeProject?.project_id ?? ""}
-              onChange={(event) => {
-                const nextProjectId = event.target.value || null;
-                persistSelectedProjectId(nextProjectId);
-                setSelectedProjectId(nextProjectId);
-              }}
-            >
-              {activeProjects.map((project) => (
-                <option key={project.project_id} value={project.project_id}>
-                  {project.name}
-                </option>
+        <div className="cockpit-shell__topbar-side">
+          <div className="cockpit-shell__telemetry">
+            <div className="telemetry-chip telemetry-chip--wide">
+              <span className={`status-dot status-dot--${connected ? "good" : transport === "polling" ? "warn" : "default"}`} />
+              <div>
+                <strong>{liveTransportLabel}</strong>
+                <span>{activeProject?.onboarding_mode ?? "workspace"} · {activeProject?.project_type ?? "custom"}</span>
+              </div>
+            </div>
+            <div className="telemetry-chip">
+              <strong>{activeProject?.task_count ?? 0}</strong>
+              <span>tasks</span>
+            </div>
+            <div className="telemetry-chip">
+              <strong>{activeProject?.agent_count ?? 0}</strong>
+              <span>agents</span>
+            </div>
+            <div className="telemetry-chip">
+              <strong>{activeProject?.open_alert_count ?? 0}</strong>
+              <span>alerts</span>
+            </div>
+          </div>
+
+          <div className="cockpit-shell__actions">
+            <div className="cockpit-mode-strip" aria-label="Cockpit modes">
+              {COCKPIT_MODES.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  className={`cockpit-mode-strip__item ${cockpitMode === mode.id ? "is-active" : ""}`}
+                  title={mode.summary}
+                  onClick={() => setCockpitMode(mode.id)}
+                >
+                  {mode.label}
+                </button>
               ))}
-            </select>
-            <div className="cockpit-shell__project-copy">
-              <strong>{activeProject?.name ?? "No active project"}</strong>
-              <span>{activeProject?.description ?? "Create or restore a project to begin."}</span>
             </div>
+            <button
+              type="button"
+              className="hero-button hero-button--ghost hero-button--compact"
+              onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+            >
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
+            <button type="button" className="hero-button hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
+              Command
+            </button>
           </div>
-        </div>
-
-        <div className="cockpit-shell__telemetry">
-          <div className="telemetry-chip">
-            <span className={`status-dot status-dot--${connected ? "good" : transport === "polling" ? "warn" : "default"}`} />
-            <div>
-              <strong>{liveTransportLabel}</strong>
-              <span>{activeProject?.onboarding_mode ?? "workspace"} · {activeProject?.project_type ?? "custom"}</span>
-            </div>
-          </div>
-          <div className="telemetry-chip">
-            <strong>{activeProject?.task_count ?? 0}</strong>
-            <span>tasks</span>
-          </div>
-          <div className="telemetry-chip">
-            <strong>{activeProject?.agent_count ?? 0}</strong>
-            <span>agents</span>
-          </div>
-          <div className="telemetry-chip">
-            <strong>{activeProject?.open_alert_count ?? 0}</strong>
-            <span>alerts</span>
-          </div>
-        </div>
-
-        <div className="cockpit-shell__actions">
-          <button
-            type="button"
-            className="hero-button hero-button--ghost hero-button--compact"
-            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
-          >
-            {theme === "dark" ? "Light" : "Dark"}
-          </button>
-          <button type="button" className="hero-button hero-button--compact" onClick={() => setCommandPaletteOpen(true)}>
-            Command
-          </button>
         </div>
       </header>
 
-      <nav className="cockpit-tabs" aria-label="Primary views">
+      <div className="cockpit-tabs" aria-label="Primary views">
         {VIEWS.map((view) => (
           <button
             key={view.id}
@@ -355,11 +389,11 @@ function AppShell() {
             <strong>{view.label}</strong>
           </button>
         ))}
-      </nav>
+      </div>
 
       <main className="cockpit-shell__main">
-        <div className="product-content">
-          {activeView === "home" ? <HomePage onNavigate={setActiveView} /> : null}
+        <div className={`product-content product-content--${activeView}`}>
+          {activeView === "home" ? <HomePage onNavigate={setActiveView} mode={cockpitMode} /> : null}
           {activeView === "work" ? <WorkPage /> : null}
           {activeView === "runs" ? <RunsPage /> : null}
           {activeView === "incidents" ? <IncidentsPage /> : null}
@@ -378,6 +412,7 @@ function AppShell() {
               onCreateProject={handleCreateProject}
               onArchiveProject={handleArchiveProject}
               onRestoreProject={handleRestoreProject}
+              onNavigate={setActiveView}
             />
           ) : null}
         </div>

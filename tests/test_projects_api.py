@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -55,6 +56,17 @@ lint = "imported:lint"
             self.assertEqual(payload["projects"][1]["name"], "Second Project")
             self.assertEqual(payload["projects"][1]["state"], "active")
             self.assertEqual(payload["projects"][1]["onboarding_mode"], "greenfield")
+
+    def test_system_pick_directory_endpoint_returns_native_picker_result(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            with patch("maas.api.pick_directory_via_native_dialog", return_value={"cancelled": False, "path": "/tmp/repo"}):
+                response = client.post("/api/system/actions/pick-directory")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json(), {"cancelled": False, "path": "/tmp/repo"})
 
     def test_project_create_endpoint_imports_brownfield_repo_and_writes_project_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:

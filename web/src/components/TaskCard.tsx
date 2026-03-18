@@ -15,49 +15,17 @@ function formatPriority(priority: number) {
   return "Low";
 }
 
-function formatHeartbeat(seconds?: number | null) {
-  if (seconds == null) {
-    return "No heartbeat";
+function formatSignalLabel(task: BoardTask) {
+  if (task.review_state) {
+    return task.review_state.replaceAll("_", " ");
   }
-  if (seconds < 60) {
-    return `${seconds}s ago`;
+  if (task.next_retry_at) {
+    return "retry pending";
   }
-  return `${Math.round(seconds / 60)}m ago`;
-}
-
-function formatAge(hours?: number | null) {
-  if (hours == null) {
-    return "New";
+  if (task.latest_verification_status) {
+    return task.latest_verification_status;
   }
-  if (hours < 1) {
-    return `${Math.round(hours * 60)}m old`;
-  }
-  if (hours < 24) {
-    return `${hours.toFixed(1)}h old`;
-  }
-  return `${(hours / 24).toFixed(1)}d old`;
-}
-
-function formatSchedulerFactors(task: BoardTask) {
-  const factors = task.scheduler_factors ?? [];
-  if (!factors.length) {
-    return "No score factors";
-  }
-  return factors
-    .map((factor) => `${factor.value > 0 ? "+" : ""}${factor.value} ${factor.label.toLowerCase()}`)
-    .join(", ");
-}
-
-function formatCompactList(values?: string[] | null, limit = 3) {
-  const items = (values ?? []).filter(Boolean);
-  if (!items.length) {
-    return "None";
-  }
-  const preview = items.slice(0, limit).join(", ");
-  if (items.length <= limit) {
-    return preview;
-  }
-  return `${preview} +${items.length - limit} more`;
+  return task.scheduler_summary ?? "normal flow";
 }
 
 interface TaskCardProps {
@@ -83,58 +51,17 @@ interface TaskCardProps {
 
 export function TaskCard({
   task,
-  agentOptions = [],
   pendingActionKey,
   isFocused = false,
   onInspect,
   onReviewAction,
-  onAgentAction,
-  onPriorityChange,
-  onReassign,
-  onHalt,
   onRecover,
   onRecoverAndRequeue,
   onMarkForReplan,
   onFinishReplan,
-  onRunVerification,
-  onPrepareGitWorkspace,
-  onRefreshGitDiff,
-  onRetryLimitChange
+  onPrepareGitWorkspace
 }: TaskCardProps) {
-  const reviewApproveKey = `review:${task.task_id}:approve`;
-  const reviewRejectKey = `review:${task.task_id}:reject`;
-  const agentActionKey = task.agent?.id ? `agent:${task.agent.id}:${task.agent.status === "paused" ? "resume" : "pause"}` : null;
-  const reprioritizeKey = `reprioritize:${task.task_id}`;
-  const reassignKey = `reassign:${task.task_id}`;
-  const haltKey = `halt:${task.task_id}`;
-  const recoverKey = `recover:${task.task_id}`;
-  const recoverAndRequeueKey = `recover-and-requeue:${task.task_id}`;
-  const markForReplanKey = `mark-for-replan:${task.task_id}`;
-  const finishReplanKey = `finish-replan:${task.task_id}`;
-  const runVerificationKey = `run-verification:${task.task_id}`;
-  const prepareGitWorkspaceKey = `prepare-git-workspace:${task.task_id}`;
-  const refreshGitDiffKey = `refresh-git-diff:${task.task_id}`;
-  const retryLimitKey = `retry-limit:${task.task_id}`;
-  const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
-  const isPendingReviewReject = pendingActionKey === reviewRejectKey;
-  const isPendingAgentAction = pendingActionKey === agentActionKey;
-  const isPendingReprioritize = pendingActionKey === reprioritizeKey;
-  const isPendingReassign = pendingActionKey === reassignKey;
-  const isPendingHalt = pendingActionKey === haltKey;
-  const isPendingRecover = pendingActionKey === recoverKey;
-  const isPendingRecoverAndRequeue = pendingActionKey === recoverAndRequeueKey;
-  const isPendingMarkForReplan = pendingActionKey === markForReplanKey;
-  const isPendingFinishReplan = pendingActionKey === finishReplanKey;
-  const isPendingRunVerification = pendingActionKey === runVerificationKey;
-  const isPendingPrepareGitWorkspace = pendingActionKey === prepareGitWorkspaceKey;
-  const isPendingRefreshGitDiff = pendingActionKey === refreshGitDiffKey;
-  const isPendingRetryLimit = pendingActionKey === retryLimitKey;
   const canReview = task.status === "review" && !!onReviewAction;
-  const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
-  const canSteerTask = task.status !== "done" && task.status !== "cancelled";
-  const canReassign = canSteerTask && task.status !== "in_progress" && !!onReassign && agentOptions.length > 0;
-  const canReprioritize = canSteerTask && !!onPriorityChange;
-  const canHalt = canSteerTask && !!onHalt;
   const canRecover =
     task.status === "blocked" && !!onRecover && RECOVERABLE_REVIEW_STATES.has(task.review_state ?? "");
   const canRecoverAndRequeue =
@@ -151,25 +78,15 @@ export function TaskCard({
       task.review_state === "retry_backoff" ||
       RECOVERABLE_REVIEW_STATES.has(task.review_state ?? ""));
   const canFinishReplan = task.status === "blocked" && task.review_state === "needs_replan" && !!onFinishReplan;
-  const canRunVerification = !!task.has_verification_recipe && !!onRunVerification;
-  const canPrepareGitWorkspace =
-    !!task.git_workspace_supported && !task.git_workspace_prepared && !!onPrepareGitWorkspace;
-  const canRefreshGitDiff =
-    !!task.git_workspace_prepared && !!onRefreshGitDiff;
-  const canSetRetryLimit = canSteerTask && !!onRetryLimitChange;
-  const retryLimitOptions = Array.from(
-    new Set(
-      [null, 0, 1, 2, 3, 5, 10, task.auto_retry_limit ?? null].filter((value) => value === null || value >= 0)
-    )
-  ) as Array<number | null>;
+  const canPrepareGitWorkspace = !!task.git_workspace_supported && !task.git_workspace_prepared && !!onPrepareGitWorkspace;
 
   return (
-    <article className={`task-card task-card--${task.status} ${isFocused ? "is-focused" : ""}`}>
+    <article className={`task-card task-card--compact ${isFocused ? "is-focused" : ""}`}>
       <div className="task-card__meta">
         <span className="task-card__badge">{formatPriority(task.priority)}</span>
-        <span className="task-card__id">{task.task_id}</span>
-        {task.scheduler_rank != null ? <span className="task-card__rank">#{task.scheduler_rank}</span> : null}
+        <span className="task-card__state">{task.status.replaceAll("_", " ")}</span>
       </div>
+
       <div className="task-card__header">
         <div>
           <h3>{task.title}</h3>
@@ -181,356 +98,100 @@ export function TaskCard({
             className={`task-action task-action--ghost ${isFocused ? "is-active" : ""}`}
             onClick={() => onInspect(task.task_id)}
           >
-            {isFocused ? "Focused" : "Inspect"}
+            {isFocused ? "Open" : "Inspect"}
           </button>
         ) : null}
       </div>
+
       <div className="task-card__summary">
         <span>{task.agent?.name ?? "Unassigned"}</span>
-        <span>{task.progress_pct != null ? `${task.progress_pct}% progress` : "Not started"}</span>
-        <span>{task.review_state ?? "Normal flow"}</span>
         <span>{task.failure_count ? `${task.failure_count} failures` : "No failures"}</span>
-        <span>{task.next_retry_at ? `Retry ${new Date(task.next_retry_at).toLocaleTimeString()}` : "Ready now"}</span>
+        <span>{task.progress_pct != null ? `${task.progress_pct}% progress` : "Not started"}</span>
       </div>
-      {task.scheduler_summary ? <p className="task-card__context">{task.scheduler_summary}</p> : null}
-      {(task.scoped_paths?.length || task.validation_commands?.length || task.replan_summary) ? (
+
+      <p className="task-card__context">{formatSignalLabel(task)}</p>
+
+      {(task.scoped_paths?.length || task.validation_commands?.length) ? (
         <div className="task-card__signals">
-          {task.scoped_paths?.length ? (
-            <span className="task-signal">
-              <strong>Scope</strong>
-              <span>{formatCompactList(task.scoped_paths)}</span>
-            </span>
-          ) : null}
-          {task.validation_commands?.length ? (
-            <span className="task-signal">
-              <strong>Validate</strong>
-              <span>{formatCompactList(task.validation_commands, 2)}</span>
-            </span>
-          ) : null}
-          {task.replan_summary ? (
-            <span className="task-signal">
-              <strong>Replan</strong>
-              <span>{task.replan_summary}</span>
-            </span>
-          ) : null}
+          {task.scoped_paths?.length ? <span>scope {task.scoped_paths.slice(0, 2).join(", ")}</span> : null}
+          {task.validation_commands?.length ? <span>verify {task.validation_commands[0]}</span> : null}
         </div>
       ) : null}
-      <details className="task-card__advanced">
-        <summary>Deep context</summary>
-        <dl className="task-card__details">
-          <div>
-            <dt>Goal</dt>
-            <dd>{task.goal?.title ?? "Unlinked"}</dd>
-          </div>
-          <div>
-            <dt>Agent</dt>
-            <dd>{task.agent?.name ?? "Unassigned"}</dd>
-          </div>
-          <div>
-            <dt>Progress</dt>
-            <dd>{task.progress_pct != null ? `${task.progress_pct}%` : "Not started"}</dd>
-          </div>
-          <div>
-            <dt>Heartbeat</dt>
-            <dd>{formatHeartbeat(task.heartbeat_age_seconds)}</dd>
-          </div>
-          <div>
-            <dt>Age</dt>
-            <dd>{formatAge(task.age_hours)}</dd>
-          </div>
-          <div>
-            <dt>Review</dt>
-            <dd>{task.review_state ?? "Not in review"}</dd>
-          </div>
-          <div>
-            <dt>Failures</dt>
-            <dd>{task.failure_count ? `${task.failure_count} logged` : "None"}</dd>
-          </div>
-          <div>
-            <dt>Retries</dt>
-            <dd>
-              {task.retry_count
-                ? `${task.retry_count} auto retr${task.retry_count === 1 ? "y" : "ies"}${task.last_retry_reason ? ` (${task.last_retry_reason})` : ""}`
-                : "None"}
-            </dd>
-          </div>
-          <div>
-            <dt>Retry budget</dt>
-            <dd>{task.auto_retry_limit == null ? "Project default" : `${task.auto_retry_limit} max auto retries`}</dd>
-          </div>
-          <div>
-            <dt>Next retry</dt>
-            <dd>
-              {task.next_retry_at
-                ? `${new Date(task.next_retry_at).toLocaleString()}${task.next_retry_reason ? ` (${task.next_retry_reason})` : ""}`
-                : "Ready now"}
-            </dd>
-          </div>
-          <div>
-            <dt>Scheduler</dt>
-            <dd>{task.scheduler_summary ?? "No scheduler rationale yet"}</dd>
-          </div>
-          <div>
-            <dt>Score</dt>
-            <dd>
-              {task.scheduler_score != null
-                ? `${task.scheduler_score}${task.scheduler_rank != null ? ` (rank #${task.scheduler_rank})` : ""}`
-                : "N/A"}
-            </dd>
-          </div>
-          <div>
-            <dt>Fit</dt>
-            <dd>{task.scheduler_agent?.name ?? "No active match"}</dd>
-          </div>
-          <div>
-            <dt>Factors</dt>
-            <dd>{formatSchedulerFactors(task)}</dd>
-          </div>
-          {task.replan_strategy ? (
-            <div>
-              <dt>Replan</dt>
-              <dd>
-                {task.replan_strategy}
-                {task.replan_summary ? ` | ${task.replan_summary}` : ""}
-              </dd>
-            </div>
-          ) : null}
-          {task.scoped_paths?.length ? (
-            <div>
-              <dt>Scope</dt>
-              <dd>{formatCompactList(task.scoped_paths)}</dd>
-            </div>
-          ) : null}
-          {task.validation_commands?.length ? (
-            <div>
-              <dt>Validate</dt>
-              <dd>{formatCompactList(task.validation_commands, 2)}</dd>
-            </div>
-          ) : null}
-          {task.latest_verification_status ? (
-            <div>
-              <dt>Verified</dt>
-              <dd>
-                {task.latest_verification_status}
-                {task.latest_verification_command ? ` | ${task.latest_verification_command}` : ""}
-                {task.latest_verification_at ? ` | ${new Date(task.latest_verification_at).toLocaleString()}` : ""}
-              </dd>
-            </div>
-          ) : null}
-          {task.git_workspace_supported ? (
-            <div>
-              <dt>Git workspace</dt>
-              <dd>
-                {task.git_workspace_prepared
-                  ? `${task.git_workspace_branch ?? "prepared"} | ${task.git_workspace_change_summary ?? "No diff summary"}${
-                      task.git_workspace_dirty_files ? ` | ${task.git_workspace_dirty_files} changed` : ""
-                    }${task.git_workspace_diff_artifact_id ? ` | ${task.git_workspace_diff_artifact_id}` : ""}`
-                  : "Not prepared"}
-              </dd>
-            </div>
-          ) : null}
-        </dl>
-      </details>
-      {(canReview ||
-        onInspect ||
-        canToggleAgent ||
-        canReassign ||
-        canReprioritize ||
-        canHalt ||
-        canRecover ||
-        canRecoverAndRequeue ||
-        canMarkForReplan ||
-        canFinishReplan ||
-        canRunVerification ||
-        canPrepareGitWorkspace ||
-        canRefreshGitDiff ||
-        canSetRetryLimit) && (
+
+      {(canReview || canRecover || canRecoverAndRequeue || canMarkForReplan || canFinishReplan || canPrepareGitWorkspace) ? (
         <div className="task-card__actions">
-          {onInspect ? (
-            <button
-              type="button"
-              className={`task-action task-action--ghost ${isFocused ? "is-active" : ""}`}
-              onClick={() => onInspect(task.task_id)}
-            >
-              {isFocused ? "Focused task" : "Inspect task"}
-            </button>
-          ) : null}
-          {canReview && (
+          {canReview ? (
             <>
               <button
                 type="button"
                 className="task-action task-action--approve"
-                disabled={isPendingReviewApprove || isPendingReviewReject}
+                disabled={pendingActionKey === `review:${task.task_id}:approve`}
                 onClick={() => onReviewAction?.(task.task_id, "approve")}
               >
-                {isPendingReviewApprove ? "Approving..." : "Approve"}
+                {pendingActionKey === `review:${task.task_id}:approve` ? "Working..." : "Approve"}
               </button>
               <button
                 type="button"
                 className="task-action task-action--reject"
-                disabled={isPendingReviewApprove || isPendingReviewReject}
+                disabled={pendingActionKey === `review:${task.task_id}:reject`}
                 onClick={() => onReviewAction?.(task.task_id, "reject")}
               >
-                {isPendingReviewReject ? "Rejecting..." : "Reject"}
+                {pendingActionKey === `review:${task.task_id}:reject` ? "Working..." : "Changes"}
               </button>
             </>
-          )}
-          {canReprioritize && (
-            <label className="task-inline-control">
-              <span>Priority</span>
-              <select
-                value={String(task.priority)}
-                disabled={isPendingReprioritize}
-                onChange={(event) => onPriorityChange?.(task.task_id, Number(event.target.value))}
-              >
-                {[50, 75, 90, 100].map((value) => (
-                  <option key={value} value={value}>
-                    {value}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {canReassign && (
-            <label className="task-inline-control">
-              <span>Assign</span>
-              <select
-                value={task.agent?.id ?? ""}
-                disabled={isPendingReassign}
-                onChange={(event) => onReassign?.(task.task_id, event.target.value)}
-              >
-                <option value="" disabled>
-                  Select agent
-                </option>
-                {agentOptions.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {canSetRetryLimit && (
-            <label className="task-inline-control">
-              <span>Retry limit</span>
-              <select
-                value={task.auto_retry_limit == null ? "" : String(task.auto_retry_limit)}
-                disabled={isPendingRetryLimit}
-                onChange={(event) =>
-                  onRetryLimitChange?.(
-                    task.task_id,
-                    event.target.value === "" ? null : Number(event.target.value)
-                  )
-                }
-              >
-                {retryLimitOptions.map((value) => (
-                  <option key={value == null ? "default" : value} value={value == null ? "" : String(value)}>
-                    {value == null ? "Project default" : value}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {canToggleAgent && task.agent?.id && (
-            <button
-              type="button"
-              className="task-action task-action--secondary"
-              disabled={isPendingAgentAction}
-              onClick={() =>
-                onAgentAction?.(task.agent!.id, task.agent?.status === "paused" ? "resume" : "pause")
-              }
-            >
-              {isPendingAgentAction
-                ? task.agent?.status === "paused"
-                  ? "Resuming..."
-                  : "Pausing..."
-                : task.agent?.status === "paused"
-                  ? "Resume Agent"
-                  : "Pause Agent"}
-            </button>
-          )}
-          {canHalt && (
-            <button
-              type="button"
-              className="task-action task-action--reject"
-              disabled={isPendingHalt}
-              onClick={() => onHalt?.(task.task_id)}
-            >
-              {isPendingHalt ? "Halting..." : "Halt task"}
-            </button>
-          )}
-          {canMarkForReplan && (
-            <button
-              type="button"
-              className="task-action task-action--secondary"
-              disabled={isPendingMarkForReplan}
-              onClick={() => onMarkForReplan?.(task.task_id)}
-            >
-              {isPendingMarkForReplan ? "Marking..." : "Mark for replan"}
-            </button>
-          )}
-          {canFinishReplan && (
+          ) : null}
+          {!canReview && canRecoverAndRequeue ? (
             <button
               type="button"
               className="task-action task-action--approve"
-              disabled={isPendingFinishReplan}
-              onClick={() => onFinishReplan?.(task.task_id)}
-            >
-              {isPendingFinishReplan ? "Requeueing..." : "Finish replan"}
-            </button>
-          )}
-          {canRecover && (
-            <button
-              type="button"
-              className="task-action task-action--approve"
-              disabled={isPendingRecover || isPendingRecoverAndRequeue}
-              onClick={() => onRecover?.(task.task_id)}
-            >
-              {isPendingRecover ? "Recovering..." : "Recover task"}
-            </button>
-          )}
-          {canRecoverAndRequeue && (
-            <button
-              type="button"
-              className="task-action task-action--secondary"
-              disabled={isPendingRecover || isPendingRecoverAndRequeue}
+              disabled={pendingActionKey === `recover-and-requeue:${task.task_id}`}
               onClick={() => onRecoverAndRequeue?.(task.task_id)}
             >
-              {isPendingRecoverAndRequeue ? "Requeueing..." : "Recover + requeue"}
+              {pendingActionKey === `recover-and-requeue:${task.task_id}` ? "Working..." : "Recover + requeue"}
             </button>
-          )}
-          {canRunVerification && (
+          ) : null}
+          {!canReview && !canRecoverAndRequeue && canRecover ? (
             <button
               type="button"
               className="task-action task-action--secondary"
-              disabled={isPendingRunVerification}
-              onClick={() => onRunVerification?.(task.task_id)}
+              disabled={pendingActionKey === `recover:${task.task_id}`}
+              onClick={() => onRecover?.(task.task_id)}
             >
-              {isPendingRunVerification ? "Running verification..." : "Run verification"}
+              {pendingActionKey === `recover:${task.task_id}` ? "Working..." : "Recover"}
             </button>
-          )}
-          {canPrepareGitWorkspace && (
+          ) : null}
+          {!canReview && !canRecover && !canRecoverAndRequeue && canFinishReplan ? (
             <button
               type="button"
-              className="task-action task-action--secondary"
-              disabled={isPendingPrepareGitWorkspace}
+              className="task-action task-action--approve"
+              disabled={pendingActionKey === `finish-replan:${task.task_id}`}
+              onClick={() => onFinishReplan?.(task.task_id)}
+            >
+              {pendingActionKey === `finish-replan:${task.task_id}` ? "Working..." : "Finish replan"}
+            </button>
+          ) : null}
+          {!canReview && !canRecover && !canRecoverAndRequeue && !canFinishReplan && canMarkForReplan ? (
+            <button
+              type="button"
+              className="task-action task-action--ghost"
+              disabled={pendingActionKey === `mark-for-replan:${task.task_id}`}
+              onClick={() => onMarkForReplan?.(task.task_id)}
+            >
+              {pendingActionKey === `mark-for-replan:${task.task_id}` ? "Working..." : "Mark for replan"}
+            </button>
+          ) : null}
+          {!canReview && !canRecover && !canRecoverAndRequeue && !canFinishReplan && !canMarkForReplan && canPrepareGitWorkspace ? (
+            <button
+              type="button"
+              className="task-action task-action--ghost"
+              disabled={pendingActionKey === `prepare-git-workspace:${task.task_id}`}
               onClick={() => onPrepareGitWorkspace?.(task.task_id)}
             >
-              {isPendingPrepareGitWorkspace ? "Preparing workspace..." : "Prepare git workspace"}
+              {pendingActionKey === `prepare-git-workspace:${task.task_id}` ? "Working..." : "Prepare git"}
             </button>
-          )}
-          {canRefreshGitDiff && (
-            <button
-              type="button"
-              className="task-action task-action--secondary"
-              disabled={isPendingRefreshGitDiff}
-              onClick={() => onRefreshGitDiff?.(task.task_id)}
-            >
-              {isPendingRefreshGitDiff ? "Refreshing diff..." : "Refresh git diff"}
-            </button>
-          )}
+          ) : null}
         </div>
-      )}
+      ) : null}
     </article>
   );
 }

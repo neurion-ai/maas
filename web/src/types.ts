@@ -255,6 +255,11 @@ export interface ProjectActionResponse {
   state: "active" | "archived";
 }
 
+export interface DirectoryPickerResponse {
+  cancelled: boolean;
+  path: string | null;
+}
+
 export interface RepoTreeEntry {
   name: string;
   path: string;

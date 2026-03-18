@@ -55,8 +55,30 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#124` is implemented on `codex/dense-control-room-redesign`
 - [x] `#125` is implemented on `codex/dense-control-room-redesign`
 - [x] `#126` is implemented on `codex/dense-control-room-redesign`
+- [x] `#127` is implemented on `codex/dense-control-room-redesign`
+- [x] `#128` is implemented on `codex/dense-control-room-redesign`
+- [x] `#129` is implemented on `codex/dense-control-room-redesign`
+- [x] `#130` is implemented on `codex/dense-control-room-redesign`
+- [x] `#131` is implemented on `codex/dense-control-room-redesign`
+- [x] `#132` is implemented on `codex/dense-control-room-redesign`
+- [x] `#133` is implemented on `codex/dense-control-room-redesign`
+- [x] `#134` is implemented on `codex/dense-control-room-redesign`
+- [x] `#135` is implemented on `codex/dense-control-room-redesign`
+- [x] `#136` is implemented on `codex/dense-control-room-redesign`
+- [x] `#137` is implemented on `codex/dense-control-room-redesign`
+- [x] `#138` is implemented on `codex/dense-control-room-redesign`
+- [x] `#139` is implemented on `codex/dense-control-room-redesign`
+- [x] `#140` is implemented on `codex/dense-control-room-redesign`
+- [x] `#141` is implemented on `codex/dense-control-room-redesign`
+- [x] `#142` is implemented on `codex/dense-control-room-redesign`
+- [x] `#143` is implemented on `codex/dense-control-room-redesign`
+- [x] `#144` is implemented on `codex/dense-control-room-redesign`
+- [x] `#145` is implemented on `codex/dense-control-room-redesign`
+- [x] `#146` is implemented on `codex/dense-control-room-redesign`
 
-The current numbered `#81-#126` sequence is fully implemented on the stacked branch chain above `main`.
+The current numbered `#81-#146` sequence is fully implemented on the stacked branch chain above `main`.
+
+The current product-modeling sequence on `codex/dense-control-room-redesign` now covers both the cockpit pivot (`#127-#136`) and the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`).
 
 ## Extended Numbered Roadmap
 
@@ -106,6 +128,26 @@ The current numbered `#81-#126` sequence is fully implemented on the stacked bra
 - [x] `#124` Evidence and verification drawer
 - [x] `#125` Project status and portfolio command bar
 - [x] `#126` Remove legacy hero UX and final dense visual pass
+- [x] `#127` Seraph-style cockpit shell pivot
+- [x] `#128` Panel workspace and windowed composition
+- [x] `#129` Cockpit command bar and telemetry strip
+- [x] `#130` Dense agent rail
+- [x] `#131` Center kanban workspace rewrite
+- [x] `#132` Right ops rail for incidents and ticker
+- [x] `#133` Inspector and evidence workspace
+- [x] `#134` Utility drawers for projects, providers, and settings
+- [x] `#135` Cockpit typography and theme system
+- [x] `#136` Remove legacy page surfaces and finish the cockpit interaction model
+- [x] `#137` Guided onboarding takeover
+- [x] `#138` Compact issue cards and inspector-first steering
+- [x] `#139` Board-first workflow defaults
+- [x] `#140` Import and create drawers
+- [x] `#141` Project next-step workflow
+- [x] `#142` Curated live-ops priorities
+- [x] `#143` Linear/Vibekanban-inspired board polish
+- [x] `#144` Utility and settings demotion
+- [x] `#145` Dense typography and dark-theme cleanup
+- [x] `#146` Remove remaining inline control clutter
 
 ## Current Snapshot
 

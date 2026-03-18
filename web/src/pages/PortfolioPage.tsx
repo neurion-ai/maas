@@ -414,6 +414,17 @@ export function PortfolioPage() {
                     ))}
                   </select>
                 </label>
+                <button
+                  type="button"
+                  className="task-action task-action--secondary"
+                  disabled={project.state === "archived"}
+                  onClick={() => setSelectedProjectId(project.project_id)}
+                >
+                  Open project
+                </button>
+                <details className="portfolio-health__advanced">
+                  <summary>Advanced policies</summary>
+                  <div className="portfolio-health__advanced-grid">
                 <label className="task-inline-control">
                   <span>Risk threshold</span>
                   <select
@@ -662,14 +673,8 @@ export function PortfolioPage() {
                 >
                   Save notifications
                 </button>
-                <button
-                  type="button"
-                  className="task-action task-action--secondary"
-                  disabled={project.state === "archived"}
-                  onClick={() => setSelectedProjectId(project.project_id)}
-                >
-                  Open project
-                </button>
+                  </div>
+                </details>
               </div>
             </div>
           ))}

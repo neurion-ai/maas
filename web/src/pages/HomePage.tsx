@@ -51,9 +51,11 @@ import type {
 } from "../types";
 
 type HomeViewTarget = "work" | "runs" | "incidents" | "projects";
+type CockpitMode = "ops" | "focus" | "review";
 
 interface HomePageProps {
   onNavigate: (view: HomeViewTarget) => void;
+  mode: CockpitMode;
 }
 
 interface AttentionItem {
@@ -324,7 +326,7 @@ function CompactBoardCard({
   );
 }
 
-export function HomePage({ onNavigate }: HomePageProps) {
+export function HomePage({ onNavigate, mode }: HomePageProps) {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
   const [board, setBoard] = useState<BoardResponse | null>(null);
@@ -492,6 +494,25 @@ export function HomePage({ onNavigate }: HomePageProps) {
 
     const projectId = overview?.project?.project_id;
     const onboarding = overview?.onboarding;
+
+    if (onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "planned") {
+      items.push({
+        id: "brownfield-prepare-review",
+        pendingKey: "brownfield-review:prepare",
+        tone: "warn",
+        label: "Imported repo review is not surfaced yet",
+        summary: `${onboarding.pending_gated_tasks} imported tasks are waiting behind onboarding review.`,
+        meta: onboarding.last_scanned_at ? formatTime(onboarding.last_scanned_at) : undefined,
+        actionLabel: "Prepare review",
+        action: () =>
+          runAction(
+            "brownfield-review:prepare",
+            "Supervisor pass completed; the import review task is ready for inspection.",
+            () => runSupervisorPass(3),
+            "Supervisor pass failed; keep the import under review."
+          )
+      });
+    }
 
     if (onboarding?.mode === "brownfield" && onboarding.review_task_id && onboarding.review_task_status === "review") {
       items.push({
@@ -726,7 +747,7 @@ export function HomePage({ onNavigate }: HomePageProps) {
       : "Stable";
 
   return (
-    <section className="control-room">
+    <section className={`control-room control-room--${mode}`}>
       <header className="control-room__masthead surface-card surface-card--dense">
         <div className="control-room__masthead-row">
           <div className="control-room__masthead-copy">

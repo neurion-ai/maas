@@ -1,5 +1,6 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { BoardColumn } from "../components/BoardColumn";
+import { TaskInspector } from "../components/TaskInspector";
 import { StatCard } from "../components/StatCard";
 import {
   fetchBoard,
@@ -32,28 +33,39 @@ function formatTime(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
-function formatPriority(priority: number) {
-  if (priority >= 90) {
-    return "Critical";
-  }
-  if (priority >= 75) {
-    return "High";
-  }
-  if (priority >= 50) {
-    return "Medium";
-  }
-  return "Low";
-}
-
-function formatStatusLabel(value?: string | null) {
-  if (!value) {
-    return "Unknown";
-  }
-  return value.replaceAll("_", " ");
-}
-
 function formatList(items?: string[] | null) {
   return (items ?? []).filter(Boolean).join(", ") || "None";
+}
+
+function findGoalPath(nodes: GoalTreeNode[], goalId?: string | null, trail: GoalTreeNode[] = []): GoalTreeNode[] | null {
+  if (!goalId) {
+    return null;
+  }
+  for (const node of nodes) {
+    const nextTrail = [...trail, node];
+    if (node.goal_id === goalId) {
+      return nextTrail;
+    }
+    const childTrail = findGoalPath(node.children, goalId, nextTrail);
+    if (childTrail) {
+      return childTrail;
+    }
+  }
+  return null;
+}
+
+function matchRepoPlanItems(task: NonNullable<BoardResponse>["columns"][number]["tasks"][number], overview: OverviewResponse | null) {
+  const items = overview?.onboarding?.repo_plan_state?.items ?? overview?.onboarding?.repo_plan_preview?.items ?? [];
+  const scopedPaths = task.scoped_paths ?? [];
+  if (!items.length) {
+    return [];
+  }
+  return items.filter((item) => {
+    if (scopedPaths.length) {
+      return item.paths.some((path) => scopedPaths.some((scope) => path.startsWith(scope) || scope.startsWith(path)));
+    }
+    return Boolean(task.goal?.title && item.title.toLowerCase().includes(task.goal.title.toLowerCase()));
+  });
 }
 
 function GoalTreePreview({ node }: { node: GoalTreeNode }) {
@@ -203,23 +215,23 @@ export function WorkPage() {
   const repoPlan = repoPlanState ?? repoPlanPreview;
 
   return (
-    <section className="dashboard-page">
-      <header className="dashboard-hero">
-        <div className="dashboard-hero__content">
-          <span className="eyebrow">Work</span>
-          <h1>Execution cockpit</h1>
-          <p>Plan, prioritize, inspect, and steer software-delivery work without bouncing between board, goals, and repo detail views.</p>
+    <section className="dashboard-page workbench-page">
+      <header className="workbench-header surface-card surface-card--dense">
+        <div className="workbench-header__copy">
+          <span className="eyebrow">Workbench</span>
+          <h1>Board-first execution</h1>
+          <p>Plan, inspect, and steer work from one board. Open a card to get full context and actions in the inspector.</p>
           <div className="hero-meta">
             <span className="hero-meta__pill">{allTasks.length} visible tasks</span>
             <span className="hero-meta__pill">{goalTree?.total_goals ?? 0} goals</span>
             <span className="hero-meta__pill">
-              {overview?.onboarding?.repo_plan_state?.generated_task_count ?? overview?.onboarding?.repo_plan_preview?.generated_task_count ?? 0} repo-derived plan items
+              {overview?.onboarding?.repo_plan_state?.generated_task_count ?? overview?.onboarding?.repo_plan_preview?.generated_task_count ?? 0} repo-derived items
             </span>
           </div>
         </div>
-        <div className="work-toolbar">
+        <div className="workbench-header__controls">
           <label className="field-control field-control--search">
-            <span>Search work</span>
+            <span>Search</span>
             <input
               type="search"
               value={query}
@@ -257,12 +269,12 @@ export function WorkPage() {
         <StatCard label="Repo plan items" value={repoPlan?.generated_task_count ?? 0} />
       </section>
 
-      <section className="work-surface">
-        <div className="work-surface__board">
-          <div className="surface-card surface-card--flush">
-            <div className="surface-card__header">
+      <section className="workbench-layout">
+        <div className="workbench-layout__board">
+          <article className="surface-card surface-card--flush">
+            <div className="surface-card__header surface-card__header--tight">
               <div>
-                <span className="eyebrow">Execution board</span>
+                <span className="eyebrow">Board</span>
                 <h2>Current task flow</h2>
                 {collapsedColumns.length ? (
                   <div className="board-queue-strip board-queue-strip--work">
@@ -293,195 +305,151 @@ export function WorkPage() {
                   pendingActionKey={pendingActionKey}
                   focusedTaskId={selectedTask?.task_id ?? null}
                   onInspect={setSelectedTaskId}
-                  onReviewAction={(taskId, decision) =>
-                    void runAction(
-                      `review:${taskId}:${decision}`,
-                      `Review ${decision}ed for ${taskId}.`,
-                      () => reviewTask(taskId, decision),
-                      "Review action failed; keep the current board state under review."
-                    )
-                  }
-                  onAgentAction={(agentId, action) =>
-                    void runAction(
-                      `agent:${agentId}:${action}`,
-                      `Agent ${action} requested for ${agentId}.`,
-                      () => setAgentState(agentId, action),
-                      "Agent action failed; keep the current board state under review."
-                    )
-                  }
-                  onPriorityChange={(taskId, priority) =>
-                    void runAction(
-                      `reprioritize:${taskId}`,
-                      `Priority updated for ${taskId}.`,
-                      () => reprioritizeTask(taskId, priority),
-                      "Priority update failed; keeping the current board ordering."
-                    )
-                  }
-                  onReassign={(taskId, agentId) =>
-                    void runAction(
-                      `reassign:${taskId}`,
-                      `Task ${taskId} reassigned to ${agentId}.`,
-                      () => reassignTask(taskId, agentId),
-                      "Task reassignment failed; keeping the current ownership."
-                    )
-                  }
-                  onHalt={(taskId) =>
-                    void runAction(
-                      `halt:${taskId}`,
-                      `Task ${taskId} halted.`,
-                      () => haltTask(taskId),
-                      "Task halt failed; keep the task visible until the backend accepts the action."
-                    )
-                  }
-                  onRecover={(taskId) =>
-                    void runAction(
-                      `recover:${taskId}`,
-                      `Task ${taskId} returned to planning.`,
-                      () => recoverTask(taskId),
-                      "Task recovery failed; keep the task in the incident queue."
-                    )
-                  }
-                  onRecoverAndRequeue={(taskId) =>
-                    void runAction(
-                      `recover-and-requeue:${taskId}`,
-                      `Task ${taskId} recovered and requeued.`,
-                      () => recoverAndRequeueTask(taskId),
-                      "Recover-and-requeue failed; keep the incident under operator review."
-                    )
-                  }
-                  onMarkForReplan={(taskId) =>
-                    void runAction(
-                      `mark-for-replan:${taskId}`,
-                      `Task ${taskId} moved into replanning.`,
-                      () => markTaskForReplan(taskId),
-                      "Mark-for-replan failed; keep the current task state."
-                    )
-                  }
-                  onFinishReplan={(taskId) =>
-                    void runAction(
-                      `finish-replan:${taskId}`,
-                      `Task ${taskId} returned to readiness evaluation.`,
-                      () => finishTaskReplan(taskId),
-                      "Finish-replan failed; keep the task in replanning."
-                    )
-                  }
-                  onRunVerification={(taskId) =>
-                    void runAction(
-                      `run-verification:${taskId}`,
-                      `Verification finished for ${taskId}.`,
-                      () => runTaskVerification(taskId),
-                      "Verification failed to start; inspect the task and try again."
-                    )
-                  }
-                  onPrepareGitWorkspace={(taskId) =>
-                    void runAction(
-                      `prepare-git-workspace:${taskId}`,
-                      `Prepared git workspace for ${taskId}.`,
-                      () => prepareTaskGitWorkspace(taskId),
-                      "Git workspace preparation failed; keep using the current runtime context."
-                    )
-                  }
-                  onRefreshGitDiff={(taskId) =>
-                    void runAction(
-                      `refresh-git-diff:${taskId}`,
-                      `Refreshed git diff for ${taskId}.`,
-                      () => refreshTaskGitDiff(taskId),
-                      "Git diff refresh failed; keep the current change summary."
-                    )
-                  }
-                  onRetryLimitChange={(taskId, autoRetryLimit) =>
-                    void runAction(
-                      `retry-limit:${taskId}`,
-                      `Updated retry budget for ${taskId}.`,
-                      () => setTaskRetryLimit(taskId, autoRetryLimit),
-                      "Retry limit update failed; keep the current budget."
-                    )
-                  }
                 />
               ))}
             </div>
-          </div>
+          </article>
         </div>
 
-        <aside className="work-surface__detail">
-          <div className="surface-card">
-            <div className="surface-card__header">
+        <aside className="workbench-layout__inspector">
+          <article className="surface-card surface-card--dense">
+            <div className="surface-card__header surface-card__header--tight">
               <div>
-                <span className="eyebrow">Focused task</span>
-                <h2>{selectedTask?.title ?? "No task selected"}</h2>
+                <span className="eyebrow">Inspector</span>
+                <h2>{selectedTask ? "Task detail" : "Select a card"}</h2>
               </div>
-              {selectedTask ? <span className="status-chip">{formatStatusLabel(selectedTask.status)}</span> : null}
             </div>
-            {selectedTask ? (
-              <div className="detail-stack">
-                <p>{selectedTask.description ?? "No task description captured yet."}</p>
-                <div className="detail-grid">
-                  <div>
-                    <span>Priority</span>
-                    <strong>{formatPriority(selectedTask.priority)}</strong>
-                  </div>
-                  <div>
-                    <span>Goal</span>
-                    <strong>{selectedTask.goal?.title ?? "Unlinked"}</strong>
-                  </div>
-                  <div>
-                    <span>Agent</span>
-                    <strong>{selectedTask.agent?.name ?? "Unassigned"}</strong>
-                  </div>
-                  <div>
-                    <span>Review state</span>
-                    <strong>{selectedTask.review_state ?? "Normal flow"}</strong>
-                  </div>
-                  <div>
-                    <span>Scheduler rationale</span>
-                    <strong>{selectedTask.scheduler_summary ?? "No explicit rationale yet."}</strong>
-                  </div>
-                  <div>
-                    <span>Next retry</span>
-                    <strong>{selectedTask.next_retry_at ? formatTime(selectedTask.next_retry_at) : "Ready now"}</strong>
-                  </div>
-                </div>
-                <div className="detail-section">
-                  <span>Scoped repo paths</span>
-                  <p>{formatList(selectedTask.scoped_paths)}</p>
-                </div>
-                <div className="detail-section">
-                  <span>Validation commands</span>
-                  <p>{formatList(selectedTask.validation_commands)}</p>
-                </div>
-                <div className="detail-section">
-                  <span>Git workspace</span>
-                  <p>
-                    {selectedTask.git_workspace_prepared
-                      ? `${selectedTask.git_workspace_branch ?? "prepared"} · ${selectedTask.git_workspace_change_summary ?? "No change summary"}`
-                      : selectedTask.git_workspace_supported
-                        ? "Supported but not prepared yet."
-                        : "Not supported for this task."}
-                  </p>
-                </div>
-                {selectedTask.replan_summary ? (
-                  <div className="detail-section">
-                    <span>Replanning guidance</span>
-                    <p>{selectedTask.replan_summary}</p>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="empty-state empty-state--compact">
-                <strong>No task is currently visible.</strong>
-                <p>Adjust the filters or wait for work to enter the board.</p>
-              </div>
-            )}
-          </div>
+            <TaskInspector
+              task={selectedTask}
+              agentOptions={agentOptions}
+              pendingActionKey={pendingActionKey}
+              goalPath={selectedTask ? findGoalPath(goalTree?.roots ?? [], selectedTask.goal?.id ?? null) ?? [] : []}
+              siblingTasks={
+                selectedTask?.goal?.id
+                  ? allTasks.filter((task) => task.goal?.id === selectedTask.goal?.id && task.task_id !== selectedTask.task_id)
+                  : []
+              }
+              repoPlanItems={
+                selectedTask
+                  ? matchRepoPlanItems(selectedTask, overview).slice(0, 6)
+                  : []
+              }
+              onSelectSibling={setSelectedTaskId}
+              onReviewAction={(taskId, decision) =>
+                void runAction(
+                  `review:${taskId}:${decision}`,
+                  `Review ${decision}ed for ${taskId}.`,
+                  () => reviewTask(taskId, decision),
+                  "Review action failed; keep the current board state under review."
+                )
+              }
+              onAgentAction={(agentId, action) =>
+                void runAction(
+                  `agent:${agentId}:${action}`,
+                  `Agent ${action} requested for ${agentId}.`,
+                  () => setAgentState(agentId, action),
+                  "Agent action failed; keep the current board state under review."
+                )
+              }
+              onPriorityChange={(taskId, priority) =>
+                void runAction(
+                  `reprioritize:${taskId}`,
+                  `Priority updated for ${taskId}.`,
+                  () => reprioritizeTask(taskId, priority),
+                  "Priority update failed; keeping the current board ordering."
+                )
+              }
+              onReassign={(taskId, agentId) =>
+                void runAction(
+                  `reassign:${taskId}`,
+                  `Task ${taskId} reassigned to ${agentId}.`,
+                  () => reassignTask(taskId, agentId),
+                  "Task reassignment failed; keeping the current ownership."
+                )
+              }
+              onHalt={(taskId) =>
+                void runAction(
+                  `halt:${taskId}`,
+                  `Task ${taskId} halted.`,
+                  () => haltTask(taskId),
+                  "Task halt failed; keep the task visible until the backend accepts the action."
+                )
+              }
+              onRecover={(taskId) =>
+                void runAction(
+                  `recover:${taskId}`,
+                  `Task ${taskId} returned to planning.`,
+                  () => recoverTask(taskId),
+                  "Task recovery failed; keep the task in the incident queue."
+                )
+              }
+              onRecoverAndRequeue={(taskId) =>
+                void runAction(
+                  `recover-and-requeue:${taskId}`,
+                  `Task ${taskId} recovered and requeued.`,
+                  () => recoverAndRequeueTask(taskId),
+                  "Recover-and-requeue failed; keep the incident under operator review."
+                )
+              }
+              onMarkForReplan={(taskId) =>
+                void runAction(
+                  `mark-for-replan:${taskId}`,
+                  `Task ${taskId} moved into replanning.`,
+                  () => markTaskForReplan(taskId),
+                  "Mark-for-replan failed; keep the current task state."
+                )
+              }
+              onFinishReplan={(taskId) =>
+                void runAction(
+                  `finish-replan:${taskId}`,
+                  `Task ${taskId} returned to readiness evaluation.`,
+                  () => finishTaskReplan(taskId),
+                  "Finish-replan failed; keep the task in replanning."
+                )
+              }
+              onRunVerification={(taskId) =>
+                void runAction(
+                  `run-verification:${taskId}`,
+                  `Verification finished for ${taskId}.`,
+                  () => runTaskVerification(taskId),
+                  "Verification failed to start; inspect the task and try again."
+                )
+              }
+              onPrepareGitWorkspace={(taskId) =>
+                void runAction(
+                  `prepare-git-workspace:${taskId}`,
+                  `Prepared git workspace for ${taskId}.`,
+                  () => prepareTaskGitWorkspace(taskId),
+                  "Git workspace preparation failed; keep using the current runtime context."
+                )
+              }
+              onRefreshGitDiff={(taskId) =>
+                void runAction(
+                  `refresh-git-diff:${taskId}`,
+                  `Refreshed git diff for ${taskId}.`,
+                  () => refreshTaskGitDiff(taskId),
+                  "Git diff refresh failed; keep the current change summary."
+                )
+              }
+              onRetryLimitChange={(taskId, autoRetryLimit) =>
+                void runAction(
+                  `retry-limit:${taskId}`,
+                  `Updated retry budget for ${taskId}.`,
+                  () => setTaskRetryLimit(taskId, autoRetryLimit),
+                  "Retry limit update failed; keep the current budget."
+                )
+              }
+            />
+          </article>
         </aside>
       </section>
 
-      <section className="two-column-grid">
+      <section className="two-column-grid workbench-secondary">
         <article className="surface-card">
           <div className="surface-card__header">
             <div>
-              <span className="eyebrow">Goal hierarchy</span>
-              <h2>Why the work exists</h2>
+              <span className="eyebrow">Goal map</span>
+              <h2>Visible structure</h2>
             </div>
             <span className="status-chip">{goalTree?.total_goals ?? 0} goals</span>
           </div>
@@ -500,7 +468,7 @@ export function WorkPage() {
         <article className="surface-card">
           <div className="surface-card__header">
             <div>
-              <span className="eyebrow">Repo-grounded plan</span>
+              <span className="eyebrow">Repo plan</span>
               <h2>Imported codebase coverage</h2>
             </div>
             <span className="status-chip">

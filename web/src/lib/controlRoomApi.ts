@@ -7,6 +7,7 @@ import type {
   ArtifactDetail,
   ArtifactPurgeResponse,
   ArtifactsResponse,
+  DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
   FailureOperatorAction,
@@ -623,6 +624,11 @@ export function fetchPortfolio() {
 export async function createProject(payload: ProjectCreateRequest) {
   const response = await postJson<ProjectCreateResponse>("/api/projects", payload);
   return response as ProjectCreateResponse;
+}
+
+export async function pickLocalDirectory() {
+  const response = await postJson<DirectoryPickerResponse>("/api/system/actions/pick-directory", {});
+  return response as DirectoryPickerResponse;
 }
 
 export async function archiveProject(projectId: string) {

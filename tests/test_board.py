@@ -1,13 +1,23 @@
+import json
 import os
+import subprocess
 import tempfile
 import unittest
-import json
 
 from maas.db import connect
 from maas.ids import generate_id
 from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
+from maas.services.git_workspaces import capture_task_git_diff, prepare_task_git_workspace
 from maas.services.scheduler import refresh_ready_tasks
+
+
+def _init_git_repo(root):
+    subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "MAAS Tests"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 class BoardReadModelTest(unittest.TestCase):
@@ -397,6 +407,35 @@ class BoardReadModelTest(unittest.TestCase):
             self.assertEqual(matching_cards[0]["latest_verification_status"], "passed")
             self.assertEqual(matching_cards[0]["latest_verification_command"], "python -c \"print('ok')\"")
             self.assertIsNotNone(matching_cards[0]["latest_verification_at"])
+
+    def test_board_cards_include_git_workspace_summary(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Board Git Workspace Test", description="Board git workspace test", project_type="custom")
+            _init_git_repo(tmpdir)
+            connection = connect(result["paths"])
+            try:
+                task_id = connection.execute(
+                    "SELECT task_id FROM tasks WHERE title = 'Implement FastAPI board endpoint'"
+                ).fetchone()["task_id"]
+                workspace = prepare_task_git_workspace(connection, result["paths"], task_id, "agent_allocator")
+                with open(os.path.join(workspace["worktree_path"], "README.md"), "a", encoding="utf-8") as handle:
+                    handle.write("\nworkspace diff\n")
+                capture_task_git_diff(connection, result["paths"], task_id, "agent_allocator")
+                board = fetch_board(connection)
+            finally:
+                connection.close()
+
+            matching_cards = [
+                task
+                for column in board["columns"]
+                for task in column["tasks"]
+                if task["task_id"] == task_id
+            ]
+            self.assertTrue(matching_cards[0]["git_workspace_supported"])
+            self.assertTrue(matching_cards[0]["git_workspace_prepared"])
+            self.assertEqual(matching_cards[0]["git_workspace_branch"], "maas/{0}".format(task_id))
+            self.assertGreaterEqual(matching_cards[0]["git_workspace_dirty_files"], 1)
+            self.assertIsNotNone(matching_cards[0]["git_workspace_diff_artifact_id"])
 
 
 if __name__ == "__main__":

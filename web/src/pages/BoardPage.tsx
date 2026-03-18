@@ -4,9 +4,11 @@ import {
   finishTaskReplan,
   haltTask,
   markTaskForReplan,
+  prepareTaskGitWorkspace,
   reassignTask,
   recoverAndRequeueTask,
   recoverTask,
+  refreshTaskGitDiff,
   reprioritizeTask,
   reviewTask,
   runTaskVerification,
@@ -252,6 +254,40 @@ export function BoardPage() {
     }
   }
 
+  async function handlePrepareGitWorkspace(taskId: string) {
+    const actionKey = `prepare-git-workspace:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await prepareTaskGitWorkspace(taskId);
+      setNotice(`Git workspace prepared for ${taskId} on ${payload.branch_name}.`);
+      await loadBoard();
+    } catch {
+      setNotice("Git workspace preparation failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleRefreshGitDiff(taskId: string) {
+    const actionKey = `refresh-git-diff:${taskId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      const payload = await refreshTaskGitDiff(taskId);
+      setNotice(
+        payload.dirty_file_count
+          ? `Git diff refreshed for ${taskId} with ${payload.dirty_file_count} changed files.`
+          : `Git diff refreshed for ${taskId}; workspace is clean.`
+      );
+      await loadBoard();
+    } catch {
+      setNotice("Git diff refresh failed; keep the current board snapshot under review.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   async function handleRetryLimitChange(taskId: string, autoRetryLimit: number | null) {
     const actionKey = `retry-limit:${taskId}`;
     setPendingActionKey(actionKey);
@@ -392,6 +428,8 @@ export function BoardPage() {
             onMarkForReplan={handleMarkForReplan}
             onFinishReplan={handleFinishReplan}
             onRunVerification={handleRunVerification}
+            onPrepareGitWorkspace={handlePrepareGitWorkspace}
+            onRefreshGitDiff={handleRefreshGitDiff}
             onRetryLimitChange={handleRetryLimitChange}
           />
         ))}

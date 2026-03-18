@@ -40,6 +40,12 @@ class ProjectPaths(object):
     def project_runtime_dir(self, project_id):
         return os.path.join(self.project_workspace(project_id), "runtime")
 
+    def project_git_worktrees_dir(self, project_id):
+        return os.path.join(self.project_workspace(project_id), "git-workspaces")
+
+    def task_git_worktree(self, project_id, task_id):
+        return os.path.join(self.project_git_worktrees_dir(project_id), task_id)
+
     def project_runtime_tmp_dir(self, project_id):
         return os.path.join(self.project_runtime_dir(project_id), "tmp")
 
@@ -73,3 +79,4 @@ class ProjectPaths(object):
     def ensure_project_workspace(self, project_id):
         os.makedirs(self.project_workspace(project_id), exist_ok=True)
         os.makedirs(self.project_runtime_dir(project_id), exist_ok=True)
+        os.makedirs(self.project_git_worktrees_dir(project_id), exist_ok=True)

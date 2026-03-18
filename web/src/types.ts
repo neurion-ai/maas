@@ -58,6 +58,13 @@ export interface BoardTask {
   latest_verification_status?: string | null;
   latest_verification_at?: string | null;
   latest_verification_command?: string | null;
+  git_workspace_supported?: boolean;
+  git_workspace_prepared?: boolean;
+  git_workspace_branch?: string | null;
+  git_workspace_dirty_files?: number;
+  git_workspace_change_summary?: string | null;
+  git_workspace_last_diff_at?: string | null;
+  git_workspace_diff_artifact_id?: string | null;
 }
 
 export interface BoardColumn {

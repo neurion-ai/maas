@@ -2,8 +2,10 @@
 
 from datetime import datetime
 import json
+import os
 
 from maas.constants import BOARD_COLUMNS
+from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
 from maas.services.verification import fetch_latest_verification_by_task
 
@@ -115,6 +117,21 @@ def _validation_commands_from_acceptance(raw_value):
     return commands
 
 
+def _project_supports_git_workspaces(connection, project_id):
+    project_row = connection.execute(
+        """
+        SELECT source_root
+        FROM projects
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    source_root = os.path.abspath((project_row["source_root"] if project_row else "") or "")
+    if not source_root:
+        return False
+    return os.path.exists(os.path.join(source_root, ".git"))
+
+
 def fetch_board(connection, filters=None, project_id=None):
     failure_query = """
         SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
@@ -170,6 +187,7 @@ def fetch_board(connection, filters=None, project_id=None):
     task_query = """
         SELECT
             tasks.task_id,
+            tasks.project_id,
             tasks.title,
             tasks.description,
             tasks.status,
@@ -215,15 +233,20 @@ def fetch_board(connection, filters=None, project_id=None):
 
     scheduler_decisions = scheduler_decisions_for_tasks(scheduler_rows, agent_rows)
     latest_verification_by_task = fetch_latest_verification_by_task(connection, project_id=project_id)
+    git_workspaces_by_task = fetch_latest_git_workspace_by_task(connection, project_id=project_id)
 
     cards_by_status = {}
     filtered_rows = [row for row in scheduler_rows if _matches_filters(row, filters or {})]
+    git_supported_by_project = {}
     for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
         column_key = _board_column_key(row["status"])
         scheduler = describe_task_scheduler(row, scheduler_decisions.get(row["task_id"]))
         replan_feedback = adaptive_replan_feedback(row)
         latest_verification = latest_verification_by_task.get(row["task_id"]) or {}
+        git_workspace = git_workspaces_by_task.get(row["task_id"]) or {}
+        if row["project_id"] not in git_supported_by_project:
+            git_supported_by_project[row["project_id"]] = _project_supports_git_workspaces(connection, row["project_id"])
         card = {
             "task_id": row["task_id"],
             "title": row["title"],
@@ -270,6 +293,13 @@ def fetch_board(connection, filters=None, project_id=None):
             "latest_verification_status": latest_verification.get("status"),
             "latest_verification_at": latest_verification.get("finished_at"),
             "latest_verification_command": latest_verification.get("command"),
+            "git_workspace_supported": git_supported_by_project.get(row["project_id"], False),
+            "git_workspace_prepared": bool(git_workspace),
+            "git_workspace_branch": git_workspace.get("branch_name"),
+            "git_workspace_dirty_files": git_workspace.get("dirty_file_count", 0),
+            "git_workspace_change_summary": git_workspace.get("change_summary"),
+            "git_workspace_last_diff_at": git_workspace.get("updated_at"),
+            "git_workspace_diff_artifact_id": git_workspace.get("last_diff_artifact_id"),
         }
         cards_by_status.setdefault(column_key, []).append(card)
 

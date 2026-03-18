@@ -74,6 +74,8 @@ interface TaskCardProps {
   onMarkForReplan?: (taskId: string) => void;
   onFinishReplan?: (taskId: string) => void;
   onRunVerification?: (taskId: string) => void;
+  onPrepareGitWorkspace?: (taskId: string) => void;
+  onRefreshGitDiff?: (taskId: string) => void;
   onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
@@ -91,6 +93,8 @@ export function TaskCard({
   onMarkForReplan,
   onFinishReplan,
   onRunVerification,
+  onPrepareGitWorkspace,
+  onRefreshGitDiff,
   onRetryLimitChange
 }: TaskCardProps) {
   const reviewApproveKey = `review:${task.task_id}:approve`;
@@ -104,6 +108,8 @@ export function TaskCard({
   const markForReplanKey = `mark-for-replan:${task.task_id}`;
   const finishReplanKey = `finish-replan:${task.task_id}`;
   const runVerificationKey = `run-verification:${task.task_id}`;
+  const prepareGitWorkspaceKey = `prepare-git-workspace:${task.task_id}`;
+  const refreshGitDiffKey = `refresh-git-diff:${task.task_id}`;
   const retryLimitKey = `retry-limit:${task.task_id}`;
   const isPendingReviewApprove = pendingActionKey === reviewApproveKey;
   const isPendingReviewReject = pendingActionKey === reviewRejectKey;
@@ -116,6 +122,8 @@ export function TaskCard({
   const isPendingMarkForReplan = pendingActionKey === markForReplanKey;
   const isPendingFinishReplan = pendingActionKey === finishReplanKey;
   const isPendingRunVerification = pendingActionKey === runVerificationKey;
+  const isPendingPrepareGitWorkspace = pendingActionKey === prepareGitWorkspaceKey;
+  const isPendingRefreshGitDiff = pendingActionKey === refreshGitDiffKey;
   const isPendingRetryLimit = pendingActionKey === retryLimitKey;
   const canReview = task.status === "review" && !!onReviewAction;
   const canToggleAgent = !!task.agent?.id && !!onAgentAction && (task.agent?.status === "running" || task.agent?.status === "paused");
@@ -140,6 +148,10 @@ export function TaskCard({
       RECOVERABLE_REVIEW_STATES.has(task.review_state ?? ""));
   const canFinishReplan = task.status === "blocked" && task.review_state === "needs_replan" && !!onFinishReplan;
   const canRunVerification = !!task.has_verification_recipe && !!onRunVerification;
+  const canPrepareGitWorkspace =
+    !!task.git_workspace_supported && !task.git_workspace_prepared && !!onPrepareGitWorkspace;
+  const canRefreshGitDiff =
+    !!task.git_workspace_prepared && !!onRefreshGitDiff;
   const canSetRetryLimit = canSteerTask && !!onRetryLimitChange;
   const retryLimitOptions = Array.from(
     new Set(
@@ -254,6 +266,18 @@ export function TaskCard({
             </dd>
           </div>
         ) : null}
+        {task.git_workspace_supported ? (
+          <div>
+            <dt>Git workspace</dt>
+            <dd>
+              {task.git_workspace_prepared
+                ? `${task.git_workspace_branch ?? "prepared"} | ${task.git_workspace_change_summary ?? "No diff summary"}${
+                    task.git_workspace_dirty_files ? ` | ${task.git_workspace_dirty_files} changed` : ""
+                  }${task.git_workspace_diff_artifact_id ? ` | ${task.git_workspace_diff_artifact_id}` : ""}`
+                : "Not prepared"}
+            </dd>
+          </div>
+        ) : null}
       </dl>
       {(canReview ||
         canToggleAgent ||
@@ -265,6 +289,8 @@ export function TaskCard({
         canMarkForReplan ||
         canFinishReplan ||
         canRunVerification ||
+        canPrepareGitWorkspace ||
+        canRefreshGitDiff ||
         canSetRetryLimit) && (
         <div className="task-card__actions">
           {canReview && (
@@ -419,6 +445,26 @@ export function TaskCard({
               onClick={() => onRunVerification?.(task.task_id)}
             >
               {isPendingRunVerification ? "Running verification..." : "Run verification"}
+            </button>
+          )}
+          {canPrepareGitWorkspace && (
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              disabled={isPendingPrepareGitWorkspace}
+              onClick={() => onPrepareGitWorkspace?.(task.task_id)}
+            >
+              {isPendingPrepareGitWorkspace ? "Preparing workspace..." : "Prepare git workspace"}
+            </button>
+          )}
+          {canRefreshGitDiff && (
+            <button
+              type="button"
+              className="task-action task-action--secondary"
+              disabled={isPendingRefreshGitDiff}
+              onClick={() => onRefreshGitDiff?.(task.task_id)}
+            >
+              {isPendingRefreshGitDiff ? "Refreshing diff..." : "Refresh git diff"}
             </button>
           )}
         </div>

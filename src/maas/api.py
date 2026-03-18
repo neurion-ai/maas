@@ -21,6 +21,7 @@ from maas.services.board import fetch_board
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
+from maas.services.git_workspaces import capture_task_git_diff, fetch_task_git_workspace, prepare_task_git_workspace
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
 from maas.services.orchestrator import run_orchestrator_once
@@ -652,6 +653,17 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/tasks/{task_id}/git-workspace")
+    def task_git_workspace(task_id: str):
+        connection = connect(paths)
+        try:
+            workspace = fetch_task_git_workspace(connection, task_id)
+            if workspace is None:
+                raise HTTPException(status_code=404, detail="git workspace not prepared")
+            return workspace
+        finally:
+            connection.close()
+
     @app.get("/api/artifacts")
     def artifacts(
         limit=100,
@@ -1193,6 +1205,30 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return run_task_verification(connection, paths, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/prepare-git-workspace")
+    def task_prepare_git_workspace_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return prepare_task_git_workspace(connection, paths, task_id, payload.actor_id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/refresh-git-diff")
+    def task_refresh_git_diff_action(task_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return capture_task_git_diff(connection, paths, task_id, payload.actor_id)
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:

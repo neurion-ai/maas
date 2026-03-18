@@ -12,6 +12,7 @@ from maas.services.board import fetch_board
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
+from maas.services.git_workspaces import capture_task_git_diff, fetch_task_git_workspace, prepare_task_git_workspace
 from maas.services.provider_runtime import (
     process_next_provider_job,
     process_provider_job,
@@ -220,6 +221,16 @@ def build_parser():
     task_verify_parser.add_argument("--project-root", default=".")
     task_verify_parser.add_argument("--task-id", required=True)
     task_verify_parser.add_argument("--actor-id", required=True)
+
+    task_prepare_git_workspace_parser = task_subparsers.add_parser("prepare-git-workspace")
+    task_prepare_git_workspace_parser.add_argument("--project-root", default=".")
+    task_prepare_git_workspace_parser.add_argument("--task-id", required=True)
+    task_prepare_git_workspace_parser.add_argument("--actor-id", required=True)
+
+    task_refresh_git_diff_parser = task_subparsers.add_parser("refresh-git-diff")
+    task_refresh_git_diff_parser.add_argument("--project-root", default=".")
+    task_refresh_git_diff_parser.add_argument("--task-id", required=True)
+    task_refresh_git_diff_parser.add_argument("--actor-id", required=True)
 
     verification_parser = subparsers.add_parser("verification")
     verification_subparsers = verification_parser.add_subparsers(dest="verification_command", required=True)
@@ -619,6 +630,10 @@ def command_task(args):
                 print(json.dumps(allocate_ready_tasks(connection, actor_id=args.actor_id, limit=args.limit), indent=2))
         elif args.task_command == "run-verification":
             print(json.dumps(run_task_verification(connection, paths, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "prepare-git-workspace":
+            print(json.dumps(prepare_task_git_workspace(connection, paths, args.task_id, args.actor_id), indent=2))
+        elif args.task_command == "refresh-git-diff":
+            print(json.dumps(capture_task_git_diff(connection, paths, args.task_id, args.actor_id), indent=2))
     finally:
         connection.close()
 

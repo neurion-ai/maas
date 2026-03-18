@@ -15,6 +15,8 @@ interface BoardColumnProps {
   onMarkForReplan?: (taskId: string) => void;
   onFinishReplan?: (taskId: string) => void;
   onRunVerification?: (taskId: string) => void;
+  onPrepareGitWorkspace?: (taskId: string) => void;
+  onRefreshGitDiff?: (taskId: string) => void;
   onRetryLimitChange?: (taskId: string, autoRetryLimit: number | null) => void;
 }
 
@@ -32,6 +34,8 @@ export function BoardColumn({
   onMarkForReplan,
   onFinishReplan,
   onRunVerification,
+  onPrepareGitWorkspace,
+  onRefreshGitDiff,
   onRetryLimitChange
 }: BoardColumnProps) {
   return (
@@ -60,6 +64,8 @@ export function BoardColumn({
             onMarkForReplan={onMarkForReplan}
             onFinishReplan={onFinishReplan}
             onRunVerification={onRunVerification}
+            onPrepareGitWorkspace={onPrepareGitWorkspace}
+            onRefreshGitDiff={onRefreshGitDiff}
             onRetryLimitChange={onRetryLimitChange}
           />
         ))}

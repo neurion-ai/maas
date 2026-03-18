@@ -62,7 +62,7 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] Brownfield onboarding has started on `main` with repo detection, approval gating, imported workflow/repo-area backlog seeding, and overview visibility.
 - [x] The current implementation is roughly `85-90%` complete for that prototype target.
 - [ ] The repository is still much earlier against the broader long-horizon roadmap.
-- [ ] The biggest remaining roadmap buckets are project lifecycle/orchestration, deeper brownfield execution, stronger recovery automation, stronger isolation, and broader provider/runtime coverage.
+- [ ] The biggest remaining roadmap buckets are product UX simplification, clearer operator workflows, project lifecycle/orchestration, deeper brownfield execution, stronger recovery automation, stronger isolation, and broader provider/runtime coverage.
 
 ## Current Numbered Delivery Sequence
 
@@ -120,6 +120,26 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
   push important incidents out of the dashboard via webhooks or messaging integrations.
 - [x] `#106` Incident timeline and replay:
   add a correlated incident history so operators can reconstruct what happened across tasks, alerts, sessions, and recovery actions.
+- [ ] `#107` Information architecture reset and navigation collapse:
+  reduce the current top-level page sprawl into a smaller set of primary surfaces with user-language labels and a clearer mental model.
+- [ ] `#108` Design system and dual light/dark theme foundation:
+  introduce semantic design tokens and persistent light/dark modes so the control room feels like a real product, not an internal admin tool.
+- [ ] `#109` Home command center with recommended actions:
+  create a single landing surface that prioritizes “what needs attention” and “what should I do next” over raw subsystem telemetry.
+- [ ] `#110` Guided onboarding and first-run experience:
+  add a setup flow for project creation/import, brownfield review, runtime readiness, and first supervised pass.
+- [ ] `#111` Unified Work surface for board, plan, and task detail:
+  merge board, goal tree, and repo-grounded planning into one execution workspace with richer task detail and evidence.
+- [ ] `#112` Unified Runs surface for agents, providers, verification, and outputs:
+  merge execution telemetry and output inspection into one coherent operator view.
+- [ ] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline:
+  replace the current mechanism-heavy page split with one incident workbench and clearer playbooks.
+- [ ] `#114` Portfolio and project-management UX redesign:
+  improve multi-project supervision, lifecycle actions, and project switching without exposing policy forms as the default experience.
+- [ ] `#115` Command palette, contextual actions, empty states, and inline guidance:
+  make advanced capabilities discoverable while keeping the default UI simple.
+- [ ] `#116` Accessibility, responsiveness, and visual-polish pass:
+  finish the redesign with keyboard-first interactions, mobile/tablet behavior, hierarchy cleanup, and usability QA.
 
 ## Current Stacked Branch Progress
 
@@ -152,6 +172,8 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 
 The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
 
+The next numbered `#107-#116` sequence is focused on UX, navigation, onboarding, and visual design.
+
 ## Extended Numbered Roadmap
 
 - [x] `#81` Multi-project write path and project lifecycle
@@ -180,6 +202,16 @@ The current numbered `#81-#106` sequence is fully implemented on the stacked bra
 - [x] `#104` Cost, runtime, and quota controls
 - [x] `#105` Notifications and outbound integrations
 - [x] `#106` Incident timeline and replay
+- [ ] `#107` Information architecture reset and navigation collapse
+- [ ] `#108` Design system and dual light/dark theme foundation
+- [ ] `#109` Home command center with recommended actions
+- [ ] `#110` Guided onboarding and first-run experience
+- [ ] `#111` Unified Work surface for board, plan, and task detail
+- [ ] `#112` Unified Runs surface for agents, providers, verification, and outputs
+- [ ] `#113` Unified Incidents surface for failures, alerts, recovery, and timeline
+- [ ] `#114` Portfolio and project-management UX redesign
+- [ ] `#115` Command palette, contextual actions, empty states, and inline guidance
+- [ ] `#116` Accessibility, responsiveness, and visual-polish pass
 
 ## Delivery Order
 

@@ -211,6 +211,58 @@ lint = "example:main"
             self.assertEqual(config["onboarding"]["review_status"], "changes_requested")
             self.assertEqual(gated_tasks, 6)
 
+    def test_approving_brownfield_review_cancels_ignored_imported_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._seed_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Scoped Approval Test", description="brownfield scoped review", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["onboarding"]["review_overrides"] = {
+                    "ignored_paths": ["tests"],
+                    "accepted_workflow_labels": ["python_script:lint"],
+                    "accepted_runbook_labels": ["python_script:lint"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            review_payload = client.get("/api/board", params={"search": "Review imported project understanding"}).json()
+            review_task = [
+                task
+                for column in review_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Review imported project understanding"
+            ][0]
+
+            response = client.post(
+                f"/api/tasks/{review_task['task_id']}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_statuses = {
+                    row["title"]: (row["status"], row["review_state"])
+                    for row in connection.execute(
+                        "SELECT title, status, review_state FROM tasks"
+                    ).fetchall()
+                }
+            finally:
+                connection.close()
+
+            self.assertEqual(task_statuses["Validate imported workflow: test"], ("cancelled", "ignored_onboarding_scope"))
+            self.assertEqual(task_statuses["Map imported test surface: tests"], ("cancelled", "ignored_onboarding_scope"))
+            self.assertEqual(task_statuses["Validate imported workflow: lint"][1], None)
+
     def test_pause_resume_and_reprioritize_actions(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Steering Test", description="Operator actions", project_type="custom")

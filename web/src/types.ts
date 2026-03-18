@@ -234,6 +234,11 @@ export interface OverviewOnboarding {
   mode: string;
   review_status: string;
   review_required: boolean;
+  review_overrides?: {
+    ignored_paths: string[];
+    accepted_workflow_labels: string[];
+    accepted_runbook_labels: string[];
+  };
   discovery_summary: {
     primary_language?: string;
     total_files?: number;

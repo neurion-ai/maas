@@ -19,7 +19,14 @@ from maas.services.provider_runtime import (
     queue_provider_task,
     run_provider_task,
 )
-from maas.services.projects import archive_project, create_project, list_projects, rescan_brownfield_project, restore_project
+from maas.services.projects import (
+    archive_project,
+    create_project,
+    list_projects,
+    rescan_brownfield_project,
+    restore_project,
+    update_brownfield_onboarding_review,
+)
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.orchestrator import run_orchestrator_once
@@ -111,6 +118,14 @@ def build_parser():
     project_rescan_parser.add_argument("--project-root", default=".")
     project_rescan_parser.add_argument("--project-id", required=True)
     project_rescan_parser.add_argument("--actor-id", default="agent_allocator")
+
+    project_update_review_parser = project_subparsers.add_parser("update-onboarding-review")
+    project_update_review_parser.add_argument("--project-root", default=".")
+    project_update_review_parser.add_argument("--project-id", required=True)
+    project_update_review_parser.add_argument("--actor-id", default="agent_allocator")
+    project_update_review_parser.add_argument("--ignored-path", action="append", default=[])
+    project_update_review_parser.add_argument("--accept-workflow-label", action="append")
+    project_update_review_parser.add_argument("--accept-runbook-label", action="append")
 
     agent_parser = subparsers.add_parser("agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -455,6 +470,23 @@ def command_project(args):
             print(json.dumps(restore_project(connection, args.project_id, args.actor_id), indent=2))
         elif args.project_command == "rescan-brownfield":
             print(json.dumps(rescan_brownfield_project(connection, paths, args.project_id, args.actor_id), indent=2))
+        elif args.project_command == "update-onboarding-review":
+            print(
+                json.dumps(
+                    update_brownfield_onboarding_review(
+                        connection,
+                        paths,
+                        args.project_id,
+                        args.actor_id,
+                        {
+                            "ignored_paths": args.ignored_path,
+                            "accepted_workflow_labels": args.accept_workflow_label,
+                            "accepted_runbook_labels": args.accept_runbook_label,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
     finally:
         connection.close()
 

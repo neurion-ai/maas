@@ -28,7 +28,10 @@ Current stacked development chain above `main`:
 - `#90` exists on `codex/brownfield-runbook-command-catalog`
 - `#91` exists on `codex/brownfield-runbook-command-catalog`
 - `#92` exists on `codex/queue-capacity-controls`
-- `#93` is the next unfinished item in sequence
+- `#93` exists on `codex/session-runner-envelopes`
+- `#94` exists on `codex/policy-driven-self-healing-v2`
+- `#95` exists on `codex/brownfield-onboarding-review-v2`
+- `#96` is the next unfinished item in sequence
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -77,11 +80,11 @@ Current stacked development chain above `main`:
   add a reusable orchestration pass that coordinates supervisor and queued provider job processing across projects.
 - [x] `#92` Queue and worker capacity controls:
   expose per-provider queue pause and per-pass limits so queued execution can be throttled safely.
-- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation:
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation:
   add per-session runner envelopes with isolated temp/home/cache roots and persisted run manifests.
-- [ ] `#94` Policy-driven self-healing v2:
+- [x] `#94` Policy-driven self-healing v2:
   expand circuit breakers into richer automatic recover/defer/replan/DLQ decisions with explicit stop conditions.
-- [ ] `#95` Brownfield onboarding review v2:
+- [x] `#95` Brownfield onboarding review v2:
   let operators edit ignored paths, accepted workflows, and runbook commands before imported work is released.
 - [ ] `#96` Remote executor or worker pool:
   add execution beyond direct local CLI runs by introducing queued remote workers.

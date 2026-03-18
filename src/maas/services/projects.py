@@ -7,12 +7,17 @@ from maas.config import DEFAULT_PROJECT_TYPE, build_default_project_config
 from maas.ids import generate_id
 from maas.services.bootstrap import (
     BROWNFIELD_REVIEW_TASK_TITLE,
+    apply_onboarding_review_overrides,
     build_discovery_summary,
     build_understanding_markdown,
+    default_onboarding_review_overrides,
     detect_bootstrap_mode,
     discover_brownfield_project,
+    merge_onboarding_review_overrides,
+    normalize_onboarding_review_overrides,
     seed_project,
 )
+from maas.services.security import ensure_board_action_allowed
 
 
 def _load_project_config(raw_config):
@@ -135,6 +140,17 @@ def _write_project_metadata(project_paths, project_id, config, mode, discovery):
     if discovery is not None:
         with open(project_paths.project_discovery_path(project_id), "w", encoding="utf-8") as handle:
             json.dump(discovery, handle, indent=2, sort_keys=True)
+
+
+def _load_project_discovery(project_paths, project_id):
+    discovery_path = project_paths.project_discovery_path(project_id)
+    if not os.path.exists(discovery_path):
+        return None
+    try:
+        with open(discovery_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, ValueError):
+        return None
 
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
@@ -353,6 +369,10 @@ def create_project(
         discovery_summary=build_discovery_summary(discovery),
         source_root=resolved_source_root,
     )
+    if detected_mode == "brownfield":
+        onboarding = dict(config.get("onboarding") or {})
+        onboarding["review_overrides"] = default_onboarding_review_overrides(onboarding.get("discovery_summary") or {})
+        config["onboarding"] = onboarding
 
     project_id = seed_project(
         connection,
@@ -511,11 +531,17 @@ def rescan_brownfield_project(connection, project_paths, project_id, actor_id):
 
     scanned_at = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
     previous_summary = onboarding.get("discovery_summary") or {}
+    previous_review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(previous_summary)
     discovery = discover_brownfield_project(source_root)
     discovery_summary = build_discovery_summary(discovery)
     drift = _discovery_drift(previous_summary, discovery_summary, scanned_at)
 
     onboarding["discovery_summary"] = discovery_summary
+    onboarding["review_overrides"] = merge_onboarding_review_overrides(
+        discovery_summary,
+        previous_summary=previous_summary,
+        current_overrides=previous_review_overrides,
+    )
     onboarding["last_scanned_at"] = scanned_at
     onboarding["last_scanned_by"] = actor_id
     onboarding["drift_summary"] = drift
@@ -566,4 +592,85 @@ def rescan_brownfield_project(connection, project_paths, project_id, actor_id):
             "discovery_path": project_paths.project_discovery_path(project_id),
             "source_root": source_root,
         },
+    }
+
+
+def update_brownfield_onboarding_review(connection, project_paths, project_id, actor_id, review_updates):
+    project = resolve_project(connection, project_id, include_archived=False)
+    if project is None:
+        raise ValueError("project not found")
+
+    ensure_board_action_allowed(connection, actor_id, project_id, "configure_onboarding_review", "project", project_id)
+
+    config = _load_project_config(project["config_json"])
+    onboarding = dict(config.get("onboarding") or {})
+    if (onboarding.get("mode") or "greenfield") != "brownfield":
+        raise ValueError("project is not in brownfield mode")
+
+    discovery_summary = onboarding.get("discovery_summary") or {}
+    current_review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(discovery_summary)
+    merged_request = {
+        "ignored_paths": review_updates.get("ignored_paths", current_review_overrides.get("ignored_paths")),
+        "accepted_workflow_labels": review_updates.get(
+            "accepted_workflow_labels",
+            current_review_overrides.get("accepted_workflow_labels"),
+        ),
+        "accepted_runbook_labels": review_updates.get(
+            "accepted_runbook_labels",
+            current_review_overrides.get("accepted_runbook_labels"),
+        ),
+    }
+    normalized_review = normalize_onboarding_review_overrides(discovery_summary, merged_request)
+    filtered_summary = apply_onboarding_review_overrides(discovery_summary, normalized_review)
+    if normalized_review == current_review_overrides:
+        return {
+            "project_id": project_id,
+            "review_status": onboarding.get("review_status") or "review_pending",
+            "review_task_id": onboarding.get("review_task_id"),
+            "review_overrides": normalized_review,
+            "discovery_summary": filtered_summary,
+        }
+
+    onboarding["review_overrides"] = normalized_review
+    onboarding["review_status"] = "review_pending"
+    onboarding["reviewed_by"] = actor_id
+    onboarding["reviewed_at"] = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
+    config["onboarding"] = onboarding
+    _save_project_config(connection, project_id, config)
+
+    review_task = _reopen_brownfield_review_task(connection, project_id)
+    if review_task is not None:
+        onboarding["review_task_id"] = review_task["task_id"]
+        config["onboarding"] = onboarding
+        _save_project_config(connection, project_id, config)
+    _ensure_brownfield_review_alert(
+        connection,
+        project_id,
+        "Brownfield onboarding review inputs changed. Reconfirm the imported understanding before expanding automation.",
+    )
+
+    discovery = _load_project_discovery(project_paths, project_id)
+    _write_project_metadata(project_paths, project_id, config, "brownfield", discovery)
+    _activity(
+        connection,
+        project_id,
+        "brownfield_review_updated",
+        "Brownfield onboarding review inputs were updated before approval.",
+    )
+    _audit(
+        connection,
+        project_id,
+        actor_id,
+        "update_brownfield_onboarding_review",
+        "project",
+        project_id,
+        {"review_overrides": normalized_review},
+    )
+    connection.commit()
+    return {
+        "project_id": project_id,
+        "review_status": onboarding.get("review_status") or "review_pending",
+        "review_task_id": review_task["task_id"] if review_task else onboarding.get("review_task_id"),
+        "review_overrides": normalized_review,
+        "discovery_summary": filtered_summary,
     }

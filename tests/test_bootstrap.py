@@ -117,6 +117,15 @@ lint = "example:main"
             )
             self.assertEqual(config["onboarding"]["mode"], "brownfield")
             self.assertEqual(config["onboarding"]["review_status"], "review_pending")
+            self.assertEqual(config["onboarding"]["review_overrides"]["ignored_paths"], [])
+            self.assertIn(
+                "python_script:lint",
+                config["onboarding"]["review_overrides"]["accepted_workflow_labels"],
+            )
+            self.assertIn(
+                "make_target:test",
+                config["onboarding"]["review_overrides"]["accepted_runbook_labels"],
+            )
             self.assertEqual(session_count, 0)
             self.assertEqual(blocked_gated_count, 6)
             self.assertIn("python_script:lint", config["onboarding"]["discovery_summary"]["workflow_labels"])

@@ -6,7 +6,8 @@ import {
   rescanBrownfieldProject,
   runAlertOperatorAction,
   runFailureOperatorAction,
-  runSupervisorPass
+  runSupervisorPass,
+  updateBrownfieldOnboardingReview
 } from "../lib/controlRoomApi";
 import { reviewTask } from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -22,6 +23,7 @@ export function OverviewPage() {
   const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const [pendingOnboardingReview, setPendingOnboardingReview] = useState<string | null>(null);
   const [pendingBrownfieldRescan, setPendingBrownfieldRescan] = useState(false);
+  const [pendingOnboardingReviewUpdate, setPendingOnboardingReviewUpdate] = useState<string | null>(null);
   const [repoTree, setRepoTree] = useState<RepoTreeResponse | null>(null);
   const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
   const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
@@ -201,6 +203,96 @@ export function OverviewPage() {
     }
   }
 
+  async function handleUpdateOnboardingReview(
+    payload: {
+      ignored_paths: string[];
+      accepted_workflow_labels?: string[] | null;
+      accepted_runbook_labels?: string[] | null;
+    },
+    noticeMessage: string,
+    pendingKey: string
+  ) {
+    const projectId = overview?.project?.project_id;
+    if (!projectId) {
+      return;
+    }
+
+    setPendingOnboardingReviewUpdate(pendingKey);
+    setNotice(null);
+    try {
+      await updateBrownfieldOnboardingReview(projectId, payload);
+      setOverview(await fetchOverview());
+      setNotice(noticeMessage);
+    } catch {
+      setNotice("Updating brownfield onboarding review inputs failed; keeping the current imported understanding.");
+    } finally {
+      setPendingOnboardingReviewUpdate(null);
+    }
+  }
+
+  async function handleToggleIgnoredPath(path: string) {
+    const reviewOverrides = overview?.onboarding?.review_overrides;
+    if (!reviewOverrides) {
+      return;
+    }
+    const ignoredPaths = reviewOverrides.ignored_paths.includes(path)
+      ? reviewOverrides.ignored_paths.filter((item) => item !== path)
+      : [...reviewOverrides.ignored_paths, path];
+    await handleUpdateOnboardingReview(
+      {
+        ignored_paths: ignoredPaths,
+        accepted_workflow_labels: reviewOverrides.accepted_workflow_labels,
+        accepted_runbook_labels: reviewOverrides.accepted_runbook_labels
+      },
+      ignoredPaths.includes(path)
+        ? `Ignored imported scope ${path} for onboarding release.`
+        : `Restored imported scope ${path} to the onboarding release set.`,
+      `ignore:${path}`
+    );
+  }
+
+  async function handleToggleAcceptedWorkflow(label: string) {
+    const reviewOverrides = overview?.onboarding?.review_overrides;
+    if (!reviewOverrides) {
+      return;
+    }
+    const acceptedWorkflowLabels = reviewOverrides.accepted_workflow_labels.includes(label)
+      ? reviewOverrides.accepted_workflow_labels.filter((item) => item !== label)
+      : [...reviewOverrides.accepted_workflow_labels, label];
+    await handleUpdateOnboardingReview(
+      {
+        ignored_paths: reviewOverrides.ignored_paths,
+        accepted_workflow_labels: acceptedWorkflowLabels,
+        accepted_runbook_labels: reviewOverrides.accepted_runbook_labels
+      },
+      acceptedWorkflowLabels.includes(label)
+        ? `Included imported workflow ${label} in onboarding release.`
+        : `Excluded imported workflow ${label} from onboarding release.`,
+      `workflow:${label}`
+    );
+  }
+
+  async function handleToggleAcceptedRunbook(label: string) {
+    const reviewOverrides = overview?.onboarding?.review_overrides;
+    if (!reviewOverrides) {
+      return;
+    }
+    const acceptedRunbookLabels = reviewOverrides.accepted_runbook_labels.includes(label)
+      ? reviewOverrides.accepted_runbook_labels.filter((item) => item !== label)
+      : [...reviewOverrides.accepted_runbook_labels, label];
+    await handleUpdateOnboardingReview(
+      {
+        ignored_paths: reviewOverrides.ignored_paths,
+        accepted_workflow_labels: reviewOverrides.accepted_workflow_labels,
+        accepted_runbook_labels: acceptedRunbookLabels
+      },
+      acceptedRunbookLabels.includes(label)
+        ? `Included imported runbook command ${label} in onboarding release.`
+        : `Excluded imported runbook command ${label} from onboarding release.`,
+      `runbook:${label}`
+    );
+  }
+
   async function handleBrowseRepoPath(path: string) {
     setPendingRepoPath(path || ".");
     try {
@@ -324,6 +416,19 @@ export function OverviewPage() {
                           <strong>{item.label}</strong>
                           {item.path ? ` · ${item.path}` : ""}
                           {item.detail ? ` · ${item.detail}` : ""}
+                          {" · "}
+                          <button
+                            type="button"
+                            className="inline-link-button"
+                            disabled={pendingOnboardingReviewUpdate === `workflow:${item.label}`}
+                            onClick={() => void handleToggleAcceptedWorkflow(item.label)}
+                          >
+                            {pendingOnboardingReviewUpdate === `workflow:${item.label}`
+                              ? "Saving..."
+                              : overview.onboarding.review_overrides?.accepted_workflow_labels.includes(item.label)
+                                ? "Exclude"
+                                : "Include"}
+                          </button>
                           {item.path ? (
                             <>
                               {" · "}
@@ -356,6 +461,19 @@ export function OverviewPage() {
                           {item.path ? ` · ${item.path}` : ""}
                           {item.detail ? ` · ${item.detail}` : ""}
                           {item.review_note ? ` · ${item.review_note}` : ""}
+                          {" · "}
+                          <button
+                            type="button"
+                            className="inline-link-button"
+                            disabled={pendingOnboardingReviewUpdate === `runbook:${item.label}`}
+                            onClick={() => void handleToggleAcceptedRunbook(item.label)}
+                          >
+                            {pendingOnboardingReviewUpdate === `runbook:${item.label}`
+                              ? "Saving..."
+                              : overview.onboarding.review_overrides?.accepted_runbook_labels.includes(item.label)
+                                ? "Exclude"
+                                : "Include"}
+                          </button>
                           {item.path ? (
                             <>
                               {" · "}
@@ -400,6 +518,23 @@ export function OverviewPage() {
                           {` · ${item.primary_language}`}
                           {` · ${item.file_count} files`}
                           {item.summary ? ` · ${item.summary}` : ""}
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingOnboardingReviewUpdate === `ignore:${item.path}`}
+                                onClick={() => void handleToggleIgnoredPath(item.path ?? "")}
+                              >
+                                {pendingOnboardingReviewUpdate === `ignore:${item.path}`
+                                  ? "Saving..."
+                                  : overview.onboarding.review_overrides?.ignored_paths.includes(item.path)
+                                    ? "Unignore"
+                                    : "Ignore"}
+                              </button>
+                            </>
+                          ) : null}
                           {item.path ? (
                             <>
                               {" · "}

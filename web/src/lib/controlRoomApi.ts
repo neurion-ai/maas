@@ -46,6 +46,11 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
     mode: "greenfield",
     review_status: "not_applicable",
     review_required: false,
+    review_overrides: {
+      ignored_paths: [],
+      accepted_workflow_labels: [],
+      accepted_runbook_labels: []
+    },
     discovery_summary: {
       workflow_labels: [],
       workflow_details: [],
@@ -601,6 +606,22 @@ export async function restoreProject(projectId: string) {
     actor_id: "agent_allocator"
   });
   return response as ProjectActionResponse;
+}
+
+export async function updateBrownfieldOnboardingReview(
+  projectId: string,
+  payload: {
+    ignored_paths: string[];
+    accepted_workflow_labels?: string[] | null;
+    accepted_runbook_labels?: string[] | null;
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-onboarding-review`, {
+    actor_id: "agent_allocator",
+    ignored_paths: payload.ignored_paths,
+    accepted_workflow_labels: payload.accepted_workflow_labels ?? null,
+    accepted_runbook_labels: payload.accepted_runbook_labels ?? null
+  });
 }
 
 export function fetchOverview() {

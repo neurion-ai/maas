@@ -195,6 +195,50 @@ lint = "imported:lint"
 
             self.assertEqual(alert["status"], "open")
 
+    def test_update_onboarding_review_persists_overrides_and_reopens_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = os.path.join(tmpdir, "workspace")
+            repo_root = os.path.join(tmpdir, "imported-repo")
+            os.makedirs(workspace_root, exist_ok=True)
+            os.makedirs(repo_root, exist_ok=True)
+            self._create_brownfield_repo(repo_root)
+            bootstrap_project(workspace_root, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(workspace_root))
+
+            project_payload = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Imported Repo",
+                    "description": "brownfield import",
+                    "project_type": "custom",
+                    "mode": "auto",
+                    "source_root": repo_root,
+                },
+            ).json()
+            project_id = project_payload["project"]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-onboarding-review",
+                json={
+                    "actor_id": "agent_allocator",
+                    "ignored_paths": ["tests"],
+                    "accepted_workflow_labels": ["python_script:lint"],
+                    "accepted_runbook_labels": ["python_script:lint"],
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertEqual(payload["review_status"], "review_pending")
+            self.assertEqual(payload["review_overrides"]["ignored_paths"], ["tests"])
+            self.assertEqual(payload["review_overrides"]["accepted_workflow_labels"], ["python_script:lint"])
+            self.assertEqual(payload["review_overrides"]["accepted_runbook_labels"], ["python_script:lint"])
+
+            overview_payload = client.get("/api/overview", params={"project_id": project_id}).json()
+            self.assertEqual(overview_payload["onboarding"]["review_status"], "review_pending")
+            self.assertEqual(overview_payload["onboarding"]["review_overrides"]["ignored_paths"], ["tests"])
+
     def test_core_read_models_can_be_scoped_to_selected_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

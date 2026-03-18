@@ -645,6 +645,146 @@ def build_discovery_summary(discovery):
     }
 
 
+def _normalize_review_paths(paths):
+    normalized = []
+    for value in paths or []:
+        if not isinstance(value, str):
+            continue
+        candidate = value.strip().replace("\\", "/")
+        if not candidate:
+            continue
+        normalized_candidate = os.path.normpath(candidate).replace("\\", "/")
+        if normalized_candidate in ("", ".") or normalized_candidate.startswith("../"):
+            continue
+        if normalized_candidate not in normalized:
+            normalized.append(normalized_candidate)
+    return normalized
+
+
+def default_onboarding_review_overrides(discovery_summary):
+    summary = discovery_summary or {}
+    return {
+        "ignored_paths": [],
+        "accepted_workflow_labels": list(summary.get("workflow_labels") or []),
+        "accepted_runbook_labels": [
+            item["label"] for item in (summary.get("runbook_commands") or []) if item.get("label")
+        ],
+    }
+
+
+def merge_onboarding_review_overrides(discovery_summary, previous_summary=None, current_overrides=None):
+    summary = discovery_summary or {}
+    previous = previous_summary or {}
+    current = current_overrides or {}
+
+    workflow_labels = list(summary.get("workflow_labels") or [])
+    previous_workflow_labels = set(previous.get("workflow_labels") or [])
+    accepted_workflow_labels = set(current.get("accepted_workflow_labels") or workflow_labels)
+
+    runbook_labels = [item["label"] for item in (summary.get("runbook_commands") or []) if item.get("label")]
+    previous_runbook_labels = {
+        item["label"] for item in (previous.get("runbook_commands") or []) if item.get("label")
+    }
+    accepted_runbook_labels = set(current.get("accepted_runbook_labels") or runbook_labels)
+
+    return {
+        "ignored_paths": _normalize_review_paths(current.get("ignored_paths") or []),
+        "accepted_workflow_labels": [
+            label
+            for label in workflow_labels
+            if label in accepted_workflow_labels or label not in previous_workflow_labels
+        ],
+        "accepted_runbook_labels": [
+            label
+            for label in runbook_labels
+            if label in accepted_runbook_labels or label not in previous_runbook_labels
+        ],
+    }
+
+
+def normalize_onboarding_review_overrides(discovery_summary, overrides=None):
+    summary = discovery_summary or {}
+    requested = overrides or {}
+    defaults = default_onboarding_review_overrides(summary)
+    available_workflow_labels = list(summary.get("workflow_labels") or [])
+    available_runbook_labels = [item["label"] for item in (summary.get("runbook_commands") or []) if item.get("label")]
+    requested_workflow_labels = requested.get("accepted_workflow_labels")
+    requested_runbook_labels = requested.get("accepted_runbook_labels")
+    return {
+        "ignored_paths": _normalize_review_paths(requested.get("ignored_paths", defaults["ignored_paths"])),
+        "accepted_workflow_labels": [
+            label
+            for label in available_workflow_labels
+            if requested_workflow_labels is None or label in set(requested_workflow_labels)
+        ],
+        "accepted_runbook_labels": [
+            label
+            for label in available_runbook_labels
+            if requested_runbook_labels is None or label in set(requested_runbook_labels)
+        ],
+    }
+
+
+def _path_matches_ignored(path, ignored_paths):
+    if not path:
+        return False
+    normalized_path = os.path.normpath(path).replace("\\", "/")
+    for ignored in ignored_paths:
+        if normalized_path == ignored or normalized_path.startswith(ignored + "/"):
+            return True
+    return False
+
+
+def apply_onboarding_review_overrides(discovery_summary, review_overrides=None):
+    summary = dict(discovery_summary or {})
+    if not summary:
+        return summary
+    normalized_overrides = normalize_onboarding_review_overrides(summary, review_overrides)
+    ignored_paths = normalized_overrides["ignored_paths"]
+    accepted_workflow_labels = set(normalized_overrides["accepted_workflow_labels"])
+    accepted_runbook_labels = set(normalized_overrides["accepted_runbook_labels"])
+
+    workflow_details = [
+        item
+        for item in (summary.get("workflow_details") or [])
+        if item.get("label") in accepted_workflow_labels and not _path_matches_ignored(item.get("path"), ignored_paths)
+    ]
+    workflow_labels = [item["label"] for item in workflow_details]
+    if not workflow_labels:
+        workflow_labels = [
+            label
+            for label in (summary.get("workflow_labels") or [])
+            if label in accepted_workflow_labels
+        ]
+
+    runbook_commands = []
+    for item in summary.get("runbook_commands") or []:
+        if item.get("label") not in accepted_runbook_labels:
+            continue
+        if _path_matches_ignored(item.get("path"), ignored_paths):
+            continue
+        runbook_commands.append(dict(item))
+
+    codebase_map = []
+    for item in summary.get("codebase_map") or []:
+        path = item.get("path") or item.get("name")
+        if _path_matches_ignored(path, ignored_paths):
+            continue
+        filtered_item = dict(item)
+        filtered_item["sample_files"] = [
+            sample for sample in (item.get("sample_files") or []) if not _path_matches_ignored(sample, ignored_paths)
+        ]
+        codebase_map.append(filtered_item)
+
+    summary["workflow_details"] = workflow_details
+    summary["workflow_labels"] = workflow_labels
+    summary["runbook_commands"] = runbook_commands
+    summary["codebase_map"] = codebase_map
+    summary["repo_areas"] = [item["name"] for item in codebase_map]
+    summary["review_overrides"] = normalized_overrides
+    return summary
+
+
 def build_greenfield_task_specs():
     return [
         ("planned", "Define project workspace contracts", "agent_researcher", 80, "Design the stable `project.yaml` and `.maas/` workspace contracts.", None, 0),
@@ -1206,6 +1346,10 @@ def bootstrap_project(project_root, name=None, description=None, project_type=No
         discovery_summary=build_discovery_summary(discovery),
         source_root=paths.root,
     )
+    if resolved_mode == "brownfield":
+        onboarding = dict(config.get("onboarding") or {})
+        onboarding["review_overrides"] = default_onboarding_review_overrides(onboarding.get("discovery_summary") or {})
+        config["onboarding"] = onboarding
     save_project_config(paths.project_config, config)
     with open(paths.understanding_path, "w", encoding="utf-8") as handle:
         handle.write(build_understanding_markdown(config, mode=resolved_mode, discovery=discovery))

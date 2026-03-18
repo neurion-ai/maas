@@ -1,6 +1,6 @@
 """FastAPI application for MAAS."""
 
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,7 +36,15 @@ from maas.services.provider_runtime import (
     set_provider_settings,
 )
 from maas.services.portfolio import fetch_portfolio
-from maas.services.projects import archive_project, create_project, list_projects, rescan_brownfield_project, resolve_project_id, restore_project
+from maas.services.projects import (
+    archive_project,
+    create_project,
+    list_projects,
+    rescan_brownfield_project,
+    resolve_project_id,
+    restore_project,
+    update_brownfield_onboarding_review,
+)
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
@@ -228,6 +236,13 @@ class ProjectCreateRequest(BaseModel):
     source_root: Optional[str] = None
 
 
+class ProjectOnboardingReviewUpdateRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    ignored_paths: List[str] = []
+    accepted_workflow_labels: Optional[List[str]] = None
+    accepted_runbook_labels: Optional[List[str]] = None
+
+
 def _parse_limit(value, default):
     if value is None:
         return default
@@ -328,6 +343,26 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return rescan_brownfield_project(connection, paths, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-onboarding-review")
+    def projects_update_onboarding_review(project_id: str, payload: ProjectOnboardingReviewUpdateRequest):
+        connection = connect(paths)
+        try:
+            return update_brownfield_onboarding_review(
+                connection,
+                paths,
+                project_id,
+                payload.actor_id,
+                {
+                    "ignored_paths": payload.ignored_paths,
+                    "accepted_workflow_labels": payload.accepted_workflow_labels,
+                    "accepted_runbook_labels": payload.accepted_runbook_labels,
+                },
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

@@ -2,7 +2,7 @@
 
 ## Status On `main`
 
-- [ ] Batch 8 is partially started on `main` through brownfield repo detection, onboarding approval gating, imported workflow and repo-area backlog seeding, brownfield codebase mapping, multi-project read scoping, and first-pass runtime isolation hardening.
+- [x] Batch 8 is partially started on `main` through brownfield repo detection, onboarding approval gating, imported workflow and repo-area backlog seeding, brownfield codebase mapping, multi-project read scoping, and first-pass runtime isolation hardening.
 
 ## Current Stacked Branch Progress
 
@@ -18,7 +18,10 @@
 - [x] `#90` portfolio view across projects is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#91` background orchestration daemon is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#92` queue and worker capacity management is implemented on `codex/queue-capacity-controls`
-- [ ] `#93` stronger runner sandbox envelopes is the next unfinished step
+- [x] `#93` stronger runner sandbox envelopes is implemented on `codex/session-runner-envelopes`
+- [x] `#94` policy-driven self-healing v2 is implemented on `codex/policy-driven-self-healing-v2`
+- [x] `#95` brownfield onboarding review v2 is implemented on `codex/brownfield-onboarding-review-v2`
+- [ ] `#96` remote executor or worker pool is the next unfinished step
 
 ## Extended Numbered Roadmap
 
@@ -34,9 +37,9 @@
 - [x] `#90` Portfolio view across projects
 - [x] `#91` Background orchestration daemon
 - [x] `#92` Queue and worker capacity management on top of the provider job queue
-- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
-- [ ] `#94` Policy-driven self-healing v2
-- [ ] `#95` Brownfield onboarding review v2
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
 - [ ] `#96` Remote executor or worker pool
 - [ ] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh

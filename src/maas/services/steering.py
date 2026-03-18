@@ -3,7 +3,12 @@
 import json
 
 from maas.ids import generate_id
-from maas.services.bootstrap import BROWNFIELD_PENDING_REVIEW_STATE, BROWNFIELD_REVIEW_TASK_TITLE
+from maas.services.bootstrap import (
+    BROWNFIELD_PENDING_REVIEW_STATE,
+    BROWNFIELD_REVIEW_TASK_TITLE,
+    default_onboarding_review_overrides,
+    normalize_onboarding_review_overrides,
+)
 from maas.services.artifacts import artifact_scope_rows, purge_artifact_scope
 from maas.services.dead_letter import resolve_dead_letter_entries_for_task
 from maas.services.recovery_policy import (
@@ -74,34 +79,127 @@ def _set_project_onboarding_review_state(connection, project_id, actor_id, statu
     _save_project_config(connection, project_id, config)
 
 
-def _release_brownfield_onboarding_tasks(connection, project_id):
-    released_rows = connection.execute(
-        """
-        SELECT task_id
-        FROM tasks
-        WHERE project_id = ?
-          AND status = 'blocked'
-          AND review_state = ?
-        """,
-        (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
-    ).fetchall()
-    if not released_rows:
+def _task_source_paths(task):
+    try:
+        criteria = json.loads(task["acceptance_criteria_json"] or "[]")
+    except ValueError:
         return []
+    paths = []
+    for criterion in criteria:
+        if not isinstance(criterion, dict) or criterion.get("type") != "source_path_exists":
+            continue
+        for path in criterion.get("paths") or []:
+            if isinstance(path, str) and path not in paths:
+                paths.append(path)
+    return paths
 
-    connection.execute(
-        """
-        UPDATE tasks
-        SET status = 'planned',
-            review_state = NULL,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE project_id = ?
-          AND status = 'blocked'
-          AND review_state = ?
-        """,
-        (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
+
+def _task_paths_all_ignored(task, ignored_paths):
+    if not ignored_paths:
+        return False
+    scoped_paths = _task_source_paths(task)
+    if not scoped_paths:
+        return False
+    return all(
+        any(path == ignored or path.startswith(ignored + "/") for ignored in ignored_paths)
+        for path in scoped_paths
     )
-    refresh_ready_tasks(connection, commit=False)
-    return [row["task_id"] for row in released_rows]
+
+
+def _workflow_review_task_label(task, discovery_summary):
+    prefix = "Validate imported workflow: "
+    if not task["title"].startswith(prefix):
+        return None
+    task_name = task["title"][len(prefix) :].strip()
+    task_paths = set(_task_source_paths(task))
+    exact_match = None
+    fallback_match = None
+    for item in discovery_summary.get("workflow_details") or []:
+        label = item.get("label")
+        if not isinstance(label, str):
+            continue
+        _, _, workflow_name = label.partition(":")
+        if workflow_name != task_name:
+            continue
+        item_path = item.get("path")
+        if item_path and task_paths and item_path in task_paths:
+            exact_match = label
+            break
+        if fallback_match is None:
+            fallback_match = label
+    return exact_match or fallback_match
+
+
+def _load_onboarding_review_decisions(connection, project_id):
+    config = _load_project_config(connection, project_id)
+    onboarding = dict(config.get("onboarding") or {})
+    discovery_summary = onboarding.get("discovery_summary") or {}
+    review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(discovery_summary)
+    return discovery_summary, normalize_onboarding_review_overrides(discovery_summary, review_overrides)
+
+
+def _release_brownfield_onboarding_tasks(connection, project_id):
+    discovery_summary, review_overrides = _load_onboarding_review_decisions(connection, project_id)
+    gated_rows = [
+        dict(row)
+        for row in connection.execute(
+            """
+            SELECT task_id, title, acceptance_criteria_json
+            FROM tasks
+            WHERE project_id = ?
+              AND status = 'blocked'
+              AND review_state = ?
+            """,
+            (project_id, BROWNFIELD_PENDING_REVIEW_STATE),
+        ).fetchall()
+    ]
+    if not gated_rows:
+        return {"released_task_ids": [], "ignored_task_ids": []}
+
+    accepted_workflow_labels = set(review_overrides.get("accepted_workflow_labels") or [])
+    ignored_paths = list(review_overrides.get("ignored_paths") or [])
+    released_task_ids = []
+    ignored_task_ids = []
+    for task in gated_rows:
+        workflow_label = _workflow_review_task_label(task, discovery_summary)
+        should_ignore = False
+        if workflow_label is not None and workflow_label not in accepted_workflow_labels:
+            should_ignore = True
+        elif _task_paths_all_ignored(task, ignored_paths):
+            should_ignore = True
+
+        if should_ignore:
+            ignored_task_ids.append(task["task_id"])
+        else:
+            released_task_ids.append(task["task_id"])
+
+    if released_task_ids:
+        placeholders = ", ".join(["?"] * len(released_task_ids))
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'planned',
+                review_state = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id IN ({0})
+            """.format(placeholders),
+            tuple(released_task_ids),
+        )
+    if ignored_task_ids:
+        placeholders = ", ".join(["?"] * len(ignored_task_ids))
+        connection.execute(
+            """
+            UPDATE tasks
+            SET status = 'cancelled',
+                review_state = 'ignored_onboarding_scope',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id IN ({0})
+            """.format(placeholders),
+            tuple(ignored_task_ids),
+        )
+    if released_task_ids:
+        refresh_ready_tasks(connection, commit=False)
+    return {"released_task_ids": released_task_ids, "ignored_task_ids": ignored_task_ids}
 
 
 def _audit(connection, project_id, actor_id, action_type, resource_type, resource_id, detail):
@@ -275,7 +373,7 @@ def review_task(connection, task_id, actor_id, decision):
             """,
             (task_id,),
         )
-        released_task_ids = _release_brownfield_onboarding_tasks(connection, task["project_id"])
+        release_result = _release_brownfield_onboarding_tasks(connection, task["project_id"])
         _set_project_onboarding_review_state(connection, task["project_id"], actor_id, "approved", task_id=task_id)
         resolved_alert_ids = resolve_brownfield_onboarding_alerts(
             connection,
@@ -287,7 +385,8 @@ def review_task(connection, task_id, actor_id, decision):
         audit_detail.update(
             {
                 "brownfield_onboarding": True,
-                "released_task_ids": released_task_ids,
+                "released_task_ids": release_result["released_task_ids"],
+                "ignored_task_ids": release_result["ignored_task_ids"],
                 "resolved_alert_ids": resolved_alert_ids,
             }
         )

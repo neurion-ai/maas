@@ -21,7 +21,10 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#90` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
 - [x] `#91` is implemented on the stacked branch `codex/brownfield-runbook-command-catalog`
 - [x] `#92` is implemented on the stacked branch `codex/queue-capacity-controls`
-- [ ] `#93` is the next unfinished item in the current stacked sequence
+- [x] `#93` is implemented on the stacked branch `codex/session-runner-envelopes`
+- [x] `#94` is implemented on the stacked branch `codex/policy-driven-self-healing-v2`
+- [x] `#95` is implemented on the stacked branch `codex/brownfield-onboarding-review-v2`
+- [ ] `#96` is the next unfinished item in the current stacked sequence
 
 ## Extended Numbered Roadmap
 
@@ -37,9 +40,9 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#90` Portfolio view across projects
 - [x] `#91` Background orchestration daemon
 - [x] `#92` Queue and worker capacity management on top of the provider job queue
-- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
-- [ ] `#94` Policy-driven self-healing v2
-- [ ] `#95` Brownfield onboarding review v2
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
 - [ ] `#96` Remote executor or worker pool
 - [ ] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
@@ -183,9 +186,9 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#90` Portfolio view across projects
 - [x] `#91` Background orchestration daemon
 - [x] `#92` Queue and worker capacity management on top of the provider job queue
-- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
-- [ ] `#94` Policy-driven self-healing v2
-- [ ] `#95` Brownfield onboarding review v2
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
 - [ ] `#96` Remote executor or worker pool
 - [ ] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh

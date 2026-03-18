@@ -22,7 +22,8 @@
 - [x] `#94` policy-driven self-healing v2 is implemented on `codex/policy-driven-self-healing-v2`
 - [x] `#95` brownfield onboarding review v2 is implemented on `codex/brownfield-onboarding-review-v2`
 - [x] `#96` remote executor or worker pool is implemented on `codex/remote-executor-worker-pool`
-- [ ] `#97` cross-project scheduler fairness and capacity policy is the next unfinished step
+- [x] `#97` cross-project scheduler fairness and capacity policy is implemented on `codex/cross-project-scheduler-fairness`
+- [ ] `#98` repo-grounded plan synthesis and refresh is the next unfinished step
 
 ## Extended Numbered Roadmap
 
@@ -42,7 +43,7 @@
 - [x] `#94` Policy-driven self-healing v2
 - [x] `#95` Brownfield onboarding review v2
 - [x] `#96` Remote executor or worker pool
-- [ ] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review

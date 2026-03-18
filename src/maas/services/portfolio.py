@@ -3,6 +3,7 @@
 from maas.providers import list_provider_status
 from maas.services.failure_memory import repeated_failure_task_count
 from maas.services.projects import list_projects
+from maas.services.scheduler_policy import scheduler_policy_from_row
 
 
 def _count_by_project(connection, query):
@@ -129,6 +130,11 @@ def fetch_portfolio(connection):
     for project in projects:
         project_id = project["project_id"]
         provider_readiness = _provider_readiness_summary(connection, project_id)
+        project_row = connection.execute(
+            "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        scheduler_policy = scheduler_policy_from_row(project_row)
         item = {
             **project,
             "blocked_tasks": blocked_counts.get(project_id, 0),
@@ -141,6 +147,8 @@ def fetch_portfolio(connection):
             "dead_letter_entries": dead_letter_counts.get(project_id, 0),
             "repeated_failure_tasks": repeated_failure_task_count(connection, project_id=project_id),
             "provider_readiness": provider_readiness,
+            "scheduler_policy": scheduler_policy,
+            "at_scheduler_capacity": active_session_counts.get(project_id, 0) >= scheduler_policy["max_active_sessions"],
         }
         item["health"] = _health_status(project, item)
         portfolio_projects.append(item)

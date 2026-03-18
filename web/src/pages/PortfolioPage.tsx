@@ -124,6 +124,10 @@ export function PortfolioPage() {
                   {project.provider_readiness.issues ? ` · ${project.provider_readiness.issues} issues` : ""}
                   {project.provider_readiness.unknown ? ` · ${project.provider_readiness.unknown} unknown` : ""}
                 </p>
+                <p>
+                  Fair share {project.scheduler_policy.fair_share_weight} · max active sessions {project.scheduler_policy.max_active_sessions}
+                  {project.at_scheduler_capacity ? " · at scheduler capacity" : ""}
+                </p>
               </div>
               <div className="data-list__meta">
                 <span>{project.task_count} tasks</span>

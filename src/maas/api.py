@@ -49,6 +49,7 @@ from maas.services.projects import (
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
     dismiss_quarantine_entry,
@@ -250,6 +251,12 @@ class ProjectOnboardingReviewUpdateRequest(BaseModel):
     accepted_runbook_labels: Optional[List[str]] = None
 
 
+class ProjectSchedulerPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    fair_share_weight: int
+    max_active_sessions: int
+
+
 def _parse_limit(value, default):
     if value is None:
         return default
@@ -368,6 +375,24 @@ def create_app(project_root="."):
                     "ignored_paths": payload.ignored_paths,
                     "accepted_workflow_labels": payload.accepted_workflow_labels,
                     "accepted_runbook_labels": payload.accepted_runbook_labels,
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-scheduler-policy")
+    def projects_update_scheduler_policy(project_id: str, payload: ProjectSchedulerPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_scheduler_policy(
+                connection,
+                project_id,
+                payload.actor_id,
+                {
+                    "fair_share_weight": payload.fair_share_weight,
+                    "max_active_sessions": payload.max_active_sessions,
                 },
             )
         except ValueError as exc:

@@ -82,6 +82,78 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertEqual(ready_task["status"], "assigned")
             self.assertEqual(ready_task["assigned_agent_id"], "agent_allocator")
 
+    def test_supervisor_prioritizes_projects_with_less_scheduler_pressure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Supervisor Fairness Test", description="Supervisor fairness test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]
+                second_project_id = second_project["project_id"]
+                project_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (primary_project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["scheduler"] = {"fair_share_weight": 1, "max_active_sessions": 2}
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), primary_project_id),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=1, project_paths=result["paths"])
+            finally:
+                connection.close()
+
+            self.assertEqual(supervisor_result["assigned_count"], 1)
+            self.assertEqual(supervisor_result["allocations"][0]["project_id"], second_project_id)
+            self.assertEqual([item["project_id"] for item in supervisor_result["project_runs"]][:2], [second_project_id, primary_project_id])
+
+    def test_supervisor_skips_allocation_when_project_hits_scheduler_capacity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Supervisor Capacity Test", description="Supervisor capacity test", project_type="custom")
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]
+                second_project_id = second_project["project_id"]
+                project_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (primary_project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["scheduler"] = {"fair_share_weight": 1, "max_active_sessions": 1}
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), primary_project_id),
+                )
+                connection.commit()
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=1, project_paths=result["paths"])
+            finally:
+                connection.close()
+
+            primary_run = next(item for item in supervisor_result["project_runs"] if item["project_id"] == primary_project_id)
+            self.assertEqual(primary_run["allocation_skipped_reason"], "max_active_sessions")
+            self.assertEqual(supervisor_result["allocations"][0]["project_id"], second_project_id)
+
     def test_supervisor_marks_stale_sessions_and_agents(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(
@@ -949,7 +1021,7 @@ class SupervisorApiTest(unittest.TestCase):
                 connection.close()
 
             project_ids = [item["project_id"] for item in supervisor_result["project_runs"]]
-            self.assertEqual(project_ids, [primary_project_id, second_project_id])
+            self.assertEqual(set(project_ids), {primary_project_id, second_project_id})
             self.assertEqual(supervisor_result["assigned_count"], 4)
             self.assertGreater(primary_assigned, 0)
             self.assertGreater(second_assigned, 0)

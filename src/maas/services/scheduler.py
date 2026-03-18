@@ -658,6 +658,7 @@ def assign_next_task(connection, agent_id, actor_id="system_allocator"):
     if task_row["status"] == "assigned" and task_row["assigned_agent_id"] == agent_id:
         return {
             "agent_id": agent_id,
+            "project_id": task_row["project_id"],
             "task_id": task_row["task_id"],
             "task_title": task_row["title"],
             "status": "assigned",
@@ -699,6 +700,7 @@ def assign_next_task(connection, agent_id, actor_id="system_allocator"):
     connection.commit()
     return {
         "agent_id": agent_id,
+        "project_id": task_row["project_id"],
         "task_id": task_row["task_id"],
         "task_title": task_row["title"],
         "status": "assigned",

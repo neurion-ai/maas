@@ -32,6 +32,7 @@ from maas.services.recovery_policy import fetch_project_recovery_overview, updat
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
+from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.steering import (
     dismiss_quarantine_entry,
     finish_task_replan,
@@ -127,6 +128,13 @@ def build_parser():
     project_update_review_parser.add_argument("--ignored-path", action="append", default=[])
     project_update_review_parser.add_argument("--accept-workflow-label", action="append")
     project_update_review_parser.add_argument("--accept-runbook-label", action="append")
+
+    project_scheduler_policy_parser = project_subparsers.add_parser("set-scheduler-policy")
+    project_scheduler_policy_parser.add_argument("--project-root", default=".")
+    project_scheduler_policy_parser.add_argument("--project-id", required=True)
+    project_scheduler_policy_parser.add_argument("--actor-id", default="agent_allocator")
+    project_scheduler_policy_parser.add_argument("--fair-share-weight", type=int, required=True)
+    project_scheduler_policy_parser.add_argument("--max-active-sessions", type=int, required=True)
 
     agent_parser = subparsers.add_parser("agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -511,6 +519,21 @@ def command_project(args):
                             "ignored_paths": args.ignored_path,
                             "accepted_workflow_labels": args.accept_workflow_label,
                             "accepted_runbook_labels": args.accept_runbook_label,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-scheduler-policy":
+            print(
+                json.dumps(
+                    update_project_scheduler_policy(
+                        connection,
+                        args.project_id,
+                        args.actor_id,
+                        {
+                            "fair_share_weight": args.fair_share_weight,
+                            "max_active_sessions": args.max_active_sessions,
                         },
                     ),
                     indent=2,

@@ -163,6 +163,11 @@ export interface PortfolioProject {
     issues: number;
     unknown: number;
   };
+  scheduler_policy: {
+    fair_share_weight: number;
+    max_active_sessions: number;
+  };
+  at_scheduler_capacity: boolean;
 }
 
 export interface PortfolioResponse {

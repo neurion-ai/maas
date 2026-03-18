@@ -22,6 +22,7 @@ from maas.services.recovery_policy import (
     task_timed_out_retry_limit,
     timed_out_retry_cooldown_seconds,
 )
+from maas.services.scheduler_policy import scheduler_policy_from_row
 from maas.services.scheduler import allocate_ready_tasks, refresh_ready_tasks
 from maas.services.security import revoke_task_capabilities
 from maas.services.steering import _mark_task_for_replan_internal, _recover_and_requeue_task
@@ -502,8 +503,59 @@ def _active_project_ids(connection, project_id=None):
         resolved_project_id = resolve_project_id(connection, project_id)
         if resolved_project_id is None:
             raise ValueError("project not found")
-        return [resolved_project_id]
-    return [item["project_id"] for item in list_projects(connection, include_archived=False)]
+        project_row = connection.execute(
+            "SELECT project_id, config_json FROM projects WHERE project_id = ?",
+            (resolved_project_id,),
+        ).fetchone()
+        return [
+            {
+                "project_id": resolved_project_id,
+                "scheduler_policy": scheduler_policy_from_row(project_row),
+                "active_sessions": connection.execute(
+                    "SELECT COUNT(*) AS count FROM sessions WHERE project_id = ? AND status = 'active'",
+                    (resolved_project_id,),
+                ).fetchone()["count"],
+            }
+        ]
+
+    active_rows = connection.execute(
+        """
+        SELECT
+            projects.project_id,
+            projects.config_json,
+            (
+                SELECT COUNT(*)
+                FROM sessions
+                WHERE sessions.project_id = projects.project_id
+                  AND sessions.status = 'active'
+            ) AS active_sessions
+        FROM projects
+        WHERE projects.state = 'active'
+        ORDER BY projects.created_at ASC
+        """
+    ).fetchall()
+    ordered = []
+    for row in active_rows:
+        policy = scheduler_policy_from_row(row)
+        fair_share_weight = max(policy["fair_share_weight"], 1)
+        fair_share_pressure = float(row["active_sessions"]) / float(fair_share_weight)
+        ordered.append(
+            {
+                "project_id": row["project_id"],
+                "scheduler_policy": policy,
+                "active_sessions": row["active_sessions"],
+                "fair_share_pressure": fair_share_pressure,
+            }
+        )
+    ordered.sort(
+        key=lambda item: (
+            item["fair_share_pressure"],
+            item["active_sessions"],
+            -item["scheduler_policy"]["fair_share_weight"],
+            item["project_id"],
+        )
+    )
+    return ordered
 
 
 def run_supervisor_once(
@@ -521,14 +573,21 @@ def run_supervisor_once(
     auto_recovered_tasks = []
     auto_replanned_tasks = []
 
-    for scoped_project_id in _active_project_ids(connection, project_id=project_id):
+    for project_state in _active_project_ids(connection, project_id=project_id):
+        scoped_project_id = project_state["project_id"]
+        scheduler_policy = project_state["scheduler_policy"]
         project_ready_changes = refresh_ready_tasks(connection, commit=False, project_id=scoped_project_id)
-        project_allocation_result = allocate_ready_tasks(
-            connection,
-            actor_id="system_supervisor",
-            limit=remaining_limit,
-            project_id=scoped_project_id,
-        )
+        allocation_skipped_reason = None
+        if project_state["active_sessions"] >= scheduler_policy["max_active_sessions"]:
+            project_allocation_result = {"allocations": [], "assigned_count": 0}
+            allocation_skipped_reason = "max_active_sessions"
+        else:
+            project_allocation_result = allocate_ready_tasks(
+                connection,
+                actor_id="system_supervisor",
+                limit=remaining_limit,
+                project_id=scoped_project_id,
+            )
         project_stale_sessions = _handle_stale_sessions(
             connection,
             stale_after_seconds,
@@ -551,16 +610,26 @@ def run_supervisor_once(
             retry_limit = remaining_limit
             if retry_limit is not None:
                 retry_limit = max(retry_limit - project_allocation_result["assigned_count"], 0)
-            retry_allocations = allocate_ready_tasks(
-                connection,
-                actor_id="system_supervisor",
-                limit=retry_limit,
-                project_id=scoped_project_id,
-            )
-            project_allocation_result = {
-                "allocations": project_allocation_result["allocations"] + retry_allocations["allocations"],
-                "assigned_count": project_allocation_result["assigned_count"] + retry_allocations["assigned_count"],
-            }
+            current_active_sessions = connection.execute(
+                "SELECT COUNT(*) AS count FROM sessions WHERE project_id = ? AND status = 'active'",
+                (scoped_project_id,),
+            ).fetchone()["count"]
+            if (
+                allocation_skipped_reason == "max_active_sessions"
+                and current_active_sessions < scheduler_policy["max_active_sessions"]
+            ):
+                allocation_skipped_reason = None
+            if allocation_skipped_reason is None:
+                retry_allocations = allocate_ready_tasks(
+                    connection,
+                    actor_id="system_supervisor",
+                    limit=retry_limit,
+                    project_id=scoped_project_id,
+                )
+                project_allocation_result = {
+                    "allocations": project_allocation_result["allocations"] + retry_allocations["allocations"],
+                    "assigned_count": project_allocation_result["assigned_count"] + retry_allocations["assigned_count"],
+                }
 
         if remaining_limit is not None:
             remaining_limit = max(remaining_limit - project_allocation_result["assigned_count"], 0)
@@ -579,6 +648,12 @@ def run_supervisor_once(
                 "stale_sessions": project_stale_sessions,
                 "auto_recovered_tasks": project_auto_recovered_tasks,
                 "auto_replanned_tasks": project_auto_replanned_tasks,
+                "scheduler_policy": scheduler_policy,
+                "active_sessions": connection.execute(
+                    "SELECT COUNT(*) AS count FROM sessions WHERE project_id = ? AND status = 'active'",
+                    (scoped_project_id,),
+                ).fetchone()["count"],
+                "allocation_skipped_reason": allocation_skipped_reason,
             }
         )
 

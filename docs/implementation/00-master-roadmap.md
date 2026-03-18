@@ -32,7 +32,8 @@ Current stacked development chain above `main`:
 - `#94` exists on `codex/policy-driven-self-healing-v2`
 - `#95` exists on `codex/brownfield-onboarding-review-v2`
 - `#96` exists on `codex/remote-executor-worker-pool`
-- `#97` is the next unfinished item in sequence
+- `#97` exists on `codex/cross-project-scheduler-fairness`
+- `#98` is the next unfinished item in sequence
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -124,7 +125,12 @@ Current stacked development chain above `main`:
 - [x] `#90` is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#91` is implemented on `codex/brownfield-runbook-command-catalog`
 - [x] `#92` is implemented on `codex/queue-capacity-controls`
-- [ ] `#93` is the next unfinished item
+- [x] `#93` is implemented on `codex/session-runner-envelopes`
+- [x] `#94` is implemented on `codex/policy-driven-self-healing-v2`
+- [x] `#95` is implemented on `codex/brownfield-onboarding-review-v2`
+- [x] `#96` is implemented on `codex/remote-executor-worker-pool`
+- [x] `#97` is implemented on `codex/cross-project-scheduler-fairness`
+- [ ] `#98` is the next unfinished item
 
 ## Extended Numbered Roadmap
 
@@ -140,11 +146,11 @@ Current stacked development chain above `main`:
 - [x] `#90` Portfolio view across projects
 - [x] `#91` Background orchestration daemon
 - [x] `#92` Queue and worker capacity management on top of the provider job queue
-- [ ] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
-- [ ] `#94` Policy-driven self-healing v2
-- [ ] `#95` Brownfield onboarding review v2
-- [ ] `#96` Remote executor or worker pool
-- [ ] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#93` Stronger runner sandbox envelopes beyond the current per-project runtime isolation
+- [x] `#94` Policy-driven self-healing v2
+- [x] `#95` Brownfield onboarding review v2
+- [x] `#96` Remote executor or worker pool
+- [x] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review

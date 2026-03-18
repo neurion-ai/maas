@@ -239,6 +239,32 @@ lint = "imported:lint"
             self.assertEqual(overview_payload["onboarding"]["review_status"], "review_pending")
             self.assertEqual(overview_payload["onboarding"]["review_overrides"]["ignored_paths"], ["tests"])
 
+    def test_update_scheduler_policy_persists_and_is_visible_in_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-scheduler-policy",
+                json={
+                    "actor_id": "agent_allocator",
+                    "fair_share_weight": 3,
+                    "max_active_sessions": 4,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["scheduler_policy"],
+                {"fair_share_weight": 3, "max_active_sessions": 4},
+            )
+
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["scheduler_policy"]["fair_share_weight"], 3)
+            self.assertEqual(project_row["scheduler_policy"]["max_active_sessions"], 4)
+            self.assertFalse(project_row["at_scheduler_capacity"])
+
     def test_core_read_models_can_be_scoped_to_selected_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

@@ -25,7 +25,8 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#94` is implemented on the stacked branch `codex/policy-driven-self-healing-v2`
 - [x] `#95` is implemented on the stacked branch `codex/brownfield-onboarding-review-v2`
 - [x] `#96` is implemented on the stacked branch `codex/remote-executor-worker-pool`
-- [ ] `#97` is the next unfinished item in the current stacked sequence
+- [x] `#97` is implemented on the stacked branch `codex/cross-project-scheduler-fairness`
+- [ ] `#98` is the next unfinished item in the current stacked sequence
 
 ## Extended Numbered Roadmap
 
@@ -45,7 +46,7 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#94` Policy-driven self-healing v2
 - [x] `#95` Brownfield onboarding review v2
 - [x] `#96` Remote executor or worker pool
-- [ ] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review
@@ -191,7 +192,7 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#94` Policy-driven self-healing v2
 - [x] `#95` Brownfield onboarding review v2
 - [x] `#96` Remote executor or worker pool
-- [ ] `#97` Cross-project scheduler fairness and capacity policy
+- [x] `#97` Cross-project scheduler fairness and capacity policy
 - [ ] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review

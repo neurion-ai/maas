@@ -32,6 +32,7 @@ from maas.services.provider_runtime import (
 )
 from maas.services.projects import archive_project, create_project, list_projects, resolve_project_id, restore_project
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
+from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
@@ -415,6 +416,30 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
+        finally:
+            connection.close()
+
+    @app.get("/api/repo/tree")
+    def repo_tree(path: str = "", project_id: str = None):
+        connection = connect(paths)
+        try:
+            return fetch_repo_tree(connection, project_id=_selected_project_id(connection, project_id), path=path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.get("/api/repo/file")
+    def repo_file(path: str, project_id: str = None):
+        connection = connect(paths)
+        try:
+            return fetch_repo_file_preview(connection, project_id=_selected_project_id(connection, project_id), path=path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 

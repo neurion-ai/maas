@@ -103,6 +103,15 @@ lint = "example:main"
                     for item in overview_payload["onboarding"]["discovery_summary"]["codebase_map"]
                 )
             )
+            src_entry = next(
+                item
+                for item in overview_payload["onboarding"]["discovery_summary"]["codebase_map"]
+                if item["name"] == "src"
+            )
+            self.assertIn(
+                "src/app.py",
+                src_entry["sample_files"],
+            )
             self.assertIn(
                 "src",
                 overview_payload["onboarding"]["discovery_summary"]["repo_areas"],

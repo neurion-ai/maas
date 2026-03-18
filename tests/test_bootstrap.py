@@ -85,6 +85,9 @@ lint = "example:main"
                     WHERE status = 'blocked' AND review_state = 'awaiting_onboarding_approval'
                     """
                 ).fetchone()[0]
+                map_task_description = connection.execute(
+                    "SELECT description FROM tasks WHERE title = 'Map imported source area: src'"
+                ).fetchone()[0]
             finally:
                 connection.close()
 
@@ -112,12 +115,17 @@ lint = "example:main"
                 config["onboarding"]["discovery_summary"]["codebase_map"][0]["kind"],
                 "source",
             )
+            self.assertIn(
+                "src/app.py",
+                config["onboarding"]["discovery_summary"]["codebase_map"][0]["sample_files"],
+            )
             self.assertEqual(
                 config["onboarding"]["discovery_summary"]["codebase_map"][1]["kind"],
                 "tests",
             )
             self.assertIn("Review imported project understanding", task_titles)
             self.assertIn("Validate imported workflow: lint", task_titles)
+            self.assertIn("src/app.py", map_task_description)
             self.assertIn("Validate imported workflow: test", task_titles)
             self.assertIn("Map imported source area: src", task_titles)
             self.assertIn("Map imported test surface: tests", task_titles)

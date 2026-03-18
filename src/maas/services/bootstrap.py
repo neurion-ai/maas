@@ -298,6 +298,7 @@ def _build_codebase_map(discovery):
                 "primary_language": item["primary_language"],
                 "file_count": item["file_count"],
                 "summary": ", ".join(summary_parts),
+                "sample_files": item.get("sample_files", [])[:3],
             }
         )
         if len(codebase_map) >= 4:
@@ -314,6 +315,7 @@ def _build_codebase_map(discovery):
                 "summary": "root-level repo layout with {count} files".format(
                     count=discovery.get("total_files") or 0
                 ),
+                "sample_files": discovery.get("sample_files", [])[:3],
             }
         )
     return codebase_map
@@ -340,6 +342,8 @@ def discover_brownfield_project(project_root):
 
     top_level_counts = {}
     top_level_languages = {}
+    top_level_sample_files = {}
+    discovery["sample_files"] = []
     for current_root, dirnames, filenames in os.walk(project_root):
         relative_root = os.path.relpath(current_root, project_root)
         dirnames[:] = [name for name in dirnames if name not in IGNORED_DISCOVERY_DIRS]
@@ -365,6 +369,11 @@ def discover_brownfield_project(project_root):
 
             top_level_name = relative_path.split(os.sep, 1)[0]
             top_level_counts[top_level_name] = top_level_counts.get(top_level_name, 0) + 1
+            top_level_sample_files.setdefault(top_level_name, [])
+            if len(top_level_sample_files[top_level_name]) < 3:
+                top_level_sample_files[top_level_name].append(relative_path)
+            if len(discovery["sample_files"]) < 6:
+                discovery["sample_files"].append(relative_path)
 
     if discovery["language_counts"]:
         discovery["primary_language"] = max(
@@ -450,6 +459,7 @@ def discover_brownfield_project(project_root):
                     top_level_languages.get(name, {"mixed": 0}).items(),
                     key=lambda item: item[1],
                 )[0],
+                "sample_files": top_level_sample_files.get(name, [])[:3],
             }
         )
         if len(top_level_dirs) >= 4:
@@ -487,12 +497,17 @@ def build_understanding_markdown(config, mode="greenfield", discovery=None):
             for item in discovery["workflow_signals"]
         ) or "none detected"
         codebase_map = "\n".join(
-            "- {name} ({kind}, {language}, {count} files): {summary}".format(
+            "- {name} ({kind}, {language}, {count} files): {summary}{samples}".format(
                 name=item["name"],
                 kind=CODEBASE_AREA_LABELS.get(item["kind"], item["kind"]),
                 language=item["primary_language"],
                 count=item["file_count"],
                 summary=item["summary"],
+                samples=(
+                    " | sample files: {0}".format(", ".join(item.get("sample_files", [])[:3]))
+                    if item.get("sample_files")
+                    else ""
+                ),
             )
             for item in discovery.get("codebase_map", [])
         ) or "- none detected"
@@ -610,6 +625,7 @@ def build_discovery_summary(discovery):
                 "primary_language": item["primary_language"],
                 "file_count": item["file_count"],
                 "summary": item.get("summary") or "",
+                "sample_files": item.get("sample_files", [])[:3],
             }
             for item in discovery.get("codebase_map", [])[:4]
         ],
@@ -677,9 +693,11 @@ def build_brownfield_task_specs(discovery):
                 "Validate imported workflow: {name}".format(name=signal["name"]),
                 "agent_researcher",
                 workflow_priority,
-                "Confirm the imported {kind} `{name}` matches the existing repo workflow and acceptance path.".format(
+                "Confirm the imported {kind} `{name}` matches the existing repo workflow and acceptance path from {path}{detail}.".format(
                     kind=WORKFLOW_SIGNAL_LABELS[signal["kind"]],
                     name=signal["name"],
+                    path=signal.get("path") or "the existing repository",
+                    detail=(" ({0})".format(signal.get("detail")) if signal.get("detail") else ""),
                 ),
                 BROWNFIELD_PENDING_REVIEW_STATE,
                 0,
@@ -696,11 +714,12 @@ def build_brownfield_task_specs(discovery):
                 "Map imported {kind}: {name}".format(kind=kind_label, name=item["name"]),
                 "agent_allocator",
                 repo_area_priority,
-                "Turn the imported {kind} `{name}` into an operator-visible ownership/workflow area using the discovered {language} stack and {count} files.".format(
+                "Turn the imported {kind} `{name}` into an operator-visible ownership/workflow area using the discovered {language} stack and {count} files. Start from {samples}.".format(
                     kind=kind_label,
                     name=item["name"],
                     language=item["primary_language"],
                     count=item["file_count"],
+                    samples=", ".join(item.get("sample_files", [])[:3]) or item["path"],
                 ),
                 BROWNFIELD_PENDING_REVIEW_STATE,
                 0,

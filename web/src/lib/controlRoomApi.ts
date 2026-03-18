@@ -20,6 +20,8 @@ import type {
   ProjectsResponse,
   ProvidersResponse,
   RecoveryPolicyResponse,
+  RepoFileResponse,
+  RepoTreeResponse,
   QuarantineQueueResponse,
   ReopenQuarantineEntryResponse,
   RestoreAndRequeueQuarantineEntryResponse,
@@ -117,6 +119,25 @@ const GOAL_TREE_FALLBACK: GoalTreeResponse = {
       ]
     }
   ]
+};
+
+const REPO_TREE_FALLBACK: RepoTreeResponse = {
+  path: "",
+  parent_path: null,
+  source_root: "",
+  entries: []
+};
+
+const REPO_FILE_FALLBACK: RepoFileResponse = {
+  path: "",
+  name: "",
+  parent_path: null,
+  size: 0,
+  extension: null,
+  previewable: false,
+  content_kind: "binary",
+  content: null,
+  truncated: false
 };
 
 const ROSTER_FALLBACK: AgentRosterResponse = {
@@ -498,6 +519,17 @@ export async function restoreProject(projectId: string) {
 
 export function fetchOverview() {
   return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK);
+}
+
+export function fetchRepoTree(path = "", signal?: AbortSignal, onFallback?: () => void) {
+  const query = new URLSearchParams();
+  if (path) query.set("path", path);
+  return fetchJson<RepoTreeResponse>(query.size > 0 ? `/api/repo/tree?${query.toString()}` : "/api/repo/tree", REPO_TREE_FALLBACK, signal, onFallback);
+}
+
+export function fetchRepoFile(path: string, signal?: AbortSignal, onFallback?: () => void) {
+  const query = new URLSearchParams({ path });
+  return fetchJson<RepoFileResponse>(`/api/repo/file?${query.toString()}`, REPO_FILE_FALLBACK, signal, onFallback);
 }
 
 export function fetchGoalTree() {

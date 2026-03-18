@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
-import { fetchOverview, runAlertOperatorAction, runFailureOperatorAction, runSupervisorPass } from "../lib/controlRoomApi";
+import {
+  fetchOverview,
+  fetchRepoFile,
+  fetchRepoTree,
+  runAlertOperatorAction,
+  runFailureOperatorAction,
+  runSupervisorPass
+} from "../lib/controlRoomApi";
 import { reviewTask } from "../lib/boardApi";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { OverviewResponse, SupervisorRunResponse } from "../types";
+import type { OverviewResponse, RepoFileResponse, RepoTreeResponse, SupervisorRunResponse } from "../types";
 import { StatCard } from "../components/StatCard";
 
 export function OverviewPage() {
@@ -13,6 +20,9 @@ export function OverviewPage() {
   const [pendingFailureAction, setPendingFailureAction] = useState<string | null>(null);
   const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const [pendingOnboardingReview, setPendingOnboardingReview] = useState<string | null>(null);
+  const [repoTree, setRepoTree] = useState<RepoTreeResponse | null>(null);
+  const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
+  const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => {
@@ -31,6 +41,36 @@ export function OverviewPage() {
       mounted = false;
     };
   }, [livePulse]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (overview?.onboarding?.mode !== "brownfield") {
+      setRepoTree(null);
+      setRepoFile(null);
+      return () => {
+        mounted = false;
+      };
+    }
+
+    async function loadInitialRepoTree() {
+      try {
+        const payload = await fetchRepoTree("");
+        if (mounted) {
+          setRepoTree(payload);
+        }
+      } catch {
+        if (mounted) {
+          setNotice("Imported repository browser is unavailable; keeping onboarding summary only.");
+        }
+      }
+    }
+
+    void loadInitialRepoTree();
+
+    return () => {
+      mounted = false;
+    };
+  }, [overview?.project?.project_id, overview?.onboarding?.mode]);
 
   async function handleRunSupervisor() {
     setIsRunningSupervisor(true);
@@ -127,6 +167,31 @@ export function OverviewPage() {
     }
   }
 
+  async function handleBrowseRepoPath(path: string) {
+    setPendingRepoPath(path || ".");
+    try {
+      const payload = await fetchRepoTree(path);
+      setRepoTree(payload);
+      setRepoFile(null);
+    } catch {
+      setNotice("Unable to load that imported repo area.");
+    } finally {
+      setPendingRepoPath(null);
+    }
+  }
+
+  async function handleOpenRepoFile(path: string) {
+    setPendingRepoPath(path);
+    try {
+      const payload = await fetchRepoFile(path);
+      setRepoFile(payload);
+    } catch {
+      setNotice("Unable to preview that imported file.");
+    } finally {
+      setPendingRepoPath(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -199,6 +264,19 @@ export function OverviewPage() {
                           <strong>{item.label}</strong>
                           {item.path ? ` · ${item.path}` : ""}
                           {item.detail ? ` · ${item.detail}` : ""}
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingRepoPath === item.path}
+                                onClick={() => void handleOpenRepoFile(item.path ?? "")}
+                              >
+                                {pendingRepoPath === item.path ? "Opening..." : "Open file"}
+                              </button>
+                            </>
+                          ) : null}
                         </p>
                       ))}
                     </div>
@@ -230,6 +308,38 @@ export function OverviewPage() {
                           {` · ${item.primary_language}`}
                           {` · ${item.file_count} files`}
                           {item.summary ? ` · ${item.summary}` : ""}
+                          {item.path ? (
+                            <>
+                              {" · "}
+                              <button
+                                type="button"
+                                className="inline-link-button"
+                                disabled={pendingRepoPath === item.path}
+                                onClick={() => void handleBrowseRepoPath(item.path ?? "")}
+                              >
+                                {pendingRepoPath === item.path ? "Loading..." : "Browse"}
+                              </button>
+                            </>
+                          ) : null}
+                          {(item.sample_files?.length ?? 0) > 0 ? (
+                            <>
+                              <br />
+                              <span>Sample files: </span>
+                              {item.sample_files?.map((samplePath, index) => (
+                                <span key={samplePath}>
+                                  {index > 0 ? ", " : ""}
+                                  <button
+                                    type="button"
+                                    className="inline-link-button"
+                                    disabled={pendingRepoPath === samplePath}
+                                    onClick={() => void handleOpenRepoFile(samplePath)}
+                                  >
+                                    {samplePath}
+                                  </button>
+                                </span>
+                              ))}
+                            </>
+                          ) : null}
                         </p>
                       ))}
                     </div>
@@ -270,6 +380,79 @@ export function OverviewPage() {
                 >
                   {pendingOnboardingReview === "reject" ? "Rejecting..." : "Request changes"}
                 </button>
+              </div>
+            ) : null}
+          </article>
+        ) : null}
+
+        {overview?.onboarding?.mode === "brownfield" ? (
+          <article className="data-panel">
+            <header className="data-panel__header">
+              <h2>Imported repository</h2>
+              <p>Browse the imported source tree and preview files directly from the brownfield source root.</p>
+            </header>
+            <div className="data-list">
+              <div className="data-list__item">
+                <div>
+                  <strong>Current area</strong>
+                  <p>{repoTree?.path || "."}</p>
+                </div>
+                <div className="data-list__meta">
+                  {repoTree?.parent_path ? (
+                    <button
+                      type="button"
+                      className="task-action task-action--secondary"
+                      disabled={pendingRepoPath === repoTree.parent_path}
+                      onClick={() => void handleBrowseRepoPath(repoTree.parent_path ?? "")}
+                    >
+                      {pendingRepoPath === repoTree.parent_path ? "Loading..." : "Up one level"}
+                    </button>
+                  ) : (
+                    <span>{repoTree?.entries.length ?? 0} entries</span>
+                  )}
+                </div>
+              </div>
+              {(repoTree?.entries ?? []).map((entry) => (
+                <div key={entry.path} className="data-list__item">
+                  <div>
+                    <strong>{entry.name}</strong>
+                    <p>{entry.path}</p>
+                  </div>
+                  <div className="data-list__meta">
+                    <span>{entry.kind}</span>
+                    {entry.kind === "directory" ? (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        disabled={pendingRepoPath === entry.path}
+                        onClick={() => void handleBrowseRepoPath(entry.path)}
+                      >
+                        {pendingRepoPath === entry.path ? "Loading..." : "Browse"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="task-action task-action--secondary"
+                        disabled={pendingRepoPath === entry.path}
+                        onClick={() => void handleOpenRepoFile(entry.path)}
+                      >
+                        {pendingRepoPath === entry.path ? "Opening..." : "Preview"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {repoFile ? (
+              <div className="repo-preview">
+                <div className="repo-preview__header">
+                  <strong>{repoFile.path}</strong>
+                  <span>
+                    {repoFile.previewable ? repoFile.content_kind : "binary"} · {repoFile.size} bytes
+                    {repoFile.truncated ? " · truncated" : ""}
+                  </span>
+                </div>
+                <pre>{repoFile.content ?? "Preview unavailable for this file type."}</pre>
               </div>
             ) : null}
           </article>

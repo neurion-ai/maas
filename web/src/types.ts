@@ -155,6 +155,34 @@ export interface ProjectActionResponse {
   state: "active" | "archived";
 }
 
+export interface RepoTreeEntry {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  size?: number | null;
+  extension?: string | null;
+  previewable: boolean;
+}
+
+export interface RepoTreeResponse {
+  path: string;
+  parent_path?: string | null;
+  source_root: string;
+  entries: RepoTreeEntry[];
+}
+
+export interface RepoFileResponse {
+  path: string;
+  name: string;
+  parent_path?: string | null;
+  size: number;
+  extension?: string | null;
+  previewable: boolean;
+  content_kind: "text" | "json" | "binary";
+  content?: string | null;
+  truncated: boolean;
+}
+
 export interface OverviewOnboarding {
   mode: string;
   review_status: string;
@@ -177,6 +205,7 @@ export interface OverviewOnboarding {
       primary_language: string;
       file_count: number;
       summary?: string;
+      sample_files?: string[];
     }>;
   };
   review_task_id?: string | null;

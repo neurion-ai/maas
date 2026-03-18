@@ -113,31 +113,37 @@ def _cooldown_active(value):
     return next_retry_at > datetime.utcnow()
 
 
-def _agent_rows(connection):
-    return connection.execute(
-        """
+def _agent_rows(connection, project_id=None):
+    query = """
         SELECT agent_id, project_id, role, display_name, status, current_task_id
         FROM agents
-        ORDER BY display_name ASC
-        """
-    ).fetchall()
+    """
+    parameters = []
+    if project_id is not None:
+        query += "\nWHERE project_id = ?"
+        parameters.append(project_id)
+    query += "\nORDER BY display_name ASC"
+    return connection.execute(query, tuple(parameters)).fetchall()
 
 
 def _eligible_idle_agents(agent_rows):
     return [row for row in agent_rows if row["status"] == "idle" and row["current_task_id"] is None]
 
 
-def resolve_ready_tasks(connection):
-    rows = connection.execute(
-        """
+def resolve_ready_tasks(connection, project_id=None):
+    query = """
         SELECT task_id, title, description, priority, status, retry_count, assigned_agent_id, created_at, next_retry_at, next_retry_reason
         FROM tasks
         WHERE status IN ('planned', 'assigned', 'ready')
-        ORDER BY priority DESC, created_at ASC
-        """
-    ).fetchall()
+    """
+    parameters = []
+    if project_id is not None:
+        query += "\n  AND project_id = ?"
+        parameters.append(project_id)
+    query += "\nORDER BY priority DESC, created_at ASC"
+    rows = connection.execute(query, tuple(parameters)).fetchall()
     failure_rollup = _task_failure_rollup(connection, [row["task_id"] for row in rows])
-    agent_rows = _agent_rows(connection)
+    agent_rows = _agent_rows(connection, project_id=project_id)
     ready = []
     for row in rows:
         item = dict(row)
@@ -179,14 +185,17 @@ def resolve_ready_tasks(connection):
     return ranked_ready
 
 
-def refresh_ready_tasks(connection, commit=True):
-    task_rows = connection.execute(
-        """
+def refresh_ready_tasks(connection, commit=True, project_id=None):
+    query = """
         SELECT task_id, status, assigned_agent_id, review_state, next_retry_at, next_retry_reason
         FROM tasks
         WHERE status IN ('planned', 'assigned', 'ready', 'blocked')
-        """
-    ).fetchall()
+    """
+    parameters = []
+    if project_id is not None:
+        query += "\n  AND project_id = ?"
+        parameters.append(project_id)
+    task_rows = connection.execute(query, tuple(parameters)).fetchall()
     changed = []
     for row in task_rows:
         blocked_by_dependency = _task_is_blocked(connection, row["task_id"])
@@ -559,14 +568,16 @@ def describe_task_scheduler(task_row, decision=None):
 
 
 def _candidate_tasks_for_agent(connection, agent_row):
-    refresh_ready_tasks(connection)
+    refresh_ready_tasks(connection, project_id=agent_row["project_id"])
     rows = connection.execute(
         """
         SELECT task_id, project_id, title, description, status, priority, retry_count, assigned_agent_id, created_at
         FROM tasks
-        WHERE status IN ('ready', 'assigned')
+        WHERE project_id = ?
+          AND status IN ('ready', 'assigned')
         ORDER BY priority DESC, created_at ASC
-        """
+        """,
+        (agent_row["project_id"],),
     ).fetchall()
     failure_rollup = _task_failure_rollup(connection, [row["task_id"] for row in rows])
 
@@ -698,15 +709,18 @@ def assign_next_task(connection, agent_id, actor_id="system_allocator"):
     }
 
 
-def allocate_ready_tasks(connection, actor_id="system_allocator", limit=None):
-    idle_agents = connection.execute(
-        """
+def allocate_ready_tasks(connection, actor_id="system_allocator", limit=None, project_id=None):
+    query = """
         SELECT agent_id
         FROM agents
         WHERE status = 'idle' AND current_task_id IS NULL
-        ORDER BY display_name ASC
-        """
-    ).fetchall()
+    """
+    parameters = []
+    if project_id is not None:
+        query += "\n  AND project_id = ?"
+        parameters.append(project_id)
+    query += "\nORDER BY display_name ASC"
+    idle_agents = connection.execute(query, tuple(parameters)).fetchall()
 
     allocations = []
     new_assignment_count = 0

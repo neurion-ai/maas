@@ -9,11 +9,90 @@ from maas.api import create_app
 from maas.db import connect
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.projects import create_project
 from maas.services.lifecycle import end_session
 from maas.services.scheduler import assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 
 
 class SchedulerApiTest(unittest.TestCase):
+    def test_assign_next_task_does_not_cross_project_boundaries(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Scheduler Project Scope Test",
+                description="Scheduler project scope test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )
+                second_project_id = second_project["project"]["project_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'done'
+                    WHERE project_id = ?
+                      AND status IN ('planned', 'ready', 'assigned', 'blocked')
+                    """,
+                    (second_project_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'done'
+                    WHERE project_id = ?
+                      AND title != 'Define project workspace contracts'
+                      AND status IN ('planned', 'ready', 'assigned', 'blocked')
+                    """,
+                    (primary_project_id,),
+                )
+                target_task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ? AND title = 'Define project workspace contracts'
+                    """,
+                    (primary_project_id,),
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'ready',
+                        assigned_agent_id = NULL
+                    WHERE task_id = ?
+                    """,
+                    (target_task_id,),
+                )
+                second_agent_id = connection.execute(
+                    """
+                    SELECT agent_id
+                    FROM agents
+                    WHERE project_id = ? AND role = 'researcher'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (second_project_id,),
+                ).fetchone()["agent_id"]
+                connection.commit()
+
+                result_payload = assign_next_task(connection, second_agent_id, actor_id="agent_allocator")
+                primary_ready = resolve_ready_tasks(connection, project_id=primary_project_id)
+            finally:
+                connection.close()
+
+            self.assertFalse(result_payload["assigned"])
+            self.assertIsNone(result_payload["task_id"])
+            self.assertEqual([item["task_id"] for item in primary_ready], [target_task_id])
+
     def test_assign_next_task_returns_explicit_scheduler_score(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Scheduler Score Test", description="Scheduler score test", project_type="custom")

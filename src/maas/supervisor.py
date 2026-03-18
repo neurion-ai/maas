@@ -12,7 +12,7 @@ from maas.services.failure_memory import (
     record_failure,
     resolve_repeated_failure_alerts,
 )
-from maas.services.projects import resolve_project_id
+from maas.services.projects import list_projects, resolve_project_id
 from maas.services.recovery_policy import (
     fetch_auto_recovery_candidate_tasks,
     fetch_project_recovery_policy,
@@ -220,18 +220,20 @@ def _maybe_route_timed_out_task_to_dlq(connection, project_id, task_id, actor_id
     return {"task_id": task_id, "dlq_id": dlq_id, "retry_limit": retry_limit, "retry_count": task["retry_count"]}
 
 
-def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
+def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None, project_id=None):
     stale_before = datetime.utcnow() - timedelta(seconds=stale_after_seconds)
-    stale_rows = connection.execute(
-        """
+    query = """
         SELECT session_id, project_id, agent_id, task_id
         FROM sessions
         WHERE status = 'active'
           AND last_heartbeat_at IS NOT NULL
           AND last_heartbeat_at < ?
-        """,
-        (stale_before.strftime("%Y-%m-%d %H:%M:%S"),),
-    ).fetchall()
+    """
+    parameters = [stale_before.strftime("%Y-%m-%d %H:%M:%S")]
+    if project_id is not None:
+        query += "\n  AND project_id = ?"
+        parameters.append(project_id)
+    stale_rows = connection.execute(query, tuple(parameters)).fetchall()
 
     findings = []
     for row in stale_rows:
@@ -391,17 +393,17 @@ def _handle_stale_sessions(connection, stale_after_seconds, project_paths=None):
     return findings
 
 
-def _auto_recover_blocked_tasks(connection):
-    project_id = resolve_project_id(connection)
-    if project_id is None:
+def _auto_recover_blocked_tasks(connection, project_id=None):
+    resolved_project_id = resolve_project_id(connection, project_id) if project_id is not None else resolve_project_id(connection)
+    if resolved_project_id is None:
         return []
 
-    policy = fetch_project_recovery_policy(connection, project_id)
+    policy = fetch_project_recovery_policy(connection, resolved_project_id)
     if not policy["auto_recover_blocked_tasks"]:
         return []
 
     findings = []
-    for candidate in fetch_auto_recovery_candidate_tasks(connection, project_id=project_id, limit=None):
+    for candidate in fetch_auto_recovery_candidate_tasks(connection, project_id=resolved_project_id, limit=None):
         task = connection.execute(
             """
             SELECT task_id, project_id, assigned_agent_id, status, review_state
@@ -430,26 +432,86 @@ def _auto_recover_blocked_tasks(connection):
     return findings
 
 
-def run_supervisor_once(connection, stale_after_seconds=HEARTBEAT_STALE_SECONDS, allocate_limit=None, project_paths=None):
-    ready_changes = refresh_ready_tasks(connection)
-    allocation_result = allocate_ready_tasks(connection, actor_id="system_supervisor", limit=allocate_limit)
-    stale_sessions = _handle_stale_sessions(connection, stale_after_seconds, project_paths=project_paths)
-    auto_recovered_tasks = _auto_recover_blocked_tasks(connection)
-    if any(item.get("auto_retried") for item in stale_sessions) or auto_recovered_tasks:
-        ready_changes.extend(refresh_ready_tasks(connection))
-        remaining_limit = None
-        if allocate_limit is not None:
-            remaining_limit = max(allocate_limit - allocation_result["assigned_count"], 0)
-        retry_allocations = allocate_ready_tasks(connection, actor_id="system_supervisor", limit=remaining_limit)
-        allocation_result = {
-            "allocations": allocation_result["allocations"] + retry_allocations["allocations"],
-            "assigned_count": allocation_result["assigned_count"] + retry_allocations["assigned_count"],
-        }
+def _active_project_ids(connection, project_id=None):
+    if project_id is not None:
+        resolved_project_id = resolve_project_id(connection, project_id)
+        if resolved_project_id is None:
+            raise ValueError("project not found")
+        return [resolved_project_id]
+    return [item["project_id"] for item in list_projects(connection, include_archived=False)]
+
+
+def run_supervisor_once(
+    connection,
+    stale_after_seconds=HEARTBEAT_STALE_SECONDS,
+    allocate_limit=None,
+    project_paths=None,
+    project_id=None,
+):
+    remaining_limit = allocate_limit
+    project_runs = []
+    ready_changes = []
+    allocations = []
+    stale_sessions = []
+    auto_recovered_tasks = []
+
+    for scoped_project_id in _active_project_ids(connection, project_id=project_id):
+        project_ready_changes = refresh_ready_tasks(connection, commit=False, project_id=scoped_project_id)
+        project_allocation_result = allocate_ready_tasks(
+            connection,
+            actor_id="system_supervisor",
+            limit=remaining_limit,
+            project_id=scoped_project_id,
+        )
+        project_stale_sessions = _handle_stale_sessions(
+            connection,
+            stale_after_seconds,
+            project_paths=project_paths,
+            project_id=scoped_project_id,
+        )
+        project_auto_recovered_tasks = _auto_recover_blocked_tasks(connection, project_id=scoped_project_id)
+        if any(item.get("auto_retried") for item in project_stale_sessions) or project_auto_recovered_tasks:
+            project_ready_changes.extend(
+                refresh_ready_tasks(connection, commit=False, project_id=scoped_project_id)
+            )
+            retry_limit = remaining_limit
+            if retry_limit is not None:
+                retry_limit = max(retry_limit - project_allocation_result["assigned_count"], 0)
+            retry_allocations = allocate_ready_tasks(
+                connection,
+                actor_id="system_supervisor",
+                limit=retry_limit,
+                project_id=scoped_project_id,
+            )
+            project_allocation_result = {
+                "allocations": project_allocation_result["allocations"] + retry_allocations["allocations"],
+                "assigned_count": project_allocation_result["assigned_count"] + retry_allocations["assigned_count"],
+            }
+
+        if remaining_limit is not None:
+            remaining_limit = max(remaining_limit - project_allocation_result["assigned_count"], 0)
+
+        ready_changes.extend(project_ready_changes)
+        allocations.extend(project_allocation_result["allocations"])
+        stale_sessions.extend(project_stale_sessions)
+        auto_recovered_tasks.extend(project_auto_recovered_tasks)
+        project_runs.append(
+            {
+                "project_id": scoped_project_id,
+                "ready_changes": project_ready_changes,
+                "allocations": project_allocation_result["allocations"],
+                "assigned_count": project_allocation_result["assigned_count"],
+                "stale_sessions": project_stale_sessions,
+                "auto_recovered_tasks": project_auto_recovered_tasks,
+            }
+        )
+
     connection.commit()
     return {
         "ready_changes": ready_changes,
-        "allocations": allocation_result["allocations"],
-        "assigned_count": allocation_result["assigned_count"],
+        "allocations": allocations,
+        "assigned_count": len([item for item in allocations if item.get("assigned")]),
         "stale_sessions": stale_sessions,
         "auto_recovered_tasks": auto_recovered_tasks,
+        "project_runs": project_runs,
     }

@@ -38,8 +38,10 @@ export function OverviewPage() {
     try {
       const result = await runSupervisorPass(2);
       setSupervisorResult(result);
+      const projectScopeSummary =
+        result.project_runs.length > 1 ? ` across ${result.project_runs.length} projects` : "";
       setNotice(
-        `Supervisor refreshed ${result.ready_changes.length} tasks, assigned ${result.assigned_count}, and found ${result.stale_sessions.length} stale sessions.`
+        `Supervisor refreshed ${result.ready_changes.length} tasks, assigned ${result.assigned_count}, and found ${result.stale_sessions.length} stale sessions${projectScopeSummary}.`
       );
       setOverview(await fetchOverview());
     } catch {

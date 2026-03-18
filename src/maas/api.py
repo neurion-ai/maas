@@ -134,10 +134,12 @@ class AssignTaskRequest(BaseModel):
 class AllocateTasksRequest(BaseModel):
     actor_id: str = "system_allocator"
     limit: int = None
+    project_id: Optional[str] = None
 
 
 class SupervisorRunRequest(BaseModel):
     allocate_limit: int = None
+    project_id: Optional[str] = None
 
 
 class EscalationRequestPayload(BaseModel):
@@ -385,10 +387,10 @@ def create_app(project_root="."):
             connection.close()
 
     @app.get("/api/tasks/ready")
-    def tasks_ready():
+    def tasks_ready(project_id: str = None):
         connection = connect(paths)
         try:
-            return {"tasks": resolve_ready_tasks(connection)}
+            return {"tasks": resolve_ready_tasks(connection, project_id=_selected_project_id(connection, project_id))}
         finally:
             connection.close()
 
@@ -1027,10 +1029,14 @@ def create_app(project_root="."):
             connection.close()
 
     @app.post("/api/tasks/actions/refresh-ready")
-    def task_refresh_ready_action():
+    def task_refresh_ready_action(project_id: str = None):
         connection = connect(paths)
         try:
-            return {"changed": refresh_ready_tasks(connection), "tasks": resolve_ready_tasks(connection)}
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return {
+                "changed": refresh_ready_tasks(connection, project_id=scoped_project_id),
+                "tasks": resolve_ready_tasks(connection, project_id=scoped_project_id),
+            }
         finally:
             connection.close()
 
@@ -1048,7 +1054,13 @@ def create_app(project_root="."):
     def task_allocate_ready_action(payload: AllocateTasksRequest):
         connection = connect(paths)
         try:
-            return allocate_ready_tasks(connection, actor_id=payload.actor_id, limit=payload.limit)
+            scoped_project_id = _selected_project_id(connection, payload.project_id)
+            return allocate_ready_tasks(
+                connection,
+                actor_id=payload.actor_id,
+                limit=payload.limit,
+                project_id=scoped_project_id,
+            )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -1083,7 +1095,8 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             limit = None if payload is None else payload.allocate_limit
-            return run_supervisor_once(connection, allocate_limit=limit, project_paths=paths)
+            scoped_project_id = None if payload is None else _selected_project_id(connection, payload.project_id)
+            return run_supervisor_once(connection, allocate_limit=limit, project_paths=paths, project_id=scoped_project_id)
         finally:
             connection.close()
 

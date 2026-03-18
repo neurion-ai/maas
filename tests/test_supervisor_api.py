@@ -11,7 +11,7 @@ from maas.services.bootstrap import bootstrap_project
 from maas.ids import generate_id
 from maas.services.alerts import fetch_alerts
 from maas.services.lifecycle import end_session, heartbeat, produce_artifact
-from maas.services.projects import resolve_project_id
+from maas.services.projects import create_project, resolve_project_id
 from maas.supervisor import run_supervisor_once
 
 
@@ -715,6 +715,96 @@ class SupervisorApiTest(unittest.TestCase):
             self.assertIn("ready_changes", payload)
             self.assertIn("allocations", payload)
             self.assertEqual(payload["assigned_count"], 1)
+            self.assertIn("project_runs", payload)
+            self.assertEqual(len(payload["project_runs"]), 1)
+
+    def test_supervisor_api_can_scope_run_to_selected_project(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Scoped API Test",
+                description="Supervisor scoped API test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project_id = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]["project_id"]
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/supervisor/run",
+                json={"allocate_limit": 2, "project_id": primary_project_id},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            connection = connect(result["paths"])
+            try:
+                primary_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (primary_project_id,),
+                ).fetchone()["count"]
+                second_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (second_project_id,),
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+
+            self.assertEqual(payload["assigned_count"], 2)
+            self.assertEqual([item["project_id"] for item in payload["project_runs"]], [primary_project_id])
+            self.assertGreater(primary_assigned, 0)
+            self.assertEqual(second_assigned, 0)
+
+    def test_supervisor_default_run_iterates_all_active_projects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(
+                tmpdir,
+                name="Supervisor Multi Project Test",
+                description="Supervisor multi project test",
+                project_type="custom",
+            )
+            connection = connect(result["paths"])
+            try:
+                primary_project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                second_project_id = create_project(
+                    connection,
+                    result["paths"],
+                    actor_id="agent_allocator",
+                    name="Second Project",
+                    description="secondary",
+                    project_type="custom",
+                    mode="greenfield",
+                )["project"]["project_id"]
+
+                supervisor_result = run_supervisor_once(connection, allocate_limit=4, project_paths=result["paths"])
+                primary_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (primary_project_id,),
+                ).fetchone()["count"]
+                second_assigned = connection.execute(
+                    "SELECT COUNT(*) AS count FROM tasks WHERE project_id = ? AND status = 'assigned'",
+                    (second_project_id,),
+                ).fetchone()["count"]
+            finally:
+                connection.close()
+
+            project_ids = [item["project_id"] for item in supervisor_result["project_runs"]]
+            self.assertEqual(project_ids, [primary_project_id, second_project_id])
+            self.assertEqual(supervisor_result["assigned_count"], 4)
+            self.assertGreater(primary_assigned, 0)
+            self.assertGreater(second_assigned, 0)
 
     def test_stale_session_does_not_clobber_agent_with_other_active_session(self):
         with tempfile.TemporaryDirectory() as tmpdir:

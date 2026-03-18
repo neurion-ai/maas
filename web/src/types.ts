@@ -834,6 +834,29 @@ export interface SupervisorAllocation {
   already_assigned?: boolean;
 }
 
+export interface SupervisorProjectRun {
+  project_id: string;
+  ready_changes: SupervisorReadyChange[];
+  allocations: SupervisorAllocation[];
+  assigned_count: number;
+  auto_recovered_tasks: Array<{
+    task_id: string;
+    status: string;
+    review_state?: string | null;
+    next_retry_at?: string | null;
+    next_retry_reason?: string | null;
+  }>;
+  stale_sessions: Array<{
+    session_id: string;
+    task_id: string;
+    repeated_failure_alert?: {
+      alert_id: string;
+      task_id: string;
+      failure_count: number;
+    } | null;
+  }>;
+}
+
 export interface SupervisorRunResponse {
   ready_changes: SupervisorReadyChange[];
   allocations: SupervisorAllocation[];
@@ -854,4 +877,5 @@ export interface SupervisorRunResponse {
       failure_count: number;
     } | null;
   }>;
+  project_runs: SupervisorProjectRun[];
 }

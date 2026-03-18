@@ -830,7 +830,8 @@ export async function updateEscalationStatus(escalationId: string, action: "appr
 
 export async function runSupervisorPass(allocateLimit?: number) {
   const payload = await postJson<SupervisorRunResponse>("/api/supervisor/run", {
-    allocate_limit: allocateLimit ?? null
+    allocate_limit: allocateLimit ?? null,
+    project_id: getSelectedProjectId()
   });
   return payload as SupervisorRunResponse;
 }

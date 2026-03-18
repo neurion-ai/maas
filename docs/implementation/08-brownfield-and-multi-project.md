@@ -28,7 +28,12 @@
 - [x] `#100` git-aware task workspaces and diff review is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` cross-project command center is implemented on `codex/cross-project-command-center`
 - [x] `#102` queue and worker capacity controls is implemented on `codex/queue-worker-capacity-governance`
-- [ ] `#103` policy-driven approval and risk routing is the next unfinished step
+- [x] `#103` policy-driven approval and risk routing is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#104` cost, runtime, and quota controls are implemented on `codex/queue-worker-capacity-governance`
+- [x] `#105` notifications and outbound integrations are implemented on `codex/queue-worker-capacity-governance`
+- [x] `#106` incident timeline and replay are implemented on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
 
 ## Extended Numbered Roadmap
 
@@ -54,10 +59,10 @@
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
 - [x] `#102` Queue and worker capacity controls
-- [ ] `#103` Policy-driven approval and risk routing
-- [ ] `#104` Cost, runtime, and quota controls
-- [ ] `#105` Notifications and outbound integrations
-- [ ] `#106` Incident timeline and replay
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Still To Do On `main`
 

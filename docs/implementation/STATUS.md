@@ -31,7 +31,12 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` is implemented on `codex/cross-project-command-center`
 - [x] `#102` is implemented on `codex/queue-worker-capacity-governance`
-- [ ] `#103` is the next unfinished item in the current stacked sequence
+- [x] `#103` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
 
 ## Extended Numbered Roadmap
 
@@ -57,10 +62,10 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
 - [x] `#102` Queue and worker capacity controls
-- [ ] `#103` Policy-driven approval and risk routing
-- [ ] `#104` Cost, runtime, and quota controls
-- [ ] `#105` Notifications and outbound integrations
-- [ ] `#106` Incident timeline and replay
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Current Snapshot
 
@@ -203,10 +208,10 @@ The "Current Development Sequence" section below shows whether a completed item 
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
 - [x] `#102` Queue and worker capacity controls
-- [ ] `#103` Policy-driven approval and risk routing
-- [ ] `#104` Cost, runtime, and quota controls
-- [ ] `#105` Notifications and outbound integrations
-- [ ] `#106` Incident timeline and replay
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Batch View
 

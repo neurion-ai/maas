@@ -52,7 +52,10 @@ Current stacked development chain above `main`:
 - `#100` exists on `codex/git-aware-task-workspaces`
 - `#101` exists on `codex/cross-project-command-center`
 - `#102` exists on `codex/queue-worker-capacity-governance`
-- `#103` is the next unfinished step in the current sequence
+- `#103` exists on `codex/queue-worker-capacity-governance`
+- `#104` exists on `codex/queue-worker-capacity-governance`
+- `#105` exists on `codex/queue-worker-capacity-governance`
+- `#106` exists on `codex/queue-worker-capacity-governance`
 
 ### Current project state
 
@@ -117,10 +120,10 @@ Current stacked development chain above `main`:
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
 - [x] `#102` Queue and worker capacity controls
-- [ ] `#103` Policy-driven approval and risk routing
-- [ ] `#104` Cost, runtime, and quota controls
-- [ ] `#105` Notifications and outbound integrations
-- [ ] `#106` Incident timeline and replay
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ### Current stacked branch progress
 
@@ -146,7 +149,12 @@ Current stacked development chain above `main`:
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` is implemented on `codex/cross-project-command-center`
 - [x] `#102` is implemented on `codex/queue-worker-capacity-governance`
-- [ ] `#103` is the next unfinished item
+- [x] `#103` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
 
 ### Extended numbered roadmap
 
@@ -172,10 +180,10 @@ Current stacked development chain above `main`:
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
 - [x] `#102` Queue and worker capacity controls
-- [ ] `#103` Policy-driven approval and risk routing
-- [ ] `#104` Cost, runtime, and quota controls
-- [ ] `#105` Notifications and outbound integrations
-- [ ] `#106` Incident timeline and replay
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Quick Start
 

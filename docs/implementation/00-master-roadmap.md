@@ -38,7 +38,12 @@ Current stacked development chain above `main`:
 - `#100` exists on `codex/git-aware-task-workspaces`
 - `#101` exists on `codex/cross-project-command-center`
 - `#102` exists on `codex/queue-worker-capacity-governance`
-- `#103` is the next unfinished item in sequence
+- `#103` exists on `codex/queue-worker-capacity-governance`
+- `#104` exists on `codex/queue-worker-capacity-governance`
+- `#105` exists on `codex/queue-worker-capacity-governance`
+- `#106` exists on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -95,9 +100,9 @@ Current stacked development chain above `main`:
   let operators edit ignored paths, accepted workflows, and runbook commands before imported work is released.
 - [x] `#96` Remote executor or worker pool:
   add execution beyond direct local CLI runs by introducing queued remote workers.
-- [ ] `#97` Cross-project scheduler fairness and capacity policy:
+- [x] `#97` Cross-project scheduler fairness and capacity policy:
   prevent one project from starving others once multi-project orchestration is always-on.
-- [ ] `#98` Repo-grounded plan synthesis and refresh:
+- [x] `#98` Repo-grounded plan synthesis and refresh:
   generate and refresh task graphs directly from the brownfield codebase map and drift signals.
 - [x] `#99` Verification runners and evidence capture:
   turn test/lint/build commands into first-class verification jobs with durable logs and artifacts.
@@ -107,13 +112,13 @@ Current stacked development chain above `main`:
   add a portfolio-level operator surface for escalations, recovery pressure, and global system health.
 - [x] `#102` Queue and worker capacity controls:
   broaden capacity governance beyond per-provider pass limits into queue concurrency and drain controls.
-- [ ] `#103` Policy-driven approval and risk routing:
+- [x] `#103` Policy-driven approval and risk routing:
   route risky actions into approval flows based on project policy and touched scope.
-- [ ] `#104` Cost, runtime, and quota controls:
+- [x] `#104` Cost, runtime, and quota controls:
   enforce per-project and per-provider usage budgets.
-- [ ] `#105` Notifications and outbound integrations:
+- [x] `#105` Notifications and outbound integrations:
   push important incidents out of the dashboard via webhooks or messaging integrations.
-- [ ] `#106` Incident timeline and replay:
+- [x] `#106` Incident timeline and replay:
   add a correlated incident history so operators can reconstruct what happened across tasks, alerts, sessions, and recovery actions.
 
 ## Current Stacked Branch Progress
@@ -140,7 +145,12 @@ Current stacked development chain above `main`:
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` is implemented on `codex/cross-project-command-center`
 - [x] `#102` is implemented on `codex/queue-worker-capacity-governance`
-- [ ] `#103` is the next unfinished item
+- [x] `#103` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#104` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#105` is implemented on `codex/queue-worker-capacity-governance`
+- [x] `#106` is implemented on `codex/queue-worker-capacity-governance`
+
+The current numbered `#81-#106` sequence is fully implemented on the stacked branch chain above `main`.
 
 ## Extended Numbered Roadmap
 
@@ -166,10 +176,10 @@ Current stacked development chain above `main`:
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
 - [x] `#102` Queue and worker capacity controls
-- [ ] `#103` Policy-driven approval and risk routing
-- [ ] `#104` Cost, runtime, and quota controls
-- [ ] `#105` Notifications and outbound integrations
-- [ ] `#106` Incident timeline and replay
+- [x] `#103` Policy-driven approval and risk routing
+- [x] `#104` Cost, runtime, and quota controls
+- [x] `#105` Notifications and outbound integrations
+- [x] `#106` Incident timeline and replay
 
 ## Delivery Order
 

@@ -631,6 +631,12 @@ export async function updateBrownfieldOnboardingReview(
   });
 }
 
+export async function refreshRepoPlan(projectId: string) {
+  return postJson(`/api/projects/${projectId}/actions/refresh-repo-plan`, {
+    actor_id: "agent_allocator"
+  });
+}
+
 export function fetchOverview() {
   return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK);
 }

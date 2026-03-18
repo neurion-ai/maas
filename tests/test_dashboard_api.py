@@ -129,6 +129,41 @@ lint = "example:main"
                 ],
             )
             self.assertEqual(overview_payload["onboarding"]["review_overrides"]["ignored_paths"], [])
+            self.assertGreater(overview_payload["onboarding"]["repo_plan_preview"]["generated_task_count"], 0)
+            self.assertIsNone(overview_payload["onboarding"]["repo_plan_state"])
+
+    def test_overview_exposes_repo_plan_state_after_brownfield_approval(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+
+            bootstrap_project(tmpdir, name="Brownfield Repo Plan Test", description="dashboard brownfield repo plan", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            overview_payload = client.get("/api/overview").json()
+            self.assertEqual(overview_payload["onboarding"]["review_status"], "approved")
+            self.assertIsNotNone(overview_payload["onboarding"]["repo_plan_state"])
+            self.assertFalse(overview_payload["onboarding"]["repo_plan_state"]["stale"])
+            self.assertGreater(overview_payload["onboarding"]["repo_plan_state"]["generated_task_count"], 0)
 
     def test_overview_filters_brownfield_summary_using_review_overrides(self):
         with tempfile.TemporaryDirectory() as tmpdir:

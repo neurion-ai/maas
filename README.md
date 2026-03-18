@@ -47,7 +47,8 @@ Current stacked development chain above `main`:
 - `#95` exists on `codex/brownfield-onboarding-review-v2`
 - `#96` exists on `codex/remote-executor-worker-pool`
 - `#97` exists on `codex/cross-project-scheduler-fairness`
-- `#98` is the next unfinished step in the current sequence
+- `#98` exists on `codex/repo-grounded-plan-synthesis`
+- `#99` is the next unfinished step in the current sequence
 
 ### Current project state
 
@@ -107,7 +108,7 @@ Current stacked development chain above `main`:
 - [x] `#95` Brownfield onboarding review v2
 - [x] `#96` Remote executor or worker pool
 - [x] `#97` Cross-project scheduler fairness and capacity policy
-- [ ] `#98` Repo-grounded plan synthesis and refresh
+- [x] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review
 - [ ] `#101` Cross-project command center
@@ -136,7 +137,8 @@ Current stacked development chain above `main`:
 - [x] `#95` is implemented on `codex/brownfield-onboarding-review-v2`
 - [x] `#96` is implemented on `codex/remote-executor-worker-pool`
 - [x] `#97` is implemented on `codex/cross-project-scheduler-fairness`
-- [ ] `#98` is the next unfinished item
+- [x] `#98` is implemented on `codex/repo-grounded-plan-synthesis`
+- [ ] `#99` is the next unfinished item
 
 ### Extended numbered roadmap
 
@@ -157,7 +159,7 @@ Current stacked development chain above `main`:
 - [x] `#95` Brownfield onboarding review v2
 - [x] `#96` Remote executor or worker pool
 - [x] `#97` Cross-project scheduler fairness and capacity policy
-- [ ] `#98` Repo-grounded plan synthesis and refresh
+- [x] `#98` Repo-grounded plan synthesis and refresh
 - [ ] `#99` Verification runners and evidence capture
 - [ ] `#100` Git-aware task workspaces and diff review
 - [ ] `#101` Cross-project command center

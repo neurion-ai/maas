@@ -548,6 +548,10 @@ def rescan_brownfield_project(connection, project_paths, project_id, actor_id):
     review_task = None
     if drift["detected"]:
         onboarding["review_status"] = "review_pending"
+        if onboarding.get("repo_plan"):
+            repo_plan = dict(onboarding.get("repo_plan") or {})
+            repo_plan["stale"] = True
+            onboarding["repo_plan"] = repo_plan
         review_task = _reopen_brownfield_review_task(connection, project_id)
         if review_task is not None:
             onboarding["review_task_id"] = review_task["task_id"]
@@ -633,6 +637,10 @@ def update_brownfield_onboarding_review(connection, project_paths, project_id, a
 
     onboarding["review_overrides"] = normalized_review
     onboarding["review_status"] = "review_pending"
+    if onboarding.get("repo_plan"):
+        repo_plan = dict(onboarding.get("repo_plan") or {})
+        repo_plan["stale"] = True
+        onboarding["repo_plan"] = repo_plan
     onboarding["reviewed_by"] = actor_id
     onboarding["reviewed_at"] = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
     config["onboarding"] = onboarding

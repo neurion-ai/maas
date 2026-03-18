@@ -48,6 +48,7 @@ from maas.services.projects import (
 )
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
+from maas.services.repo_plan import refresh_repo_grounded_plan
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
@@ -395,6 +396,16 @@ def create_app(project_root="."):
                     "max_active_sessions": payload.max_active_sessions,
                 },
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/refresh-repo-plan")
+    def projects_refresh_repo_plan(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return refresh_repo_grounded_plan(connection, project_id, payload.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

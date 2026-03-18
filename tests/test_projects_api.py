@@ -265,6 +265,70 @@ lint = "imported:lint"
             self.assertEqual(project_row["scheduler_policy"]["max_active_sessions"], 4)
             self.assertFalse(project_row["at_scheduler_capacity"])
 
+    def test_refresh_repo_plan_endpoint_preserves_progressed_synthesized_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Repo Plan Refresh Test", description="repo plan refresh", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            overview_payload = client.get("/api/overview").json()
+            project_id = overview_payload["project"]["project_id"]
+            review_task_id = overview_payload["onboarding"]["review_task_id"]
+
+            approve_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(approve_response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                synthesized_task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                      AND synthesis_origin = 'repo_grounded_plan'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review',
+                        review_state = 'awaiting_review',
+                        description = 'operator-owned synthesized task'
+                    WHERE task_id = ?
+                    """,
+                    (synthesized_task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            refresh_response = client.post(
+                f"/api/projects/{project_id}/actions/refresh-repo-plan",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(refresh_response.status_code, 200)
+            payload = refresh_response.json()
+            self.assertIn(synthesized_task_id, payload["skipped_task_ids"])
+            self.assertGreater(payload["preview"]["generated_task_count"], 0)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                task_row = connection.execute(
+                    "SELECT status, description FROM tasks WHERE task_id = ?",
+                    (synthesized_task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task_row["status"], "review")
+            self.assertEqual(task_row["description"], "operator-owned synthesized task")
+
     def test_core_read_models_can_be_scoped_to_selected_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

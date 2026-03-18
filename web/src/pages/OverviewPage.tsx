@@ -3,6 +3,7 @@ import {
   fetchOverview,
   fetchRepoFile,
   fetchRepoTree,
+  refreshRepoPlan,
   rescanBrownfieldProject,
   runAlertOperatorAction,
   runFailureOperatorAction,
@@ -23,6 +24,7 @@ export function OverviewPage() {
   const [pendingRepeatedFailureAction, setPendingRepeatedFailureAction] = useState<string | null>(null);
   const [pendingOnboardingReview, setPendingOnboardingReview] = useState<string | null>(null);
   const [pendingBrownfieldRescan, setPendingBrownfieldRescan] = useState(false);
+  const [pendingRepoPlanRefresh, setPendingRepoPlanRefresh] = useState(false);
   const [pendingOnboardingReviewUpdate, setPendingOnboardingReviewUpdate] = useState<string | null>(null);
   const [repoTree, setRepoTree] = useState<RepoTreeResponse | null>(null);
   const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
@@ -230,6 +232,27 @@ export function OverviewPage() {
     }
   }
 
+  async function handleRefreshRepoPlan() {
+    const projectId = overview?.project?.project_id;
+    if (!projectId) {
+      return;
+    }
+
+    setPendingRepoPlanRefresh(true);
+    setNotice(null);
+    try {
+      const payload = await refreshRepoPlan(projectId);
+      setOverview(await fetchOverview());
+      setNotice(
+        `Repo-grounded plan refreshed: ${payload.preview?.generated_task_count ?? 0} synthesized tasks, ${payload.created_task_ids?.length ?? 0} created, ${payload.updated_task_ids?.length ?? 0} updated.`
+      );
+    } catch {
+      setNotice("Refreshing the repo-grounded plan failed; keeping the current brownfield plan state.");
+    } finally {
+      setPendingRepoPlanRefresh(false);
+    }
+  }
+
   async function handleToggleIgnoredPath(path: string) {
     const reviewOverrides = overview?.onboarding?.review_overrides;
     if (!reviewOverrides) {
@@ -402,6 +425,48 @@ export function OverviewPage() {
                     <div className="data-list__meta">
                       <span>{new Date(overview.onboarding.last_scanned_at).toLocaleString()}</span>
                       <span>{overview.onboarding.drift_summary?.detected ? "drift detected" : "no drift"}</span>
+                    </div>
+                  </div>
+                ) : null}
+                {overview.onboarding.repo_plan_preview ? (
+                  <div className="data-list__item">
+                    <div>
+                      <strong>Repo-grounded plan</strong>
+                      <p>
+                        {overview.onboarding.repo_plan_preview.generated_task_count} synthesized tasks ·{" "}
+                        {overview.onboarding.repo_plan_preview.verification_task_count} verification recipes ·{" "}
+                        {overview.onboarding.repo_plan_preview.repo_area_task_count} repo areas
+                      </p>
+                      {(overview.onboarding.repo_plan_state?.last_refreshed_at ?? null) ? (
+                        <p>
+                          Last refreshed by {overview.onboarding.repo_plan_state?.last_refreshed_by ?? "unknown actor"}
+                          {" · "}
+                          {new Date(overview.onboarding.repo_plan_state?.last_refreshed_at ?? "").toLocaleString()}
+                          {overview.onboarding.repo_plan_state?.stale ? " · stale after onboarding changes" : ""}
+                        </p>
+                      ) : (
+                        <p>Preview only until onboarding is approved and the synthesized backlog is refreshed.</p>
+                      )}
+                      {overview.onboarding.repo_plan_preview.items?.map((item) => (
+                        <p key={item.synthesis_key}>
+                          <strong>{item.title}</strong>
+                          {item.command ? ` · ${item.command}` : ""}
+                          {(item.paths?.length ?? 0) > 0 ? ` · ${item.paths.join(", ")}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                    <div className="data-list__meta">
+                      <span>{overview.onboarding.repo_plan_state?.active_task_count ?? 0} active synthesized tasks</span>
+                      {overview.onboarding.review_status === "approved" ? (
+                        <button
+                          type="button"
+                          className="task-action task-action--secondary"
+                          disabled={pendingRepoPlanRefresh}
+                          onClick={() => void handleRefreshRepoPlan()}
+                        >
+                          {pendingRepoPlanRefresh ? "Refreshing..." : "Refresh repo plan"}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}

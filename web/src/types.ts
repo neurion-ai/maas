@@ -274,6 +274,41 @@ export interface OverviewOnboarding {
       sample_files?: string[];
     }>;
   };
+  repo_plan_preview?: {
+    generated_task_count: number;
+    verification_task_count: number;
+    repo_area_task_count: number;
+    sample_paths: string[];
+    items: Array<{
+      synthesis_key: string;
+      task_kind: string;
+      title: string;
+      source_label: string;
+      paths: string[];
+      command?: string | null;
+    }>;
+  } | null;
+  repo_plan_state?: {
+    generated_task_count: number;
+    verification_task_count: number;
+    repo_area_task_count: number;
+    sample_paths: string[];
+    items: Array<{
+      synthesis_key: string;
+      task_kind: string;
+      title: string;
+      source_label: string;
+      paths: string[];
+      command?: string | null;
+    }>;
+    active_task_count: number;
+    created_count: number;
+    updated_count: number;
+    cancelled_count: number;
+    stale: boolean;
+    last_refreshed_at?: string | null;
+    last_refreshed_by?: string | null;
+  } | null;
   review_task_id?: string | null;
   review_task_status?: string | null;
   review_task_review_state?: string | null;

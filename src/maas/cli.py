@@ -31,6 +31,7 @@ from maas.services.projects import (
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.orchestrator import run_orchestrator_once
+from maas.services.repo_plan import refresh_repo_grounded_plan
 from maas.services.scheduler import allocate_ready_tasks, assign_next_task, evaluate_task, refresh_ready_tasks, resolve_ready_tasks
 from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.steering import (
@@ -135,6 +136,11 @@ def build_parser():
     project_scheduler_policy_parser.add_argument("--actor-id", default="agent_allocator")
     project_scheduler_policy_parser.add_argument("--fair-share-weight", type=int, required=True)
     project_scheduler_policy_parser.add_argument("--max-active-sessions", type=int, required=True)
+
+    project_refresh_repo_plan_parser = project_subparsers.add_parser("refresh-repo-plan")
+    project_refresh_repo_plan_parser.add_argument("--project-root", default=".")
+    project_refresh_repo_plan_parser.add_argument("--project-id", required=True)
+    project_refresh_repo_plan_parser.add_argument("--actor-id", default="agent_allocator")
 
     agent_parser = subparsers.add_parser("agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_command", required=True)
@@ -535,6 +541,17 @@ def command_project(args):
                             "fair_share_weight": args.fair_share_weight,
                             "max_active_sessions": args.max_active_sessions,
                         },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "refresh-repo-plan":
+            print(
+                json.dumps(
+                    refresh_repo_grounded_plan(
+                        connection,
+                        args.project_id,
+                        args.actor_id,
                     ),
                     indent=2,
                 )

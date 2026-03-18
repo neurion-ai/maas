@@ -16,6 +16,7 @@ from maas.services.recovery_policy import (
     recover_and_requeue_cooldown_seconds,
     retry_deadline,
 )
+from maas.services.repo_plan import refresh_repo_grounded_plan
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.alerts import (
     resolve_brownfield_onboarding_alerts,
@@ -375,18 +376,27 @@ def review_task(connection, task_id, actor_id, decision):
         )
         release_result = _release_brownfield_onboarding_tasks(connection, task["project_id"])
         _set_project_onboarding_review_state(connection, task["project_id"], actor_id, "approved", task_id=task_id)
+        repo_plan_result = refresh_repo_grounded_plan(
+            connection,
+            task["project_id"],
+            actor_id,
+            commit=False,
+            enforce_permissions=False,
+        )
         resolved_alert_ids = resolve_brownfield_onboarding_alerts(
             connection,
             task["project_id"],
             actor_id,
             reason="brownfield_onboarding_approved",
         )
-        description = "Brownfield onboarding approved; imported work released for scheduling."
+        description = "Brownfield onboarding approved; imported work released and repo-grounded planning refreshed."
         audit_detail.update(
             {
                 "brownfield_onboarding": True,
                 "released_task_ids": release_result["released_task_ids"],
                 "ignored_task_ids": release_result["ignored_task_ids"],
+                "repo_plan_created_task_ids": repo_plan_result["created_task_ids"],
+                "repo_plan_updated_task_ids": repo_plan_result["updated_task_ids"],
                 "resolved_alert_ids": resolved_alert_ids,
             }
         )

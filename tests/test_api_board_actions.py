@@ -148,6 +148,13 @@ lint = "example:main"
                     WHERE title = 'Brownfield onboarding review pending' AND status != 'resolved'
                     """
                 ).fetchone()["count"]
+                repo_plan_tasks = connection.execute(
+                    """
+                    SELECT COUNT(*) AS count
+                    FROM tasks
+                    WHERE synthesis_origin = 'repo_grounded_plan'
+                    """
+                ).fetchone()["count"]
                 ready_or_planned = connection.execute(
                     """
                     SELECT COUNT(*) AS count
@@ -160,9 +167,11 @@ lint = "example:main"
                 connection.close()
 
             self.assertEqual(config["onboarding"]["review_status"], "approved")
+            self.assertGreater(repo_plan_tasks, 0)
+            self.assertEqual(config["onboarding"]["repo_plan"]["generated_task_count"], repo_plan_tasks)
             self.assertEqual(released_tasks, 0)
             self.assertEqual(open_alerts, 0)
-            self.assertEqual(ready_or_planned, 6)
+            self.assertEqual(ready_or_planned, 6 + repo_plan_tasks)
 
     def test_rejecting_brownfield_review_keeps_imported_tasks_gated(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -27,6 +27,7 @@ from maas.services.provider_jobs import (
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.projects import resolve_project, resolve_project_id
+from maas.services.queue_capacity import can_start_provider_jobs
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -1155,12 +1156,18 @@ def process_next_provider_job(connection, project_paths, actor_id, project_id=No
         if resolved_project_id is None:
             raise ValueError("Project not found")
         ensure_board_action_allowed(connection, actor_id, resolved_project_id, "process_provider_job", "provider", resource_id)
+        can_start, _snapshot = can_start_provider_jobs(connection, resolved_project_id)
+        if not can_start:
+            return {"processed": False, "job": None}
         job_id = next_queued_provider_job_id(connection, project_id=resolved_project_id, provider_id=provider_id)
     else:
         job_id = next_queued_provider_job_id(connection, project_id=None, provider_id=provider_id)
         if job_id is not None:
             job = fetch_provider_job(connection, job_id, include_archived=False)
             if job is None:
+                return {"processed": False, "job": None}
+            can_start, _snapshot = can_start_provider_jobs(connection, job["project_id"])
+            if not can_start:
                 return {"processed": False, "job": None}
             ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", resource_id)
     if job_id is None:

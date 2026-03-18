@@ -27,7 +27,8 @@
 - [x] `#99` verification runners and evidence capture is implemented on `codex/verification-runners-evidence-capture`
 - [x] `#100` git-aware task workspaces and diff review is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` cross-project command center is implemented on `codex/cross-project-command-center`
-- [ ] `#102` queue and worker capacity controls is the next unfinished step
+- [x] `#102` queue and worker capacity controls is implemented on `codex/queue-worker-capacity-governance`
+- [ ] `#103` policy-driven approval and risk routing is the next unfinished step
 
 ## Extended Numbered Roadmap
 
@@ -52,7 +53,7 @@
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
-- [ ] `#102` Queue and worker capacity controls
+- [x] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls
 - [ ] `#105` Notifications and outbound integrations

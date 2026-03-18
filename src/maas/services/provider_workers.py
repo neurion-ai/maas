@@ -5,6 +5,7 @@ import json
 
 from maas.services.provider_jobs import next_queued_provider_job_id
 from maas.services.projects import list_projects, resolve_project_id
+from maas.services.queue_capacity import can_start_provider_jobs
 
 
 WORKER_OFFLINE_AFTER_SECONDS = 60
@@ -160,9 +161,15 @@ def fetch_provider_worker_summary(connection, project_id=None):
 
 def _select_next_job_id(connection, project_id=None, provider_id=None):
     if project_id:
-        return next_queued_provider_job_id(connection, project_id=project_id, provider_id=provider_id)
+        can_start, _snapshot = can_start_provider_jobs(connection, project_id)
+        if not can_start:
+            return project_id, None
+        return project_id, next_queued_provider_job_id(connection, project_id=project_id, provider_id=provider_id)
     active_projects = [project["project_id"] for project in list_projects(connection, include_archived=False)]
     for scoped_project_id in active_projects:
+        can_start, _snapshot = can_start_provider_jobs(connection, scoped_project_id)
+        if not can_start:
+            continue
         job_id = next_queued_provider_job_id(connection, project_id=scoped_project_id, provider_id=provider_id)
         if job_id is not None:
             return scoped_project_id, job_id
@@ -184,8 +191,7 @@ def run_provider_worker_once(connection, project_paths, worker_id, project_id=No
     connection.commit()
 
     if scoped_project_id:
-        job_project_id = scoped_project_id
-        job_id = next_queued_provider_job_id(connection, project_id=scoped_project_id, provider_id=provider_id)
+        job_project_id, job_id = _select_next_job_id(connection, project_id=scoped_project_id, provider_id=provider_id)
     else:
         job_project_id, job_id = _select_next_job_id(connection, provider_id=provider_id)
 

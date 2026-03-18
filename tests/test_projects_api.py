@@ -265,6 +265,31 @@ lint = "imported:lint"
             self.assertEqual(project_row["scheduler_policy"]["max_active_sessions"], 4)
             self.assertFalse(project_row["at_scheduler_capacity"])
 
+    def test_update_provider_capacity_persists_and_is_visible_in_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-provider-capacity",
+                json={
+                    "actor_id": "agent_allocator",
+                    "queue_mode": "draining",
+                    "max_running_jobs": 1,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["provider_capacity"],
+                {"queue_mode": "draining", "max_running_jobs": 1},
+            )
+
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["provider_capacity"]["queue_mode"], "draining")
+            self.assertEqual(project_row["provider_capacity"]["max_running_jobs"], 1)
+
     def test_refresh_repo_plan_endpoint_preserves_progressed_synthesized_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._create_brownfield_repo(tmpdir)

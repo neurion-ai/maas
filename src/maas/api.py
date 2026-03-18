@@ -47,6 +47,7 @@ from maas.services.projects import (
     restore_project,
     update_brownfield_onboarding_review,
 )
+from maas.services.queue_capacity import update_project_queue_capacity_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.repo_plan import refresh_repo_grounded_plan
@@ -260,6 +261,12 @@ class ProjectSchedulerPolicyRequest(BaseModel):
     max_active_sessions: int
 
 
+class ProjectQueueCapacityRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    queue_mode: str
+    max_running_jobs: int
+
+
 def _parse_limit(value, default):
     if value is None:
         return default
@@ -398,6 +405,26 @@ def create_app(project_root="."):
                     "max_active_sessions": payload.max_active_sessions,
                 },
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-provider-capacity")
+    def projects_update_provider_capacity(project_id: str, payload: ProjectQueueCapacityRequest):
+        connection = connect(paths)
+        try:
+            return update_project_queue_capacity_policy(
+                connection,
+                project_id=project_id,
+                actor_id=payload.actor_id,
+                policy={
+                    "queue_mode": payload.queue_mode,
+                    "max_running_jobs": payload.max_running_jobs,
+                },
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

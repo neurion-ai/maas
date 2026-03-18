@@ -639,6 +639,17 @@ export async function updateBrownfieldOnboardingReview(
   });
 }
 
+export async function updateProjectProviderCapacity(
+  projectId: string,
+  payload: { queue_mode: "running" | "draining" | "paused"; max_running_jobs: number }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-provider-capacity`, {
+    actor_id: "agent_allocator",
+    queue_mode: payload.queue_mode,
+    max_running_jobs: payload.max_running_jobs
+  });
+}
+
 export async function refreshRepoPlan(projectId: string) {
   return postJson(`/api/projects/${projectId}/actions/refresh-repo-plan`, {
     actor_id: "agent_allocator"

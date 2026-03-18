@@ -178,6 +178,14 @@ export interface PortfolioProject {
     fair_share_weight: number;
     max_active_sessions: number;
   };
+  provider_capacity: {
+    queue_mode: "running" | "draining" | "paused";
+    max_running_jobs: number;
+    queued_jobs: number;
+    running_jobs: number;
+    at_capacity: boolean;
+    can_start_jobs: boolean;
+  };
   at_scheduler_capacity: boolean;
 }
 

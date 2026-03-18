@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import { StatCard } from "../components/StatCard";
-import { fetchPortfolio, processProviderJob, runOrchestratorPass, updateEscalationStatus } from "../lib/controlRoomApi";
+import {
+  fetchPortfolio,
+  processProviderJob,
+  runOrchestratorPass,
+  updateEscalationStatus,
+  updateProjectProviderCapacity
+} from "../lib/controlRoomApi";
 import { setSelectedProjectId } from "../lib/projectScope";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OrchestratorRunResponse, PortfolioResponse } from "../types";
@@ -95,6 +101,28 @@ export function PortfolioPage() {
     }
   }
 
+  async function handleUpdateProviderCapacity(
+    projectId: string,
+    queueMode: "running" | "draining" | "paused",
+    maxRunningJobs: number
+  ) {
+    const actionKey = `provider-capacity:${projectId}`;
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await updateProjectProviderCapacity(projectId, {
+        queue_mode: queueMode,
+        max_running_jobs: maxRunningJobs
+      });
+      setPortfolio(await fetchPortfolio());
+      setNotice(`Updated provider capacity for ${projectId}.`);
+    } catch {
+      setNotice("Provider capacity update failed; keeping the current command-center snapshot.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   return (
     <section className="control-page">
       <header className="page-hero">
@@ -161,10 +189,53 @@ export function PortfolioPage() {
                   Fair share {project.scheduler_policy.fair_share_weight} · max active sessions {project.scheduler_policy.max_active_sessions}
                   {project.at_scheduler_capacity ? " · at scheduler capacity" : ""}
                 </p>
+                <p>
+                  Queue {project.provider_capacity.queue_mode} · max running jobs {project.provider_capacity.max_running_jobs} ·{" "}
+                  {project.provider_capacity.running_jobs} running / {project.provider_capacity.queued_jobs} queued
+                  {project.provider_capacity.at_capacity ? " · at capacity" : ""}
+                </p>
               </div>
               <div className="data-list__meta">
                 <span>{project.task_count} tasks</span>
                 <span>{project.agent_count} agents</span>
+                <label className="task-inline-control">
+                  <span>Queue mode</span>
+                  <select
+                    value={project.provider_capacity.queue_mode}
+                    disabled={pendingActionKey === `provider-capacity:${project.project_id}`}
+                    onChange={(event) =>
+                      void handleUpdateProviderCapacity(
+                        project.project_id,
+                        event.target.value as "running" | "draining" | "paused",
+                        project.provider_capacity.max_running_jobs
+                      )
+                    }
+                  >
+                    <option value="running">running</option>
+                    <option value="draining">draining</option>
+                    <option value="paused">paused</option>
+                  </select>
+                </label>
+                <label className="task-inline-control">
+                  <span>Max jobs</span>
+                  <select
+                    value={String(project.provider_capacity.max_running_jobs)}
+                    disabled={pendingActionKey === `provider-capacity:${project.project_id}`}
+                    onChange={(event) =>
+                      void handleUpdateProviderCapacity(
+                        project.project_id,
+                        project.provider_capacity.queue_mode,
+                        Number(event.target.value)
+                      )
+                    }
+                  >
+                    {[0, 1, 2, 3, 4, 5].map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   type="button"
                   className="task-action task-action--secondary"

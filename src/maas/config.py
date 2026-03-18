@@ -117,6 +117,10 @@ def build_default_project_config(
             "retry_backoff_max_seconds": 900,
         },
         "providers": deepcopy(DEFAULT_PROVIDER_SETTINGS),
+        "provider_capacity": {
+            "queue_mode": "running",
+            "max_running_jobs": 2,
+        },
     }
 
 

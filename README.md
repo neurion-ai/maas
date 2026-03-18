@@ -51,7 +51,8 @@ Current stacked development chain above `main`:
 - `#99` exists on `codex/verification-runners-evidence-capture`
 - `#100` exists on `codex/git-aware-task-workspaces`
 - `#101` exists on `codex/cross-project-command-center`
-- `#102` is the next unfinished step in the current sequence
+- `#102` exists on `codex/queue-worker-capacity-governance`
+- `#103` is the next unfinished step in the current sequence
 
 ### Current project state
 
@@ -115,7 +116,7 @@ Current stacked development chain above `main`:
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
-- [ ] `#102` Queue and worker capacity controls
+- [x] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls
 - [ ] `#105` Notifications and outbound integrations
@@ -144,7 +145,8 @@ Current stacked development chain above `main`:
 - [x] `#99` is implemented on `codex/verification-runners-evidence-capture`
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` is implemented on `codex/cross-project-command-center`
-- [ ] `#102` is the next unfinished item
+- [x] `#102` is implemented on `codex/queue-worker-capacity-governance`
+- [ ] `#103` is the next unfinished item
 
 ### Extended numbered roadmap
 
@@ -169,7 +171,7 @@ Current stacked development chain above `main`:
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
-- [ ] `#102` Queue and worker capacity controls
+- [x] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls
 - [ ] `#105` Notifications and outbound integrations

@@ -301,6 +301,62 @@ class ProviderJobQueueApiTest(unittest.TestCase):
             self.assertEqual(providers_payload["worker_pool"][0]["worker_id"], "worker:python_script")
             self.assertEqual(providers_payload["worker_pool"][0]["last_job_status"], "completed")
 
+    def test_process_next_and_worker_respect_project_provider_capacity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Capacity Test", description="Provider capacity test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Capacity blocked provider run")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queued_job = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            ).json()
+
+            capacity_response = client.post(
+                f"/api/projects/{project_id}/actions/update-provider-capacity",
+                json={
+                    "actor_id": "agent_allocator",
+                    "queue_mode": "paused",
+                    "max_running_jobs": 1,
+                },
+            )
+            self.assertEqual(capacity_response.status_code, 200)
+
+            blocked_next = client.post(
+                "/api/provider-jobs/actions/process-next",
+                json={"actor_id": "agent_allocator", "project_id": project_id, "provider_id": "python_script"},
+            ).json()
+            self.assertFalse(blocked_next["processed"])
+
+            blocked_worker = client.post(
+                "/api/provider-workers/actions/run-once",
+                json={"worker_id": "worker:python_script", "project_id": project_id, "provider_id": "python_script"},
+            ).json()
+            self.assertFalse(blocked_worker["processed"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                job_row = connection.execute(
+                    "SELECT status FROM provider_job_queue WHERE job_id = ?",
+                    (queued_job["job_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(job_row["status"], "queued")
+
 
 if __name__ == "__main__":
     unittest.main()

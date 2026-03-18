@@ -4,6 +4,7 @@ import json
 
 from maas.ids import generate_id
 from maas.providers import list_provider_status
+from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.provider_runtime import process_next_provider_job
 from maas.supervisor import run_supervisor_once
 
@@ -65,6 +66,30 @@ def run_orchestrator_once(
         scoped_project_id = project_run["project_id"]
         processed_jobs = []
         queue_controls = _provider_queue_controls(connection, scoped_project_id)
+        project_capacity = queue_capacity_snapshot(connection, scoped_project_id)
+        if project_capacity["queue_mode"] != "running":
+            queue_controls["__project_capacity__"] = project_capacity
+            summary = {
+                "assigned_count": project_run["assigned_count"],
+                "ready_changes": len(project_run["ready_changes"]),
+                "stale_sessions": len(project_run["stale_sessions"]),
+                "auto_recovered_tasks": len(project_run["auto_recovered_tasks"]),
+                "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
+                "provider_jobs_processed": 0,
+                "queue_controls": queue_controls,
+                "project_capacity": project_capacity,
+            }
+            _record_orchestrator_activity(connection, scoped_project_id, summary)
+            project_runs.append(
+                {
+                    **project_run,
+                    "provider_jobs_processed": 0,
+                    "processed_jobs": [],
+                    "queue_controls": queue_controls,
+                    "project_capacity": project_capacity,
+                }
+            )
+            continue
         for provider_id, control in queue_controls.items():
             if control["queue_paused"]:
                 continue
@@ -89,6 +114,7 @@ def run_orchestrator_once(
             "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
             "provider_jobs_processed": len(processed_jobs),
             "queue_controls": queue_controls,
+            "project_capacity": project_capacity,
         }
         _record_orchestrator_activity(connection, scoped_project_id, summary)
         project_runs.append(
@@ -97,6 +123,7 @@ def run_orchestrator_once(
                 "provider_jobs_processed": len(processed_jobs),
                 "processed_jobs": processed_jobs,
                 "queue_controls": queue_controls,
+                "project_capacity": project_capacity,
             }
         )
 

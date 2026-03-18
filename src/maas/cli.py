@@ -29,6 +29,7 @@ from maas.services.projects import (
     restore_project,
     update_brownfield_onboarding_review,
 )
+from maas.services.queue_capacity import update_project_queue_capacity_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.orchestrator import run_orchestrator_once
@@ -138,6 +139,13 @@ def build_parser():
     project_scheduler_policy_parser.add_argument("--actor-id", default="agent_allocator")
     project_scheduler_policy_parser.add_argument("--fair-share-weight", type=int, required=True)
     project_scheduler_policy_parser.add_argument("--max-active-sessions", type=int, required=True)
+
+    project_provider_capacity_parser = project_subparsers.add_parser("set-provider-capacity")
+    project_provider_capacity_parser.add_argument("--project-root", default=".")
+    project_provider_capacity_parser.add_argument("--project-id", required=True)
+    project_provider_capacity_parser.add_argument("--actor-id", default="agent_allocator")
+    project_provider_capacity_parser.add_argument("--queue-mode", choices=("running", "draining", "paused"), required=True)
+    project_provider_capacity_parser.add_argument("--max-running-jobs", type=int, required=True)
 
     project_refresh_repo_plan_parser = project_subparsers.add_parser("refresh-repo-plan")
     project_refresh_repo_plan_parser.add_argument("--project-root", default=".")
@@ -566,6 +574,21 @@ def command_project(args):
                         {
                             "fair_share_weight": args.fair_share_weight,
                             "max_active_sessions": args.max_active_sessions,
+                        },
+                    ),
+                    indent=2,
+                )
+            )
+        elif args.project_command == "set-provider-capacity":
+            print(
+                json.dumps(
+                    update_project_queue_capacity_policy(
+                        connection,
+                        project_id=args.project_id,
+                        actor_id=args.actor_id,
+                        policy={
+                            "queue_mode": args.queue_mode,
+                            "max_running_jobs": args.max_running_jobs,
                         },
                     ),
                     indent=2,

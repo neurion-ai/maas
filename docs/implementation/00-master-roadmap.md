@@ -37,7 +37,8 @@ Current stacked development chain above `main`:
 - `#99` exists on `codex/verification-runners-evidence-capture`
 - `#100` exists on `codex/git-aware-task-workspaces`
 - `#101` exists on `codex/cross-project-command-center`
-- `#102` is the next unfinished item in sequence
+- `#102` exists on `codex/queue-worker-capacity-governance`
+- `#103` is the next unfinished item in sequence
 
 | Batch | Checklist | Notes |
 |---|---|---|
@@ -104,7 +105,7 @@ Current stacked development chain above `main`:
   add task branches/worktrees, changed-file tracking, and reviewable diff artifacts.
 - [x] `#101` Cross-project command center:
   add a portfolio-level operator surface for escalations, recovery pressure, and global system health.
-- [ ] `#102` Queue and worker capacity controls:
+- [x] `#102` Queue and worker capacity controls:
   broaden capacity governance beyond per-provider pass limits into queue concurrency and drain controls.
 - [ ] `#103` Policy-driven approval and risk routing:
   route risky actions into approval flows based on project policy and touched scope.
@@ -138,7 +139,8 @@ Current stacked development chain above `main`:
 - [x] `#99` is implemented on `codex/verification-runners-evidence-capture`
 - [x] `#100` is implemented on `codex/git-aware-task-workspaces`
 - [x] `#101` is implemented on `codex/cross-project-command-center`
-- [ ] `#102` is the next unfinished item
+- [x] `#102` is implemented on `codex/queue-worker-capacity-governance`
+- [ ] `#103` is the next unfinished item
 
 ## Extended Numbered Roadmap
 
@@ -163,7 +165,7 @@ Current stacked development chain above `main`:
 - [x] `#99` Verification runners and evidence capture
 - [x] `#100` Git-aware task workspaces and diff review
 - [x] `#101` Cross-project command center
-- [ ] `#102` Queue and worker capacity controls
+- [x] `#102` Queue and worker capacity controls
 - [ ] `#103` Policy-driven approval and risk routing
 - [ ] `#104` Cost, runtime, and quota controls
 - [ ] `#105` Notifications and outbound integrations

@@ -42,7 +42,15 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
     return (providers?.providers ?? []).reduce(
       (summary, provider) => {
         summary.total += 1;
-        if (provider.status === "configured") {
+        const preflightStatus = provider.latest_preflight?.status ?? null;
+        const isReady =
+          provider.status === "configured" ||
+          provider.status === "available" ||
+          provider.status === "simulated" ||
+          preflightStatus === "passed" ||
+          preflightStatus === "simulation_ready" ||
+          (provider.is_runnable ?? false);
+        if (isReady) {
           summary.ready += 1;
         }
         if (provider.status === "misconfigured") {

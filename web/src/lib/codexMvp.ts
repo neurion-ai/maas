@@ -27,7 +27,7 @@ export function openBoardTasks(columns: BoardColumn[]) {
 }
 
 export function resolvedBoardTasks(columns: BoardColumn[]) {
-  return flattenBoard(columns).filter((task) => task.status === "done");
+  return flattenBoard(columns).filter((task) => task.status === "done" || task.status === "cancelled");
 }
 
 export function operatorQueueTasks(tasks: BoardTask[]) {

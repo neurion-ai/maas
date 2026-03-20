@@ -203,7 +203,7 @@ export function CodexIssuesPage() {
           <span className="codex-chip">{counts.review} review</span>
           <span className="codex-chip">{counts.blocked} blocked</span>
           <span className="codex-chip">{failures.length} recent failures</span>
-          <span className="codex-chip">{counts.done} done</span>
+          <span className="codex-chip">{counts.done} resolved</span>
         </div>
       </div>
 

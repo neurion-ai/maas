@@ -342,7 +342,7 @@ export function CodexWorkPage() {
           <span className="codex-chip">{counts.in_progress} in progress</span>
           <span className="codex-chip">{counts.review} review</span>
           <span className="codex-chip">{counts.blocked} blocked</span>
-          <span className="codex-chip">{counts.done} done</span>
+          <span className="codex-chip">{counts.done} resolved</span>
         </div>
       </div>
 
@@ -391,7 +391,7 @@ export function CodexWorkPage() {
             <div className="codex-panel__header">
               <div>
                 <span className="codex-kicker">Resolved</span>
-                <h2>{counts.done} landed issues</h2>
+                <h2>{counts.done} resolved issues</h2>
               </div>
             </div>
             <div className="codex-resolved-list">

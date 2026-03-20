@@ -97,6 +97,20 @@ def _provider_uses_detached_workers(connection, project_id, provider_id):
     return provider.get("effective_execution_mode") in {"codex_cli", "claude_cli"}
 
 
+def _queued_provider_job_count(connection, project_id, provider_id):
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS queued_jobs
+        FROM provider_job_queue
+        WHERE project_id = ?
+          AND provider_id = ?
+          AND status = 'queued'
+        """,
+        (project_id, provider_id),
+    ).fetchone()
+    return int(row["queued_jobs"]) if row is not None else 0
+
+
 def run_orchestrator_once(
     connection,
     project_paths,
@@ -168,8 +182,14 @@ def run_orchestrator_once(
         for provider_id, control in queue_controls.items():
             if control["queue_paused"]:
                 continue
+            effective_limit = min(max(provider_job_limit or 0, 0), control["job_limit_per_pass"])
+            if effective_limit <= 0:
+                continue
             if _provider_uses_detached_workers(connection, scoped_project_id, provider_id):
-                launch_count = queued_job_counts.get(provider_id, 0)
+                launch_count = min(
+                    _queued_provider_job_count(connection, scoped_project_id, provider_id),
+                    effective_limit,
+                )
                 if launch_count > 0:
                     if not detached_workers_started:
                         connection.commit()
@@ -183,7 +203,6 @@ def run_orchestrator_once(
                         )
                     )
                 continue
-            effective_limit = min(max(provider_job_limit or 0, 0), control["job_limit_per_pass"])
             for _ in range(effective_limit):
                 next_job = process_next_provider_job(
                     connection,

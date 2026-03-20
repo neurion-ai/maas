@@ -220,6 +220,75 @@ class OrchestratorApiTest(unittest.TestCase):
             self.assertEqual(job_row["status"], "queued")
             self.assertIsNone(job_row["session_id"])
 
+    def test_orchestrator_run_dispatches_preexisting_live_jobs_to_detached_workers(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Orchestrator Existing Detached Jobs Test",
+                description="orchestrator existing detached jobs test",
+                project_type="custom",
+            )
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["goal_id"]
+                connection.execute("UPDATE tasks SET status = 'done', review_state = 'approved'")
+                task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Existing queued live Codex work",
+                )
+                queued_job = queue_provider_task(
+                    connection,
+                    paths,
+                    provider_id="openai_codex",
+                    actor_id="agent_allocator",
+                    project_id=project_id,
+                    agent_id="agent_reviewer",
+                    task_id=task_id,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            with patch("maas.services.orchestrator._provider_uses_detached_workers", return_value=True), patch(
+                "maas.services.orchestrator.launch_detached_provider_workers",
+                return_value=["pworker_existing_1"],
+            ) as launch_workers:
+                response = client.post(
+                    "/api/orchestrator/run",
+                    json={"allocate_limit": 0, "provider_job_limit": 2, "auto_launch_assigned_work": False},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["provider_jobs_queued"], 0)
+            self.assertEqual(payload["provider_jobs_processed"], 0)
+            self.assertEqual(payload["provider_jobs_dispatched"], 1)
+            launch_workers.assert_called_once()
+
+            project_run = payload["project_runs"][0]
+            self.assertEqual(project_run["provider_jobs_queued"], 0)
+            self.assertEqual(project_run["provider_jobs_processed"], 0)
+            self.assertEqual(project_run["provider_jobs_dispatched"], 1)
+
+            connection = connect(paths)
+            try:
+                job_row = connection.execute(
+                    "SELECT status FROM provider_job_queue WHERE job_id = ?",
+                    (queued_job["job_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(job_row["status"], "queued")
+
     def test_orchestrator_honors_provider_queue_pause_and_limit_controls(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

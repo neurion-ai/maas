@@ -8,10 +8,33 @@ from fastapi.testclient import TestClient
 
 from maas.api import create_app
 from maas.db import connect, project_paths
+from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.provider_runtime import queue_provider_task
+from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
 
 class ProjectsApiTest(unittest.TestCase):
+    def _insert_assigned_task(self, connection, project_id, goal_id, agent_id, title):
+        task_id = generate_id("task")
+        connection.execute(
+            """
+            INSERT INTO tasks (
+                task_id, project_id, goal_id, title, description, status, priority, assigned_agent_id, acceptance_criteria_json
+            ) VALUES (?, ?, ?, ?, '', 'assigned', 70, ?, '[]')
+            """,
+            (task_id, project_id, goal_id, title, agent_id),
+        )
+        grant_task_capabilities(
+            connection,
+            project_id,
+            task_id,
+            agent_id,
+            TASK_EXECUTION_CAPABILITIES,
+            granted_by="test_setup",
+        )
+        return task_id
+
     def _create_brownfield_repo(self, root):
         os.makedirs(os.path.join(root, "src"), exist_ok=True)
         os.makedirs(os.path.join(root, "tests"), exist_ok=True)
@@ -112,6 +135,66 @@ lint = "imported:lint"
 
             projects_payload = client.get("/api/projects").json()
             self.assertFalse(any(project["project_id"] == project_id for project in projects_payload["projects"]))
+
+    def test_delete_project_rejects_projects_with_queued_provider_jobs(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Queued Workspace",
+                    "description": "greenfield",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                    "create_source_root": True,
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            payload = create_response.json()
+            project_id = payload["project"]["project_id"]
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals WHERE project_id = ? ORDER BY created_at ASC LIMIT 1",
+                    (project_id,),
+                ).fetchone()["goal_id"]
+                task_id = self._insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Queued provider work",
+                )
+                queue_provider_task(
+                    connection,
+                    project_paths(tmpdir),
+                    provider_id="python_script",
+                    actor_id="agent_allocator",
+                    project_id=project_id,
+                    agent_id="agent_reviewer",
+                    task_id=task_id,
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            delete_response = client.post(
+                f"/api/projects/{project_id}/actions/delete",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(delete_response.status_code, 400)
+            self.assertEqual(
+                delete_response.json()["detail"],
+                "cannot delete a project with queued or running provider jobs",
+            )
+
+            projects_payload = client.get("/api/projects").json()
+            self.assertTrue(any(project["project_id"] == project_id for project in projects_payload["projects"]))
 
     def test_system_pick_directory_endpoint_returns_native_picker_result(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -559,6 +559,17 @@ def delete_project(connection, project_paths, project_id, actor_id):
     ).fetchone()
     if active_session is not None:
         raise ValueError("cannot delete a project with an active session")
+    active_provider_job = connection.execute(
+        """
+        SELECT job_id
+        FROM provider_job_queue
+        WHERE project_id = ? AND status IN ('queued', 'running')
+        LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if active_provider_job is not None:
+        raise ValueError("cannot delete a project with queued or running provider jobs")
 
     config = _load_project_config(project["config_json"])
     generated_source_root = bool((config.get("project") or {}).get("generated_source_root"))

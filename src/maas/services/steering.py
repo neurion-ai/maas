@@ -392,7 +392,7 @@ def _load_purgeable_artifact_scope(connection, project_paths, actor_id, task_id=
     }
 
 
-def review_task(connection, task_id, actor_id, decision):
+def apply_review_decision(connection, task_id, actor_id, decision, commit=True, automated=False):
     task = connection.execute(
         """
         SELECT task_id, project_id, assigned_agent_id, status, title, review_state
@@ -403,13 +403,12 @@ def review_task(connection, task_id, actor_id, decision):
     ).fetchone()
     if task is None:
         raise ValueError("Task not found")
-    ensure_board_action_allowed(connection, actor_id, task["project_id"], "review_task", "task", task_id)
     if task["status"] != "review":
         raise ValueError("Task is not in review")
     if decision not in ("approve", "reject"):
         raise ValueError("Unsupported review decision")
     is_brownfield_onboarding_review = _is_brownfield_onboarding_review_task(connection, task)
-    audit_detail = {"decision": decision}
+    audit_detail = {"decision": decision, "automated": automated}
 
     if decision == "approve" and is_brownfield_onboarding_review:
         connection.execute(
@@ -455,7 +454,7 @@ def review_task(connection, task_id, actor_id, decision):
             """,
             (task_id,),
         )
-        description = "Review approved; task marked done."
+        description = "Verification passed; task auto-approved and marked done." if automated else "Review approved; task marked done."
     elif is_brownfield_onboarding_review:
         connection.execute(
             """
@@ -499,8 +498,24 @@ def review_task(connection, task_id, actor_id, decision):
         audit_detail,
     )
     _activity(connection, task["project_id"], task["assigned_agent_id"], task_id, "review_decision", description)
-    connection.commit()
+    if commit:
+        connection.commit()
     return {"task_id": task_id, "decision": decision}
+
+
+def review_task(connection, task_id, actor_id, decision):
+    task = connection.execute(
+        """
+        SELECT project_id
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if task is None:
+        raise ValueError("Task not found")
+    ensure_board_action_allowed(connection, actor_id, task["project_id"], "review_task", "task", task_id)
+    return apply_review_decision(connection, task_id, actor_id, decision, commit=True, automated=False)
 
 
 def halt_task(connection, task_id, actor_id):

@@ -378,6 +378,146 @@ class OrchestratorApiTest(unittest.TestCase):
             self.assertEqual(statuses[first_job["job_id"]], "completed")
             self.assertEqual(statuses[second_job["job_id"]], "queued")
 
+    def test_orchestrator_draining_processes_queued_work_without_auto_launching_new_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Orchestrator Draining Test",
+                description="orchestrator draining test",
+                project_type="custom",
+            )
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["goal_id"]
+                connection.execute("UPDATE tasks SET status = 'done', review_state = 'approved'")
+                queued_task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Queued draining work",
+                )
+                launch_ready_task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Assigned but not yet queued",
+                )
+                queued_job = queue_provider_task(
+                    connection,
+                    paths,
+                    provider_id="python_script",
+                    actor_id="agent_allocator",
+                    project_id=project_id,
+                    agent_id="agent_reviewer",
+                    task_id=queued_task_id,
+                )
+                connection.execute(
+                    """
+                    UPDATE projects
+                    SET config_json = json_set(
+                        json_set(config_json, '$.provider_capacity.queue_mode', 'draining'),
+                        '$.provider_capacity.preferred_provider_id',
+                        'python_script'
+                    )
+                    WHERE project_id = ?
+                    """,
+                    (project_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            payload = client.post(
+                "/api/orchestrator/run",
+                json={"allocate_limit": 0, "provider_job_limit": 2, "auto_launch_assigned_work": True},
+            ).json()
+
+            self.assertEqual(payload["provider_jobs_queued"], 0)
+            self.assertEqual(payload["provider_jobs_processed"], 1)
+            self.assertEqual(payload["project_runs"][0]["launch_provider_id"], None)
+
+            connection = connect(paths)
+            try:
+                job_rows = connection.execute(
+                    "SELECT task_id, status FROM provider_job_queue ORDER BY created_at ASC"
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(len(job_rows), 1)
+            self.assertEqual(job_rows[0]["task_id"], queued_task_id)
+            self.assertEqual(job_rows[0]["status"], "completed")
+
+    def test_orchestrator_auto_launch_uses_project_preferred_provider(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Orchestrator Preferred Provider Test",
+                description="orchestrator preferred provider test",
+                project_type="custom",
+            )
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["goal_id"]
+                connection.execute("UPDATE tasks SET status = 'done', review_state = 'approved'")
+                task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Launch through preferred provider",
+                )
+                connection.execute(
+                    """
+                    UPDATE projects
+                    SET config_json = json_set(config_json, '$.provider_capacity.preferred_provider_id', 'python_script')
+                    WHERE project_id = ?
+                    """,
+                    (project_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/orchestrator/run",
+                json={"allocate_limit": 0, "provider_job_limit": 2, "auto_launch_assigned_work": True},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["provider_jobs_queued"], 1)
+            self.assertEqual(payload["project_runs"][0]["launch_provider_id"], "python_script")
+
+            connection = connect(paths)
+            try:
+                job_row = connection.execute(
+                    """
+                    SELECT provider_id, status
+                    FROM provider_job_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(job_row["provider_id"], "python_script")
+            self.assertEqual(job_row["status"], "completed")
+
 
 if __name__ == "__main__":
     unittest.main()

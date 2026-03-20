@@ -130,6 +130,16 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertIn("stderr line 1", payload["run_console"]["stderr_preview"]["content"])
             self.assertGreaterEqual(len(payload["run_console"]["activity"]), 2)
 
+            run_response = client.get(f"/api/runs/{session_id}")
+            self.assertEqual(run_response.status_code, 200)
+            run_payload = run_response.json()
+            self.assertEqual(run_payload["session_id"], session_id)
+            self.assertEqual(run_payload["task_id"], task["task_id"])
+            self.assertEqual(run_payload["execution_mode"], "codex_cli")
+            self.assertEqual(run_payload["external_runtime"], "codex_cli")
+            self.assertTrue(run_payload["is_live"])
+            self.assertIn("step 1 complete", run_payload["output_preview"]["content"])
+
     def test_issue_detail_exposes_relationships_runs_history_and_stable_issue_key(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Codex MVP Test", description="codex mvp", project_type="custom")

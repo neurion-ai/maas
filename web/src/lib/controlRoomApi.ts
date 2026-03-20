@@ -9,6 +9,7 @@ import type {
   ArtifactsResponse,
   CodexAgentDetailResponse,
   CodexIssueDetailResponse,
+  CodexRunDetailResponse,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
@@ -672,12 +673,33 @@ export async function updateBrownfieldOnboardingReview(
 
 export async function updateProjectProviderCapacity(
   projectId: string,
-  payload: { queue_mode: "running" | "draining" | "paused"; max_running_jobs: number }
+  payload: {
+    queue_mode: "running" | "draining" | "paused";
+    max_running_jobs: number;
+    preferred_provider_id?: string | null;
+  }
 ) {
   return postJson(`/api/projects/${projectId}/actions/update-provider-capacity`, {
     actor_id: "agent_allocator",
     queue_mode: payload.queue_mode,
-    max_running_jobs: payload.max_running_jobs
+    max_running_jobs: payload.max_running_jobs,
+    preferred_provider_id: payload.preferred_provider_id ?? null
+  });
+}
+
+export async function updateProjectReviewPolicy(
+  projectId: string,
+  payload: {
+    auto_approve_low_risk: boolean;
+    max_priority_for_auto_approve: number;
+    require_verification_pass: boolean;
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-review-policy`, {
+    actor_id: "agent_allocator",
+    auto_approve_low_risk: payload.auto_approve_low_risk,
+    max_priority_for_auto_approve: payload.max_priority_for_auto_approve,
+    require_verification_pass: payload.require_verification_pass,
   });
 }
 
@@ -862,6 +884,27 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
       artifact_summary: ARTIFACTS_FALLBACK.summary,
       verification_runs: [],
       git_workspace: null,
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexRunDetail(sessionId: string, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexRunDetailResponse>(
+    `/api/runs/${sessionId}`,
+    {
+      session_id: sessionId,
+      provider_type: "openai_codex",
+      status: "unknown",
+      started_at: new Date().toISOString(),
+      is_live: false,
+      activity: [],
+      artifacts: [],
+      artifact_summary: ARTIFACTS_FALLBACK.summary,
+      output_preview: null,
+      stdout_preview: null,
+      stderr_preview: null,
     },
     signal,
     onFallback

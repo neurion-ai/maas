@@ -5,7 +5,8 @@ import {
   fetchPortfolio,
   pickLocalDirectory,
   runOrchestratorPass,
-  runSupervisorPass
+  runSupervisorPass,
+  updateProjectReviewPolicy
 } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OverviewResponse, PortfolioProject, PortfolioResponse, ProjectSummary } from "../types";
@@ -340,6 +341,17 @@ export function ProjectsPage({
     return null;
   }
 
+  function deleteDisabledReason(projectId: string) {
+    const portfolioProject = portfolioById.get(projectId);
+    if ((portfolioProject?.active_sessions ?? 0) > 0) {
+      return "Wait for active sessions to finish before deleting this project.";
+    }
+    if ((portfolioProject?.provider_capacity.queued_jobs ?? 0) > 0 || (portfolioProject?.provider_capacity.running_jobs ?? 0) > 0) {
+      return "Queued or running provider jobs must finish before this project can be deleted.";
+    }
+    return null;
+  }
+
   function coerceDroppedPath(dataTransfer: DataTransfer) {
     const uriList = dataTransfer.getData("text/uri-list").trim();
     if (uriList.startsWith("file://")) {
@@ -501,7 +513,8 @@ export function ProjectsPage({
                 <button
                   type="button"
                   className="hero-button hero-button--ghost hero-button--compact"
-                  disabled={projectSubmitting}
+                  disabled={projectSubmitting || deleteDisabledReason(selectedProject.project_id) != null}
+                  title={deleteDisabledReason(selectedProject.project_id) ?? undefined}
                   onClick={() => {
                     if (!window.confirm(`Delete ${selectedProject.name}? This removes its MAAS state${selectedProject.source_root ? " and any generated workspace path if MAAS created it" : ""}.`)) {
                       return;
@@ -514,6 +527,9 @@ export function ProjectsPage({
               </div>
               {archiveDisabledReason(selectedProject.project_id) ? (
                 <p className="field-hint">{archiveDisabledReason(selectedProject.project_id)}</p>
+              ) : null}
+              {deleteDisabledReason(selectedProject.project_id) ? (
+                <p className="field-hint">{deleteDisabledReason(selectedProject.project_id)}</p>
               ) : null}
             </div>
           ) : (
@@ -660,6 +676,114 @@ export function ProjectsPage({
         </article>
       </section>
 
+      {selectedProject && selectedPortfolioProject ? (
+        <section className="single-column-grid">
+          <article className="surface-card">
+            <div className="surface-card__header">
+              <div>
+                <span className="eyebrow">Review policy</span>
+                <h2>Reduce manual review load</h2>
+              </div>
+            </div>
+            <div className="detail-grid">
+              <div>
+                <span>Auto-approve low-risk work</span>
+                <strong>{selectedPortfolioProject.review_policy.auto_approve_low_risk ? "Enabled" : "Disabled"}</strong>
+              </div>
+              <div>
+                <span>Priority ceiling</span>
+                <strong>{selectedPortfolioProject.review_policy.max_priority_for_auto_approve}</strong>
+              </div>
+              <div>
+                <span>Verification required</span>
+                <strong>{selectedPortfolioProject.review_policy.require_verification_pass ? "Required" : "Optional"}</strong>
+              </div>
+            </div>
+            <p className="project-form__hint">
+              Low-risk issues with passing verification can skip the manual review queue when this policy is enabled.
+            </p>
+            <div className="surface-card__actions">
+              <button
+                type="button"
+                className="hero-button hero-button--compact"
+                disabled={pendingActionKey === "review-policy:toggle"}
+                onClick={async () => {
+                  setPendingActionKey("review-policy:toggle");
+                  setNotice(null);
+                  try {
+                    await updateProjectReviewPolicy(selectedProject.project_id, {
+                      auto_approve_low_risk: !selectedPortfolioProject.review_policy.auto_approve_low_risk,
+                      max_priority_for_auto_approve: selectedPortfolioProject.review_policy.max_priority_for_auto_approve,
+                      require_verification_pass: selectedPortfolioProject.review_policy.require_verification_pass,
+                    });
+                    setPortfolio(await fetchPortfolio());
+                    setNotice(
+                      !selectedPortfolioProject.review_policy.auto_approve_low_risk
+                        ? "Enabled low-risk auto-approval."
+                        : "Disabled low-risk auto-approval."
+                    );
+                  } catch {
+                    setNotice("Could not update the review policy.");
+                  } finally {
+                    setPendingActionKey(null);
+                  }
+                }}
+              >
+                {selectedPortfolioProject.review_policy.auto_approve_low_risk ? "Disable auto-approve" : "Enable auto-approve"}
+              </button>
+              <button
+                type="button"
+                className="hero-button hero-button--ghost hero-button--compact"
+                disabled={pendingActionKey === "review-policy:tighten"}
+                onClick={async () => {
+                  setPendingActionKey("review-policy:tighten");
+                  setNotice(null);
+                  try {
+                    await updateProjectReviewPolicy(selectedProject.project_id, {
+                      auto_approve_low_risk: selectedPortfolioProject.review_policy.auto_approve_low_risk,
+                      max_priority_for_auto_approve: Math.max(0, selectedPortfolioProject.review_policy.max_priority_for_auto_approve - 10),
+                      require_verification_pass: true,
+                    });
+                    setPortfolio(await fetchPortfolio());
+                    setNotice("Tightened the auto-approve priority ceiling.");
+                  } catch {
+                    setNotice("Could not update the review policy.");
+                  } finally {
+                    setPendingActionKey(null);
+                  }
+                }}
+              >
+                Tighten policy
+              </button>
+              <button
+                type="button"
+                className="hero-button hero-button--ghost hero-button--compact"
+                disabled={pendingActionKey === "review-policy:loosen"}
+                onClick={async () => {
+                  setPendingActionKey("review-policy:loosen");
+                  setNotice(null);
+                  try {
+                    await updateProjectReviewPolicy(selectedProject.project_id, {
+                      auto_approve_low_risk: selectedPortfolioProject.review_policy.auto_approve_low_risk,
+                      max_priority_for_auto_approve: selectedPortfolioProject.review_policy.max_priority_for_auto_approve + 10,
+                      require_verification_pass: selectedPortfolioProject.review_policy.require_verification_pass,
+                    });
+                    setPortfolio(await fetchPortfolio());
+                    setNotice("Expanded the auto-approve priority ceiling.");
+                  } catch {
+                    setNotice("Could not update the review policy.");
+                  } finally {
+                    setPendingActionKey(null);
+                  }
+                }}
+              >
+                Expand policy
+              </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
       <section className="two-column-grid">
         <article className="surface-card">
           <div className="surface-card__header">
@@ -721,7 +845,8 @@ export function ProjectsPage({
                     <button
                       type="button"
                       className="hero-button hero-button--ghost hero-button--compact"
-                      disabled={projectSubmitting}
+                      disabled={projectSubmitting || deleteDisabledReason(project.project_id) != null}
+                      title={deleteDisabledReason(project.project_id) ?? undefined}
                       onClick={() => {
                         if (!window.confirm(`Delete ${project.name}? This removes its MAAS state${project.source_root ? " and any generated workspace path if MAAS created it" : ""}.`)) {
                           return;
@@ -734,6 +859,9 @@ export function ProjectsPage({
                   </div>
                   {archiveDisabledReason(project.project_id) ? (
                     <p className="field-hint">{archiveDisabledReason(project.project_id)}</p>
+                  ) : null}
+                  {deleteDisabledReason(project.project_id) ? (
+                    <p className="field-hint">{deleteDisabledReason(project.project_id)}</p>
                   ) : null}
                 </div>
               );
@@ -776,7 +904,7 @@ export function ProjectsPage({
                     onProjectFormChange({ ...projectForm, mode: "greenfield", sourceRoot: "" });
                   }}
                 >
-                  New workspace
+                  Fresh test workspace
                 </button>
               </div>
             </div>
@@ -900,7 +1028,8 @@ export function ProjectsPage({
                     <button
                       type="button"
                       className="hero-button hero-button--ghost hero-button--compact"
-                      disabled={projectSubmitting}
+                      disabled={projectSubmitting || deleteDisabledReason(project.project_id) != null}
+                      title={deleteDisabledReason(project.project_id) ?? undefined}
                       onClick={() => {
                         if (!window.confirm(`Delete ${project.name}? This removes its MAAS state${project.source_root ? " and any generated workspace path if MAAS created it" : ""}.`)) {
                           return;

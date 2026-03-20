@@ -2,6 +2,7 @@
 
 import json
 
+from maas.config import DEFAULT_PROVIDER_SETTINGS
 from maas.ids import generate_id
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.security import ensure_board_action_allowed
@@ -36,6 +37,7 @@ def default_queue_capacity_policy():
     return {
         "queue_mode": DEFAULT_QUEUE_MODE,
         "max_running_jobs": DEFAULT_MAX_RUNNING_JOBS,
+        "preferred_provider_id": "openai_codex",
     }
 
 
@@ -44,6 +46,15 @@ def normalize_queue_capacity_policy(policy=None):
     queue_mode = (requested.get("queue_mode") or DEFAULT_QUEUE_MODE).strip().lower()
     if queue_mode not in QUEUE_MODES:
         raise ValueError("queue_mode must be one of: draining, paused, running.")
+    preferred_provider_id = requested.get("preferred_provider_id")
+    if preferred_provider_id is None:
+        normalized_provider_id = default_queue_capacity_policy()["preferred_provider_id"]
+    elif not isinstance(preferred_provider_id, str):
+        raise ValueError("preferred_provider_id must be a provider id string or null.")
+    else:
+        normalized_provider_id = preferred_provider_id.strip() or None
+    if normalized_provider_id is not None and normalized_provider_id not in DEFAULT_PROVIDER_SETTINGS:
+        raise ValueError("preferred_provider_id must reference a supported provider.")
     return {
         "queue_mode": queue_mode,
         "max_running_jobs": _normalize_int(
@@ -51,6 +62,7 @@ def normalize_queue_capacity_policy(policy=None):
             "max_running_jobs",
             minimum=0,
         ),
+        "preferred_provider_id": normalized_provider_id,
     }
 
 
@@ -63,6 +75,7 @@ def queue_capacity_policy_from_row(project_row):
         {
             "queue_mode": raw_policy.get("queue_mode", DEFAULT_QUEUE_MODE),
             "max_running_jobs": raw_policy.get("max_running_jobs", DEFAULT_MAX_RUNNING_JOBS),
+            "preferred_provider_id": raw_policy.get("preferred_provider_id", default_queue_capacity_policy()["preferred_provider_id"]),
         }
     )
 
@@ -92,14 +105,18 @@ def update_project_queue_capacity_policy(connection, project_id, actor_id, polic
         UPDATE projects
         SET config_json = json_set(
                 json_set(
-                    CASE
-                        WHEN json_valid(config_json) THEN config_json
-                        ELSE '{}'
-                    END,
-                    '$.provider_capacity.queue_mode',
+                    json_set(
+                        CASE
+                            WHEN json_valid(config_json) THEN config_json
+                            ELSE '{}'
+                        END,
+                        '$.provider_capacity.queue_mode',
+                        ?
+                    ),
+                    '$.provider_capacity.max_running_jobs',
                     ?
                 ),
-                '$.provider_capacity.max_running_jobs',
+                '$.provider_capacity.preferred_provider_id',
                 ?
             ),
             updated_at = CURRENT_TIMESTAMP
@@ -108,6 +125,7 @@ def update_project_queue_capacity_policy(connection, project_id, actor_id, polic
         (
             normalized["queue_mode"],
             normalized["max_running_jobs"],
+            normalized["preferred_provider_id"],
             resolved_project_id,
         ),
     )
@@ -159,19 +177,23 @@ def queue_capacity_snapshot(connection, project_id):
     ).fetchone()
     queued_jobs = counts_row["queued_jobs"] or 0
     running_jobs = counts_row["running_jobs"] or 0
-    can_start = policy["queue_mode"] == "running" and running_jobs < policy["max_running_jobs"]
+    can_start_queued = policy["queue_mode"] in {"running", "draining"} and running_jobs < policy["max_running_jobs"]
+    can_launch_new = policy["queue_mode"] == "running" and running_jobs < policy["max_running_jobs"]
     return {
         **policy,
         "queued_jobs": queued_jobs,
         "running_jobs": running_jobs,
         "at_capacity": running_jobs >= policy["max_running_jobs"],
-        "can_start_jobs": can_start,
+        "can_start_jobs": can_start_queued,
+        "can_launch_jobs": can_launch_new,
     }
 
 
-def can_start_provider_jobs(connection, project_id):
+def can_start_provider_jobs(connection, project_id, include_draining=True):
     snapshot = queue_capacity_snapshot(connection, project_id)
-    if snapshot["queue_mode"] != "running":
+    if snapshot["queue_mode"] == "paused":
+        return False, snapshot
+    if snapshot["queue_mode"] == "draining" and not include_draining:
         return False, snapshot
     if snapshot["running_jobs"] >= snapshot["max_running_jobs"]:
         return False, snapshot

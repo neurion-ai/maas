@@ -120,6 +120,12 @@ def build_default_project_config(
         "provider_capacity": {
             "queue_mode": "running",
             "max_running_jobs": 2,
+            "preferred_provider_id": "openai_codex",
+        },
+        "review_policy": {
+            "auto_approve_low_risk": True,
+            "max_priority_for_auto_approve": 69,
+            "require_verification_pass": True,
         },
         "risk_policy": {
             "priority_threshold": 101,

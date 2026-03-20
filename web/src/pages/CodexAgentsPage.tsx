@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { assignNextTask, fetchAgentRoster, fetchCodexAgentDetail, recoverAgent } from "../lib/controlRoomApi";
+import { assignNextTask, fetchAgentRoster, fetchCodexAgentDetail, fetchCodexRunDetail, recoverAgent } from "../lib/controlRoomApi";
 import { formatTimestamp } from "../lib/codexMvp";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { AgentRosterEntry, CodexAgentDetailResponse } from "../types";
+import type { AgentRosterEntry, CodexAgentDetailResponse, CodexRunDetailResponse } from "../types";
 
 type ViewTarget = "work" | "issues" | "agents" | "system" | "projects" | "command";
 
@@ -30,6 +30,8 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
   const [agents, setAgents] = useState<AgentRosterEntry[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [detail, setDetail] = useState<CodexAgentDetailResponse | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [selectedRunDetail, setSelectedRunDetail] = useState<CodexRunDetailResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
@@ -60,10 +62,33 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
     return () => controller.abort();
   }, [selectedAgentId, livePulse]);
 
+  useEffect(() => {
+    setSelectedRunId((current) =>
+      detail?.runs.some((run) => run.session_id === current) ? current : detail?.runs[0]?.session_id ?? null
+    );
+  }, [detail?.runs]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setSelectedRunDetail(null);
+      return;
+    }
+    const controller = new AbortController();
+    void fetchCodexRunDetail(selectedRunId, controller.signal)
+      .then((payload) => setSelectedRunDetail(payload))
+      .catch((error) => {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          setSelectedRunDetail(null);
+        }
+      });
+    return () => controller.abort();
+  }, [selectedRunId]);
+
   const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId) ?? agents[0] ?? null;
   const ownedIssues = detail?.owned_issues ?? [];
   const agentRuns = detail?.runs ?? [];
   const agentHistory = detail?.history ?? [];
+  const activeRunCount = agentRuns.filter((run) => run.status === "active").length;
 
   async function runAction(key: string, action: () => Promise<unknown>, message: string) {
     setPendingKey(key);
@@ -140,12 +165,17 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
                 <div className="codex-metric-card">
                   <span className="codex-kicker">Heartbeat</span>
                   <strong>{formatHeartbeat(selectedAgent.heartbeat_age_seconds)}</strong>
-                  <span>Codex runtime only</span>
+                  <span>{(selectedAgent.heartbeat_age_seconds ?? 0) >= 90 ? "Stale enough to inspect" : "Codex runtime only"}</span>
                 </div>
                 <div className="codex-metric-card">
                   <span className="codex-kicker">Owned issues</span>
                   <strong>{ownedIssues.length}</strong>
                   <span>{ownedIssues.filter((task) => task.status === "in_progress").length} active now</span>
+                </div>
+                <div className="codex-metric-card">
+                  <span className="codex-kicker">Execution threads</span>
+                  <strong>{activeRunCount}</strong>
+                  <span>{agentRuns.length} recent runs</span>
                 </div>
               </div>
 
@@ -194,14 +224,7 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
                         key={run.session_id}
                         type="button"
                         className={`codex-run-item codex-run-item--interactive ${run.task_id ? "is-clickable" : ""}`}
-                        onClick={() => {
-                          if (!run.task_id) {
-                            return;
-                          }
-                          setPendingTaskFocus(run.task_id);
-                          onNavigate("work");
-                        }}
-                        disabled={!run.task_id}
+                        onClick={() => setSelectedRunId(run.session_id)}
                       >
                         <div className="codex-run-item__meta">
                           <strong>{run.task_title ?? run.task_id ?? "No linked issue"}</strong>
@@ -215,6 +238,58 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
                     <div className="codex-empty-copy">No recent runs were recorded for this agent.</div>
                   )}
                 </div>
+              </section>
+
+              <section className="codex-detail-section">
+                <div className="codex-section-heading">
+                  <strong>Selected run</strong>
+                  <span>{selectedRunDetail ? selectedRunDetail.status.replaceAll("_", " ") : "none"}</span>
+                </div>
+                {selectedRunDetail ? (
+                <div className="codex-review-callout">
+                  <strong>{selectedRunDetail.status_message ?? "No runtime summary recorded."}</strong>
+                    <p>
+                      {selectedRunDetail.task_title ?? selectedRunDetail.task_id ?? "Unlinked issue"} ·{" "}
+                      {selectedRunDetail.provider_type.replaceAll("_", " ")} · {selectedRunDetail.execution_mode?.replaceAll("_", " ") ?? "unknown mode"} ·{" "}
+                      started {formatTimestamp(selectedRunDetail.started_at)}
+                    </p>
+                    <div className="codex-review-facts">
+                      <div className="codex-review-fact">
+                        <span>Status</span>
+                        <strong>{selectedRunDetail.status.replaceAll("_", " ")}</strong>
+                      </div>
+                      <div className="codex-review-fact">
+                        <span>Progress</span>
+                        <strong>{selectedRunDetail.progress_pct ?? 0}%</strong>
+                      </div>
+                      <div className="codex-review-fact">
+                        <span>Heartbeat</span>
+                        <strong>{selectedRunDetail.last_heartbeat_at ? formatTimestamp(selectedRunDetail.last_heartbeat_at) : "No heartbeat"}</strong>
+                      </div>
+                    </div>
+                    {selectedRunDetail.output_preview?.content ? (
+                      <pre className="codex-output-preview__content">{selectedRunDetail.output_preview.content}</pre>
+                    ) : (
+                      <div className="codex-empty-copy">No runtime output preview is available for this run yet.</div>
+                    )}
+                    {selectedRunDetail.task_id ? (
+                      <div className="codex-detail-actions">
+                        <button
+                          type="button"
+                          className="codex-button"
+                          onClick={() => {
+                            setPendingTaskFocus(selectedRunDetail.task_id!);
+                            onNavigate("work");
+                          }}
+                        >
+                          Open issue
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="codex-empty-copy">Select a run to inspect its runtime output and status.</div>
+                )}
               </section>
 
               <section className="codex-detail-section">

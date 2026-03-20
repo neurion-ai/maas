@@ -121,7 +121,6 @@ export function formatTimestamp(value?: string | null) {
 export type CodexLaunchPosture = {
   mode: "running" | "draining" | "paused";
   label: string;
-  actionLabel: string;
   summary: string;
 };
 
@@ -131,7 +130,6 @@ export function describeLaunchPosture(project: PortfolioProject | null): CodexLa
     return {
       mode: "paused",
       label: "Launches paused",
-      actionLabel: "Resume launches",
       summary: "Assigned work can queue up, but no new Codex runs will start until launches resume.",
     };
   }
@@ -139,14 +137,12 @@ export function describeLaunchPosture(project: PortfolioProject | null): CodexLa
     return {
       mode: "draining",
       label: "Launches draining",
-      actionLabel: "Resume launches",
-      summary: "Current runs can finish, but the queue is draining instead of starting new Codex work.",
+      summary: "Queued and running Codex work can drain to completion, but new assigned work will not launch.",
     };
   }
   return {
     mode: "running",
     label: "Launches running",
-    actionLabel: "Pause launches",
     summary: "Assigned work can start new Codex runs as capacity opens.",
   };
 }

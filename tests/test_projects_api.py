@@ -428,18 +428,51 @@ lint = "imported:lint"
                     "actor_id": "agent_allocator",
                     "queue_mode": "draining",
                     "max_running_jobs": 1,
+                    "preferred_provider_id": "python_script",
                 },
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(
                 response.json()["provider_capacity"],
-                {"queue_mode": "draining", "max_running_jobs": 1},
+                {"queue_mode": "draining", "max_running_jobs": 1, "preferred_provider_id": "python_script"},
             )
 
             portfolio_payload = client.get("/api/portfolio").json()
             project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
             self.assertEqual(project_row["provider_capacity"]["queue_mode"], "draining")
             self.assertEqual(project_row["provider_capacity"]["max_running_jobs"], 1)
+            self.assertEqual(project_row["provider_capacity"]["preferred_provider_id"], "python_script")
+
+    def test_update_review_policy_persists_and_is_visible_in_portfolio(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-review-policy",
+                json={
+                    "actor_id": "agent_allocator",
+                    "auto_approve_low_risk": False,
+                    "max_priority_for_auto_approve": 55,
+                    "require_verification_pass": True,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response.json()["review_policy"],
+                {
+                    "auto_approve_low_risk": False,
+                    "max_priority_for_auto_approve": 55,
+                    "require_verification_pass": True,
+                },
+            )
+
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["review_policy"]["auto_approve_low_risk"], False)
+            self.assertEqual(project_row["review_policy"]["max_priority_for_auto_approve"], 55)
+            self.assertEqual(project_row["review_policy"]["require_verification_pass"], True)
 
     def test_update_risk_policy_persists_and_is_visible_in_portfolio(self):
         with tempfile.TemporaryDirectory() as tmpdir:

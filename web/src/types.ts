@@ -184,10 +184,17 @@ export interface PortfolioProject {
   provider_capacity: {
     queue_mode: "running" | "draining" | "paused";
     max_running_jobs: number;
+    preferred_provider_id?: string | null;
     queued_jobs: number;
     running_jobs: number;
     at_capacity: boolean;
     can_start_jobs: boolean;
+    can_launch_jobs?: boolean;
+  };
+  review_policy: {
+    auto_approve_low_risk: boolean;
+    max_priority_for_auto_approve: number;
+    require_verification_pass: boolean;
   };
   risk_policy: {
     priority_threshold: number;
@@ -1230,6 +1237,7 @@ export interface SupervisorRunResponse {
 
 export interface OrchestratorProjectRun extends SupervisorProjectRun {
   provider_jobs_queued: number;
+  launch_provider_id?: string | null;
   queued_jobs: Array<{
     job_id: string;
     provider_id: string;
@@ -1289,6 +1297,41 @@ export interface CodexRunConsolePreview {
   path: string;
   content: string;
   truncated: boolean;
+}
+
+export interface CodexRunDetailResponse {
+  session_id: string;
+  task_id?: string | null;
+  task_title?: string | null;
+  issue_key?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  provider_type: string;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  last_heartbeat_at?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+  is_live: boolean;
+  timeout_seconds?: number | null;
+  command?: string[] | null;
+  runtime_root?: string | null;
+  output_preview?: CodexRunConsolePreview | null;
+  stdout_preview?: CodexRunConsolePreview | null;
+  stderr_preview?: CodexRunConsolePreview | null;
+  activity: TimelineEvent[];
+  artifacts: ArtifactItem[];
+  artifact_summary?: {
+    total_artifacts: number;
+    active_artifacts: number;
+    quarantined_artifacts: number;
+    restored_artifacts: number;
+    external_artifacts: number;
+    missing_files: number;
+  };
 }
 
 export interface CodexRunConsoleActivityItem {

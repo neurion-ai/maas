@@ -47,25 +47,63 @@ def _provider_queue_controls(provider_statuses):
     return controls
 
 
-def _preferred_codex_provider_id(provider_statuses):
+def _provider_queue_paused(provider):
+    settings = provider.get("configurable_runtime_controls") or {}
+    raw_value = settings.get("queue_paused", False)
+    if isinstance(raw_value, str):
+        return raw_value.strip().lower() in {"true", "1", "yes", "on"}
+    return bool(raw_value)
+
+
+def _provider_is_launch_ready(provider):
+    if not provider.get("is_runnable"):
+        return False
+    if _provider_queue_paused(provider):
+        return False
+    execution_mode = provider.get("effective_execution_mode") or provider.get("execution_mode")
+    if execution_mode == "local_simulation":
+        return True
+    preflight_status = (provider.get("latest_preflight") or {}).get("status")
+    if preflight_status in {"passed", "simulation_ready"}:
+        return True
+    return provider.get("status") in {"configured", "available"}
+
+
+def _preferred_launch_provider_id(provider_statuses, preferred_provider_id=None):
+    statuses_by_id = {provider["id"]: provider for provider in provider_statuses}
+    if preferred_provider_id:
+        preferred = statuses_by_id.get(preferred_provider_id)
+        if preferred is not None and _provider_is_launch_ready(preferred):
+            return preferred_provider_id
+        return None
+
+    fallback_order = ["openai_codex", "python_script", "claude_code"]
+    for provider_id in fallback_order:
+        provider = statuses_by_id.get(provider_id)
+        if provider is not None and _provider_is_launch_ready(provider):
+            return provider_id
     for provider in provider_statuses:
-        if provider["id"] == "openai_codex" and provider.get("is_runnable"):
+        if _provider_is_launch_ready(provider):
             return provider["id"]
     return None
 
 
-def _queue_launch_ready_codex_work(connection, project_paths, project_id, queue_controls, provider_job_limit):
-    provider_id = _preferred_codex_provider_id(list_provider_status(connection, project_id=project_id))
+def _queue_launch_ready_codex_work(connection, project_paths, project_id, queue_controls, provider_job_limit, project_capacity):
+    provider_statuses = list_provider_status(connection, project_id=project_id)
+    provider_id = _preferred_launch_provider_id(
+        provider_statuses,
+        preferred_provider_id=project_capacity.get("preferred_provider_id"),
+    )
     if provider_id is None:
-        return []
+        return [], None
 
     control = queue_controls.get(provider_id) or {}
     if control.get("queue_paused"):
-        return []
+        return [], provider_id
 
     effective_limit = min(max(provider_job_limit or 0, 0), control.get("job_limit_per_pass", 0))
     if effective_limit <= 0:
-        return []
+        return [], provider_id
 
     queued_jobs = []
     for target in provider_run_targets(connection, project_id, limit=effective_limit):
@@ -85,7 +123,7 @@ def _queue_launch_ready_codex_work(connection, project_paths, project_id, queue_
             if "already exists" in str(exc) or "not eligible" in str(exc):
                 continue
             raise
-    return queued_jobs
+    return queued_jobs, provider_id
 
 
 def _provider_uses_detached_workers(connection, project_id, provider_id):
@@ -139,7 +177,8 @@ def run_orchestrator_once(
         provider_statuses = list_provider_status(connection, project_id=scoped_project_id)
         queue_controls = _provider_queue_controls(provider_statuses)
         project_capacity = queue_capacity_snapshot(connection, scoped_project_id)
-        if project_capacity["queue_mode"] != "running":
+        launch_provider_id = None
+        if project_capacity["queue_mode"] == "paused":
             queue_controls["__project_capacity__"] = project_capacity
             summary = {
                 "assigned_count": project_run["assigned_count"],
@@ -150,6 +189,7 @@ def run_orchestrator_once(
                 "provider_jobs_queued": 0,
                 "provider_jobs_processed": 0,
                 "provider_jobs_dispatched": 0,
+                "launch_provider_id": None,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
             }
@@ -163,18 +203,20 @@ def run_orchestrator_once(
                     "processed_jobs": [],
                     "provider_jobs_dispatched": 0,
                     "dispatched_worker_ids": [],
+                    "launch_provider_id": None,
                     "queue_controls": queue_controls,
                     "project_capacity": project_capacity,
                 }
             )
             continue
-        if auto_launch_assigned_work:
-            queued_jobs = _queue_launch_ready_codex_work(
+        if auto_launch_assigned_work and project_capacity["queue_mode"] == "running":
+            queued_jobs, launch_provider_id = _queue_launch_ready_codex_work(
                 connection,
                 project_paths,
                 scoped_project_id,
                 queue_controls,
                 provider_job_limit,
+                project_capacity,
             )
         queued_job_counts = {}
         for job in queued_jobs:
@@ -226,6 +268,7 @@ def run_orchestrator_once(
             "provider_jobs_queued": len(queued_jobs),
             "provider_jobs_processed": len(processed_jobs),
             "provider_jobs_dispatched": len(dispatched_worker_ids),
+            "launch_provider_id": launch_provider_id,
             "queue_controls": queue_controls,
             "project_capacity": project_capacity,
         }
@@ -239,6 +282,7 @@ def run_orchestrator_once(
                 "processed_jobs": processed_jobs,
                 "provider_jobs_dispatched": len(dispatched_worker_ids),
                 "dispatched_worker_ids": dispatched_worker_ids,
+                "launch_provider_id": launch_provider_id,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
             }

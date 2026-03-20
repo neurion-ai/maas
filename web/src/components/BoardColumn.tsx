@@ -5,6 +5,8 @@ function laneDescription(column: BoardColumnType) {
   switch (column.key) {
     case "ready":
       return "Queued for allocation";
+    case "assigned":
+      return "Ready to launch";
     case "in_progress":
       return "Live execution";
     case "review":
@@ -38,6 +40,9 @@ function laneSecondary(column: BoardColumnType) {
   }
   if (column.key === "in_progress") {
     return criticalCount ? `${criticalCount} critical in flight` : "Active owners";
+  }
+  if (column.key === "assigned") {
+    return criticalCount ? `${criticalCount} critical launch-ready` : "Has an owner";
   }
   if (column.key === "ready") {
     return criticalCount ? `${criticalCount} critical next` : "Ordered by priority";

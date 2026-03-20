@@ -173,20 +173,19 @@ export function WorkPage({ onNavigate }: WorkPageProps) {
           }
         : column
     );
-    const orderedKeys = ["ready", "in_progress", "review", "blocked", "planned"] as const;
+    const orderedKeys = ["ready", "assigned", "in_progress", "review", "blocked", "planned"] as const;
     const byKey = new Map(normalizedColumns.map((column) => [column.key, column] as const));
     const prioritized = orderedKeys
       .map((key) => byKey.get(key))
       .filter((column): column is NonNullable<typeof board>["columns"][number] => Boolean(column));
-    const visible = prioritized.filter(
-      (column) => column.tasks.length > 0 || ["in_progress", "review", "blocked"].includes(column.key)
-    );
+    const visible = prioritized.filter((column) => column.tasks.length > 0);
     return visible.length ? visible : prioritized.slice(0, 3);
   }, [board, pendingImportReview]);
   const collapsedColumns = useMemo(
     () =>
       (board?.columns ?? [])
         .filter((column) => !visibleColumns.some((visible) => visible.key === column.key))
+        .filter((column) => column.tasks.length > 0)
         .map((column) => ({ key: column.key, title: column.title, count: column.tasks.length })),
     [board, visibleColumns]
   );

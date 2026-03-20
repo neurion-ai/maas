@@ -77,6 +77,38 @@ PROVIDER_REQUIRED_ENV_KEYS = {
 }
 
 
+def _codex_home_dir():
+    configured = os.environ.get("CODEX_HOME")
+    candidates = [configured, os.path.join(os.path.expanduser("~"), ".codex")]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        resolved = os.path.abspath(os.path.expanduser(candidate))
+        if os.path.isdir(resolved):
+            return resolved
+    return None
+
+
+def _codex_cli_auth_available():
+    if os.environ.get("OPENAI_API_KEY"):
+        return True
+    codex_home = _codex_home_dir()
+    if codex_home is None:
+        return False
+    auth_path = os.path.join(codex_home, "auth.json")
+    if not os.path.exists(auth_path):
+        return False
+    try:
+        with open(auth_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError, TypeError):
+        return False
+    if payload.get("OPENAI_API_KEY"):
+        return True
+    tokens = payload.get("tokens") or {}
+    return bool(tokens)
+
+
 def _task_title(connection, task_id):
     row = connection.execute("SELECT title FROM tasks WHERE task_id = ?", (task_id,)).fetchone()
     return row["title"] if row else task_id
@@ -206,6 +238,10 @@ def _runtime_env(project_paths, provider, runtime_context, runtime_envelope=None
         value = os.environ.get(key)
         if value:
             env[key] = value
+    if provider["id"] == "openai_codex":
+        codex_home = _codex_home_dir()
+        if codex_home is not None:
+            env["CODEX_HOME"] = codex_home
     env["MAAS_PROJECT_ID"] = runtime_context["project_id"]
     env["MAAS_PROJECT_ROOT"] = runtime_context["source_root"]
     env["MAAS_PROJECT_RUNTIME_ROOT"] = runtime_context["project_runtime_dir"]
@@ -348,14 +384,19 @@ def run_provider_preflight(connection, project_paths, provider_id, actor_id, pro
         envelope_id=generate_id("run"),
     )
     runtime_env = _runtime_env(project_paths, {"id": provider_id}, runtime_context, runtime_envelope=runtime_envelope)
-    missing_env = [key for key in PROVIDER_REQUIRED_ENV_KEYS.get(provider_id, ()) if not runtime_env.get(key)]
     command = _provider_preflight_command(provider_id, provider_settings)
     issues = []
+    missing_env = []
 
     if command:
         executable = shutil.which(command[0], path=runtime_env.get("PATH"))
         if executable is None:
             issues.append("Executable '{0}' is not available on PATH.".format(command[0]))
+    if provider_id == "openai_codex" and provider.get("effective_execution_mode") == "codex_cli":
+        if not _codex_cli_auth_available():
+            issues.append("Codex CLI auth is not available. Sign in to Codex CLI or export OPENAI_API_KEY.")
+    else:
+        missing_env = [key for key in PROVIDER_REQUIRED_ENV_KEYS.get(provider_id, ()) if not runtime_env.get(key)]
     if missing_env:
         issues.extend("Missing required environment variable: {0}.".format(key) for key in missing_env)
 
@@ -500,6 +541,35 @@ def _task_prompt(connection, task_id):
     if description:
         return "Task: {0}\n\nContext:\n{1}\n\nReturn a concise completion summary.".format(row["title"], description)
     return "Task: {0}\n\nReturn a concise completion summary.".format(row["title"])
+
+
+def _runtime_console_paths(runtime_envelope):
+    return {
+        "output_path": os.path.join(runtime_envelope["root"], "runtime-output.txt"),
+        "stdout_path": os.path.join(runtime_envelope["root"], "stdout.log"),
+        "stderr_path": os.path.join(runtime_envelope["root"], "stderr.log"),
+    }
+
+
+def _tail_runtime_text(path, limit=1200):
+    if not path or not os.path.exists(path) or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            read_start = max(size - (limit * 4), 0)
+            handle.seek(read_start)
+            payload = handle.read()
+    except OSError:
+        return None
+    content = payload.decode("utf-8", errors="ignore")
+    if len(content) > limit:
+        content = content[-limit:]
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    if not lines:
+        return None
+    return lines[-1]
 
 
 def _provider_run_target(connection, project_id, task_id, agent_id):
@@ -648,44 +718,54 @@ def _run_openai_codex_cli(project_paths, runtime_context, runtime_envelope, prov
         runtime_envelope=runtime_envelope,
     )
     os.makedirs(runtime_envelope["root"], exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        prefix="openai-codex-",
-        suffix=".txt",
-        dir=runtime_envelope["root"],
-        delete=False,
-    ) as handle:
-        output_path = handle.name
-
+    console_paths = _runtime_console_paths(runtime_envelope)
+    output_path = console_paths["output_path"]
+    stdout_path = console_paths["stdout_path"]
+    stderr_path = console_paths["stderr_path"]
     command = _codex_cli_command(runtime_context, provider_settings, task_prompt, output_path)
     try:
+        with open(stdout_path, "w", encoding="utf-8") as stdout_handle, open(stderr_path, "w", encoding="utf-8") as stderr_handle:
+            try:
+                result = subprocess.run(
+                    command,
+                    cwd=runtime_context["source_root"],
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    text=True,
+                    timeout=timeout_seconds,
+                    check=False,
+                    env=runtime_env,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise ProviderRuntimeFailure(
+                    "timeout",
+                    "Codex CLI timed out after {0}s.".format(timeout_seconds),
+                    timeout_seconds=timeout_seconds,
+                    command=command,
+                    console_paths=console_paths,
+                ) from exc
         try:
-            result = subprocess.run(
-                command,
-                cwd=runtime_context["source_root"],
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-                env=runtime_env,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise ProviderRuntimeFailure(
-                "timeout",
-                "Codex CLI timed out after {0}s.".format(timeout_seconds),
-                timeout_seconds=timeout_seconds,
-                command=command,
-            ) from exc
+            with open(stdout_path, "r", encoding="utf-8") as stdout_handle:
+                stdout_text = stdout_handle.read()
+        except OSError:
+            stdout_text = ""
+        try:
+            with open(stderr_path, "r", encoding="utf-8") as stderr_handle:
+                stderr_text = stderr_handle.read()
+        except OSError:
+            stderr_text = ""
         if result.returncode != 0:
             raise ProviderRuntimeFailure(
                 "nonzero_exit",
                 "Codex CLI exited with status {0}: {1}".format(
                     result.returncode,
-                    (result.stderr or "").strip() or "unknown error",
+                    (stderr_text or "").strip() or "unknown error",
                 ),
                 exit_code=result.returncode,
-                stderr=(result.stderr or "").strip(),
-                stdout=(result.stdout or "").strip(),
+                stderr=(stderr_text or "").strip(),
+                stdout=(stdout_text or "").strip(),
                 command=command,
+                console_paths=console_paths,
             )
         try:
             with open(output_path, "r", encoding="utf-8") as output_handle:
@@ -696,15 +776,16 @@ def _run_openai_codex_cli(project_paths, runtime_context, runtime_envelope, prov
                 "Codex CLI completed but the runtime output file could not be read: {0}".format(exc),
                 command=command,
                 output_path=output_path,
+                console_paths=console_paths,
             ) from exc
         return {
             "summary_text": final_message or "Codex CLI completed without a final message.",
-            "stdout": result.stdout or "",
-            "stderr": result.stderr or "",
+            "stdout": stdout_text or "",
+            "stderr": stderr_text or "",
+            "console_paths": console_paths,
         }
-    finally:
-        if os.path.exists(output_path):
-            os.remove(output_path)
+    except ProviderRuntimeFailure:
+        raise
 
 
 def _run_claude_code_cli(project_paths, runtime_context, runtime_envelope, provider_settings, task_prompt):
@@ -849,6 +930,17 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         extra_activity_details.update(
             _codex_cli_activity_details(runtime_context, provider_settings, task_prompt, runtime_envelope)
         )
+        extra_activity_details.update(_runtime_console_paths(runtime_envelope))
+    execution_summary_label = (
+        "{0} adapter is executing live CLI work".format(provider["name"])
+        if (claude_cli_enabled or codex_cli_enabled)
+        else "{0} adapter is executing the provider run".format(provider["name"])
+    )
+    execution_detail_description = (
+        "{0} adapter is executing the live CLI provider run.".format(provider["name"])
+        if (claude_cli_enabled or codex_cli_enabled)
+        else "{0} adapter is executing the provider run.".format(provider["name"])
+    )
     try:
         _log_provider_phase(
             connection,
@@ -880,7 +972,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_path=artifact_full_path,
             **extra_activity_details
         )
-        heartbeat(connection, session_id, 60, "{0} adapter is executing simulated work".format(provider["name"]))
+        heartbeat(connection, session_id, 60, execution_summary_label)
         _log_provider_phase(
             connection,
             project_id,
@@ -889,7 +981,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             provider,
             action="provider_execution_progress",
             phase="execution_running",
-            description="{0} adapter is executing the simulated provider run.".format(provider["name"]),
+            description=execution_detail_description,
             session_id=session_id,
             progress_pct=60,
             artifact_path=artifact_full_path,

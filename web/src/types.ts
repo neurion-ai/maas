@@ -1,6 +1,7 @@
 export type BoardColumnKey =
   | "planned"
   | "ready"
+  | "assigned"
   | "in_progress"
   | "review"
   | "blocked"
@@ -26,6 +27,7 @@ export interface BoardGoal {
 
 export interface BoardTask {
   task_id: string;
+  issue_key?: string | null;
   title: string;
   description?: string;
   status: BoardColumnKey | "assigned";
@@ -76,6 +78,7 @@ export interface BoardColumn {
 export interface BoardSummary {
   total_tasks: number;
   active_agents: number;
+  assigned_tasks?: number;
   active_tasks?: number;
   blocked_tasks: number;
   review_tasks: number;
@@ -1224,6 +1227,14 @@ export interface SupervisorRunResponse {
 }
 
 export interface OrchestratorProjectRun extends SupervisorProjectRun {
+  provider_jobs_queued: number;
+  queued_jobs: Array<{
+    job_id: string;
+    provider_id: string;
+    status: string;
+    task_id: string;
+    project_id: string;
+  }>;
   provider_jobs_processed: number;
   processed_jobs: Array<{
     job_id: string;
@@ -1235,6 +1246,175 @@ export interface OrchestratorProjectRun extends SupervisorProjectRun {
 }
 
 export interface OrchestratorRunResponse extends SupervisorRunResponse {
+  provider_jobs_queued: number;
   provider_jobs_processed: number;
   project_runs: OrchestratorProjectRun[];
+}
+
+export interface CodexIssueRelationshipItem {
+  task_id: string;
+  issue_key?: string | null;
+  title: string;
+  status: string;
+  priority: number;
+  review_state?: string | null;
+  goal_id?: string | null;
+  goal_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  dependency_type?: "blocks" | "informs" | "conflicts" | null;
+}
+
+export interface CodexIssueRunItem {
+  session_id: string;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  provider_type: string;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  last_heartbeat_at?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+}
+
+export interface CodexRunConsolePreview {
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface CodexRunConsoleActivityItem {
+  activity_id?: string | null;
+  action: string;
+  description: string;
+  severity: string;
+  created_at: string;
+  details?: Record<string, unknown>;
+}
+
+export interface CodexRunConsole {
+  session_id: string;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  provider_type: string;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  last_heartbeat_at?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+  is_live: boolean;
+  timeout_seconds?: number | null;
+  command?: string[] | null;
+  runtime_root?: string | null;
+  output_preview?: CodexRunConsolePreview | null;
+  stdout_preview?: CodexRunConsolePreview | null;
+  stderr_preview?: CodexRunConsolePreview | null;
+  activity: CodexRunConsoleActivityItem[];
+}
+
+export interface VerificationRun {
+  verification_run_id: string;
+  task_id: string;
+  command: string;
+  status: string;
+  started_at: string;
+  finished_at?: string | null;
+  exit_code?: number | null;
+  output_excerpt?: string | null;
+  artifact_id?: string | null;
+}
+
+export interface CodexAgentOwnedIssueItem {
+  task_id: string;
+  issue_key?: string | null;
+  title: string;
+  status: string;
+  priority: number;
+  review_state?: string | null;
+  progress_pct?: number | null;
+  created_at: string;
+  goal_id?: string | null;
+  goal_title?: string | null;
+}
+
+export interface CodexAgentRunItem {
+  session_id: string;
+  task_id?: string | null;
+  task_title?: string | null;
+  provider_type: string;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  last_heartbeat_at?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+}
+
+export interface CodexAgentDetailResponse {
+  agent: {
+    agent_id: string;
+    role: string;
+    display_name: string;
+    status: string;
+    current_task_id?: string | null;
+    current_task_title?: string | null;
+    current_issue_key?: string | null;
+    last_heartbeat_at?: string | null;
+  };
+  owned_issues: CodexAgentOwnedIssueItem[];
+  runs: CodexAgentRunItem[];
+  history: TimelineEvent[];
+}
+
+export interface CodexIssueDetailResponse {
+  task: {
+    task_id: string;
+    issue_key?: string | null;
+    title: string;
+    description?: string | null;
+    status: string;
+    priority: number;
+    review_state?: string | null;
+    progress_pct?: number | null;
+    retry_count?: number | null;
+    auto_retry_limit?: number | null;
+    last_retry_at?: string | null;
+    last_retry_reason?: string | null;
+    next_retry_at?: string | null;
+    next_retry_reason?: string | null;
+    last_heartbeat_at?: string | null;
+    created_at: string;
+    updated_at: string;
+    goal_id?: string | null;
+    goal_title?: string | null;
+    agent_id?: string | null;
+    agent_name?: string | null;
+    agent_status?: string | null;
+  };
+  relationships: {
+    depends_on: CodexIssueRelationshipItem[];
+    unlocks: CodexIssueRelationshipItem[];
+    related: CodexIssueRelationshipItem[];
+  };
+  runs: CodexIssueRunItem[];
+  run_console?: CodexRunConsole | null;
+  history: TimelineEvent[];
+  artifacts: ArtifactItem[];
+  artifact_summary: ArtifactsResponse["summary"];
+  verification_runs: VerificationRun[];
+  git_workspace?: {
+    workspace_id: string;
+    task_id: string;
+    branch_name: string;
+    worktree_path: string;
+    repo_root: string;
+    base_ref?: string | null;
+    head_commit?: string | null;
+    dirty_file_count?: number | null;
+    change_summary?: string | null;
+    last_diff_artifact_id?: string | null;
+    updated_at?: string | null;
+  } | null;
 }

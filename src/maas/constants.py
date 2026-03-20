@@ -12,6 +12,7 @@ TASK_STATUSES = (
 BOARD_COLUMNS = (
     ("planned", "Planned"),
     ("ready", "Ready"),
+    ("assigned", "Assigned"),
     ("in_progress", "In Progress"),
     ("review", "Review"),
     ("blocked", "Blocked"),

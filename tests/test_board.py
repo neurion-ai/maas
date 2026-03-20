@@ -20,6 +20,10 @@ def _init_git_repo(root):
     subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def _column_by_key(board, key):
+    return next(column for column in board["columns"] if column["key"] == key)
+
+
 class BoardReadModelTest(unittest.TestCase):
     def test_board_cards_include_scheduler_rationale(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -236,14 +240,14 @@ class BoardReadModelTest(unittest.TestCase):
                 connection.close()
 
             labels = [column["title"] for column in board["columns"]]
-            self.assertEqual(labels, ["Planned", "Ready", "In Progress", "Review", "Blocked", "Done", "Cancelled"])
+            self.assertEqual(labels, ["Planned", "Ready", "Assigned", "In Progress", "Review", "Blocked", "Done", "Cancelled"])
             self.assertGreater(board["summary"]["total_tasks"], 0)
             self.assertIn("generated_at", board)
             self.assertIn("filters", board)
             self.assertIn("filter_options", board)
             self.assertIn("selected_filters", board)
 
-    def test_assigned_tasks_stay_visible_in_ready_column(self):
+    def test_assigned_tasks_surface_in_assigned_column(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Assigned Board Test", description="Assigned board test", project_type="custom")
             connection = connect(result["paths"])
@@ -260,8 +264,8 @@ class BoardReadModelTest(unittest.TestCase):
             finally:
                 connection.close()
 
-            ready_column = next(column for column in board["columns"] if column["key"] == "ready")
-            matching_cards = [task for task in ready_column["tasks"] if task["task_id"] == task_id]
+            assigned_column = _column_by_key(board, "assigned")
+            matching_cards = [task for task in assigned_column["tasks"] if task["task_id"] == task_id]
             self.assertEqual(len(matching_cards), 1)
             self.assertEqual(matching_cards[0]["status"], "assigned")
 

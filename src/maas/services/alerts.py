@@ -130,7 +130,7 @@ def _log_alert_resolution_activity(connection, project_id, actor_id, task_id, ac
         (
             generate_id("act"),
             project_id,
-            actor_id,
+            None,
             task_id,
             action,
             description,

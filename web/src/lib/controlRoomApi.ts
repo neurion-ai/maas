@@ -7,6 +7,8 @@ import type {
   ArtifactDetail,
   ArtifactPurgeResponse,
   ArtifactsResponse,
+  CodexAgentDetailResponse,
+  CodexIssueDetailResponse,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
@@ -828,6 +830,56 @@ export async function fetchArtifactDetail(artifactId: string, signal?: AbortSign
   return (await response.json()) as ArtifactDetail;
 }
 
+export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexIssueDetailResponse>(
+    `/api/issues/${taskId}`,
+    {
+      task: {
+        task_id: taskId,
+        title: "Issue detail unavailable",
+        description: "",
+        status: "ready",
+        priority: 50,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      relationships: {
+        depends_on: [],
+        unlocks: [],
+        related: [],
+      },
+      runs: [],
+      run_console: null,
+      history: [],
+      artifacts: [],
+      artifact_summary: ARTIFACTS_FALLBACK.summary,
+      verification_runs: [],
+      git_workspace: null,
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexAgentDetail(agentId: string, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexAgentDetailResponse>(
+    `/api/agents/${agentId}`,
+    {
+      agent: {
+        agent_id: agentId,
+        role: "agent",
+        display_name: "Agent detail unavailable",
+        status: "idle",
+      },
+      owned_issues: [],
+      runs: [],
+      history: [],
+    },
+    signal,
+    onFallback
+  );
+}
+
 export async function fetchArtifactComparison(leftArtifactId: string, rightArtifactId: string, signal?: AbortSignal) {
   const response = await fetch(`/api/artifacts/${leftArtifactId}/compare/${rightArtifactId}`, { signal });
   if (response.status === 404) {
@@ -1179,10 +1231,11 @@ export async function runSupervisorPass(allocateLimit?: number) {
   return payload as SupervisorRunResponse;
 }
 
-export async function runOrchestratorPass(allocateLimit?: number, providerJobLimit = 2) {
+export async function runOrchestratorPass(allocateLimit?: number, providerJobLimit = 2, autoLaunchAssignedWork = false) {
   const payload = await postJson<OrchestratorRunResponse>("/api/orchestrator/run", {
     allocate_limit: allocateLimit ?? null,
     provider_job_limit: providerJobLimit,
+    auto_launch_assigned_work: autoLaunchAssignedWork,
     project_id: getSelectedProjectId()
   });
   return payload as OrchestratorRunResponse;

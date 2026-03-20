@@ -29,7 +29,7 @@ interface ProjectsPageProps {
   onCreateProject: (event: FormEvent<HTMLFormElement>) => void;
   onArchiveProject: (projectId: string) => Promise<void>;
   onRestoreProject: (projectId: string) => Promise<void>;
-  onNavigate?: (view: "home" | "work" | "runs" | "incidents" | "projects") => void;
+  onNavigate?: (view: "command" | "work" | "issues" | "agents" | "system" | "projects") => void;
 }
 
 interface NextStep {
@@ -450,9 +450,9 @@ export function ProjectsPage({
                   <button
                     type="button"
                     className="hero-button hero-button--primary hero-button--compact"
-                    onClick={() => onNavigate("home")}
+                    onClick={() => onNavigate("command")}
                   >
-                    Open cockpit
+                    Open command
                   </button>
                 ) : null}
                 {onNavigate ? (
@@ -461,7 +461,7 @@ export function ProjectsPage({
                     className="hero-button hero-button--ghost hero-button--compact"
                     onClick={() => onNavigate("work")}
                   >
-                    Open board
+                    Open work
                   </button>
                 ) : null}
                 <button
@@ -571,9 +571,9 @@ export function ProjectsPage({
                   <button
                     type="button"
                     className="hero-button hero-button--ghost hero-button--compact"
-                    onClick={() => onNavigate("home")}
+                    onClick={() => onNavigate("command")}
                   >
-                    Open cockpit
+                    Open command
                   </button>
                 ) : null}
                 {selectedOverview?.onboarding?.review_task_status === "planned" ? (
@@ -588,7 +588,7 @@ export function ProjectsPage({
                         await runSupervisorPass(3);
                         setSelectedOverview(await fetchOverview());
                         setNotice("Supervisor pass completed. The import review task is ready for inspection.");
-                        onNavigate?.("home");
+                        onNavigate?.("command");
                       } catch {
                         setNotice("Supervisor pass failed; keep the import under review.");
                       } finally {
@@ -605,7 +605,7 @@ export function ProjectsPage({
                     className="hero-button hero-button--ghost hero-button--compact"
                     onClick={() => onNavigate("work")}
                   >
-                    Open board
+                    Open work
                   </button>
                 ) : null}
                 <button

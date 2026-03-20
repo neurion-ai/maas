@@ -4,6 +4,7 @@ import {
   fetchIncidentTimeline,
   fetchOverview,
   fetchPortfolio,
+  fetchProviders,
   fetchRecoveryPolicy,
   refreshRepoPlan,
   recoverAgent,
@@ -30,6 +31,7 @@ import type {
   AlertOperatorAction,
   OverviewResponse,
   PortfolioResponse,
+  ProvidersResponse,
   RecoveryPolicyResponse,
   TimelineResponse
 } from "../types";
@@ -213,6 +215,7 @@ function buildAgentRiskLabel(agent: AgentRosterEntry, tone: "critical" | "warn" 
 export function HomePage({ onNavigate, mode }: HomePageProps) {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
+  const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [roster, setRoster] = useState<AgentRosterResponse | null>(null);
   const [recovery, setRecovery] = useState<RecoveryPolicyResponse | null>(null);
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
@@ -221,10 +224,11 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
   const livePulse = useLivePulse();
 
   async function loadControlRoom() {
-    const [overviewPayload, portfolioPayload, rosterPayload, recoveryPayload, timelinePayload] =
+    const [overviewPayload, portfolioPayload, providersPayload, rosterPayload, recoveryPayload, timelinePayload] =
       await Promise.all([
         fetchOverview(),
         fetchPortfolio(),
+        fetchProviders(),
         fetchAgentRoster(),
         fetchRecoveryPolicy(),
         fetchIncidentTimeline({ limit: 24 })
@@ -232,6 +236,7 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
 
     setOverview(overviewPayload);
     setPortfolio(portfolioPayload);
+    setProviders(providersPayload);
     setRoster(rosterPayload);
     setRecovery(recoveryPayload);
     setTimeline(timelinePayload);
@@ -241,10 +246,11 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
     let mounted = true;
     async function load() {
       try {
-        const [overviewPayload, portfolioPayload, rosterPayload, recoveryPayload, timelinePayload] =
+        const [overviewPayload, portfolioPayload, providersPayload, rosterPayload, recoveryPayload, timelinePayload] =
           await Promise.all([
             fetchOverview(),
             fetchPortfolio(),
+            fetchProviders(),
             fetchAgentRoster(),
             fetchRecoveryPolicy(),
             fetchIncidentTimeline({ limit: 24 })
@@ -254,6 +260,7 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
         }
         setOverview(overviewPayload);
         setPortfolio(portfolioPayload);
+        setProviders(providersPayload);
         setRoster(rosterPayload);
         setRecovery(recoveryPayload);
         setTimeline(timelinePayload);
@@ -532,6 +539,11 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
     !!overview?.onboarding?.review_status &&
     !["approved", "reviewed", "not_applicable"].includes(overview.onboarding.review_status);
   const reviewTaskId = overview?.onboarding?.review_task_id ?? null;
+  const reviewTaskStatus = overview?.onboarding?.review_task_status ?? null;
+  const importReviewNeedsPrepare = pendingImportReview && reviewTaskStatus === "planned";
+  const importReviewNeedsExecution =
+    pendingImportReview && ["assigned", "ready", "in_progress"].includes(reviewTaskStatus ?? "");
+  const importReviewReadyForDecision = pendingImportReview && reviewTaskStatus === "review";
   const onboardingWorkflowLabels =
     overview?.onboarding?.discovery_summary.workflow_details?.map((detail) => detail.label).filter(Boolean) ??
     overview?.onboarding?.discovery_summary.workflow_labels ??
@@ -545,6 +557,8 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
   const hasRuntimeRisk =
     (recovery?.summary.open_failure_alerts ?? 0) > 0 || (recovery?.summary.open_dead_letter_entries ?? 0) > 0;
   const queuedProviderJobs = portfolio?.summary.queued_provider_jobs ?? 0;
+  const launchReadyTargets = providers?.run_targets ?? [];
+  const launchReadyCount = launchReadyTargets.length;
   const currentProjectId = overview?.project?.project_id ?? null;
   const criticalAttentionCount = attentionItems.filter((item) => item.tone === "critical").length;
   const queueMode = selectedPortfolioProject?.provider_capacity.queue_mode ?? "running";
@@ -565,7 +579,11 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
         : "Stable";
 
   const projectHealthDetail = pendingImportReview
-    ? `${pendingGatedTasks} imported tasks gated`
+    ? importReviewNeedsExecution
+      ? "Review task still needs to run once"
+      : importReviewReadyForDecision
+        ? "Approval decision is waiting"
+        : `${pendingGatedTasks} imported tasks gated`
     : blockedTaskCount > 0
       ? `${blockedTaskCount} blocked tasks`
       : hasRuntimeRisk
@@ -575,23 +593,58 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
   const runPrimaryLoop = () =>
     runAction(
       "run",
-      queuedProviderJobs > 0 ? "Run completed; queue and board refreshed." : "Run completed; board refreshed.",
+      queuedProviderJobs > 0
+        ? "Run completed; queue and board refreshed."
+        : "Planning loop completed; board refreshed.",
       () => (queuedProviderJobs > 0 ? runOrchestratorPass(4, 2) : runSupervisorPass(3)),
-      queuedProviderJobs > 0 ? "Run failed while processing queued work." : "Run failed while refreshing the board."
+      queuedProviderJobs > 0
+        ? "Run failed while processing queued work."
+        : "Planning loop failed while refreshing the board."
     );
+
+  const primaryRunAction = pendingImportReview
+    ? null
+    : queuedProviderJobs > 0
+      ? {
+          label: "Run",
+          action: () => void runPrimaryLoop(),
+        }
+      : launchReadyCount > 0
+        ? {
+            label: "Open Execution",
+            action: () => onNavigate("runs"),
+          }
+        : {
+            label: "Run",
+            action: () => void runPrimaryLoop(),
+          };
 
   const recommendation = pendingImportReview
     ? {
         title: "Review imported repo before releasing work",
         detail:
-          reviewTaskId && overview?.onboarding?.review_task_status === "review"
-            ? "Open the review task on Board, inspect MAAS's imported understanding, then approve it."
-            : "Prepare the import review first so the gated brownfield tasks have one clear decision path.",
+          importReviewReadyForDecision
+            ? "The import review has finished. Approve it to release the gated tasks."
+            : importReviewNeedsExecution
+              ? "The import review task is ready to be run. After it finishes, approval will appear."
+              : "Prepare the import review first so the gated brownfield tasks have one clear decision path.",
         primaryLabel:
-          reviewTaskId && overview?.onboarding?.review_task_status === "review" ? "Open review on Board" : "Prepare review",
+          importReviewReadyForDecision
+            ? "Approve import"
+            : importReviewNeedsExecution
+              ? "Go to Execution"
+              : "Prepare review",
         primaryAction:
-          reviewTaskId && overview?.onboarding?.review_task_status === "review"
-            ? () => openTaskInBoard(reviewTaskId)
+          importReviewReadyForDecision
+            ? () =>
+                runAction(
+                  "brownfield-review:approve",
+                  "Imported repo approved; gated work can now be scheduled.",
+                  () => reviewTask(reviewTaskId!, "approve"),
+                  "Import approval failed; keep the review under operator control."
+                )
+            : importReviewNeedsExecution
+              ? () => onNavigate("runs")
             : () =>
                 runAction(
                   "brownfield-review:prepare",
@@ -611,17 +664,26 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
           secondaryLabel: "Open Board",
           secondaryAction: () => onNavigate("work")
         }
-      : {
-          title: queuedProviderJobs > 0 ? "Drain queued work" : "Continue supervised execution",
-          detail:
-            queuedProviderJobs > 0
-              ? `${queuedProviderJobs} queued provider job${queuedProviderJobs === 1 ? "" : "s"} are ready to process in ${queueMode} mode.`
-              : `${overview?.summary.tasks_in_progress ?? 0} run${overview?.summary.tasks_in_progress === 1 ? "" : "s"} active and no urgent incident requires you.`,
-          primaryLabel: queuedProviderJobs > 0 ? "Run work loop" : "Open Board",
-          primaryAction: queuedProviderJobs > 0 ? runPrimaryLoop : () => onNavigate("work"),
+      : launchReadyCount > 0
+        ? {
+            title: "Launch assigned work",
+            detail: `${launchReadyCount} assigned task${launchReadyCount === 1 ? "" : "s"} are waiting in Execution for a provider run.`,
+            primaryLabel: "Open Execution",
+            primaryAction: () => onNavigate("runs"),
+            secondaryLabel: "Open Board",
+            secondaryAction: () => onNavigate("work")
+          }
+        : {
+            title: queuedProviderJobs > 0 ? "Drain queued work" : "Continue supervised execution",
+            detail:
+              queuedProviderJobs > 0
+                ? `${queuedProviderJobs} queued provider job${queuedProviderJobs === 1 ? "" : "s"} are ready to process in ${queueMode} mode.`
+                : `${overview?.summary.tasks_in_progress ?? 0} run${overview?.summary.tasks_in_progress === 1 ? "" : "s"} active and no urgent incident requires you.`,
+            primaryLabel: queuedProviderJobs > 0 ? "Run work loop" : "Open Board",
+            primaryAction: queuedProviderJobs > 0 ? runPrimaryLoop : () => onNavigate("work"),
           secondaryLabel: "Open Execution",
           secondaryAction: () => onNavigate("runs")
-        };
+          };
 
   const systemSignals = [
     {
@@ -667,14 +729,14 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
             <p>{overview?.project?.description ?? "Create or restore a project to start supervising agents."}</p>
           </div>
           <div className="control-room__header-actions">
-            {!pendingImportReview ? (
+            {primaryRunAction ? (
               <button
                 type="button"
                 className="hero-button hero-button--primary hero-button--compact"
                 disabled={pendingActionKey === "run"}
-                onClick={() => void runPrimaryLoop()}
+                onClick={primaryRunAction.action}
               >
-                {pendingActionKey === "run" ? "Running..." : "Run"}
+                {pendingActionKey === "run" ? "Running..." : primaryRunAction.label}
               </button>
             ) : null}
           </div>
@@ -748,13 +810,15 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
                 ))}
               </div>
               <p className="muted-copy">
-                {overview?.onboarding?.review_task_status === "planned"
+                {importReviewNeedsPrepare
                   ? "First surface the review task, then inspect MAAS's imported understanding and approve it if it looks right."
-                  : "Focus the review task, confirm the imported understanding, then approve the import to release the gated tasks."}
+                  : importReviewNeedsExecution
+                    ? "The review task has been assigned but not run yet. Go to Execution, run it once, then approval will appear here."
+                    : "The review run is done. Approve the imported understanding to release the gated tasks."}
               </p>
             </div>
             <div className="onboarding-takeover__actions">
-              {overview?.onboarding?.review_task_status === "planned" ? (
+              {importReviewNeedsPrepare ? (
                 <button
                   type="button"
                   className="hero-button hero-button--primary hero-button--compact"
@@ -771,16 +835,25 @@ export function HomePage({ onNavigate, mode }: HomePageProps) {
                   {pendingActionKey === "brownfield-review:prepare" ? "Preparing..." : "Prepare review"}
                 </button>
               ) : null}
-              {reviewTaskId ? (
+              {importReviewNeedsExecution ? (
+                <button
+                  type="button"
+                  className="hero-button hero-button--primary hero-button--compact"
+                  onClick={() => onNavigate("runs")}
+                >
+                  Go to Execution
+                </button>
+              ) : null}
+              {importReviewReadyForDecision && reviewTaskId ? (
                 <button
                   type="button"
                   className="hero-button hero-button--ghost hero-button--compact"
                   onClick={() => openTaskInBoard(reviewTaskId)}
                 >
-                  Open review on Board
+                  Inspect review
                 </button>
               ) : null}
-              {overview?.onboarding?.review_task_status === "review" && reviewTaskId ? (
+              {importReviewReadyForDecision && reviewTaskId ? (
                 <button
                   type="button"
                   className="hero-button hero-button--primary hero-button--compact"

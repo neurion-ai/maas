@@ -1,0 +1,454 @@
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { fetchArtifactDetail } from "../lib/controlRoomApi";
+import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview } from "../types";
+import type { ArtifactDetail } from "../types";
+import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
+
+function renderRelationshipList(
+  items: CodexIssueDetailResponse["relationships"]["depends_on"],
+  emptyLabel: string,
+  issueKeyMap: Map<string, string>,
+  onSelectTask?: (taskId: string) => void
+) {
+  if (!items.length) {
+    return <div className="codex-empty-copy">{emptyLabel}</div>;
+  }
+  return (
+    <div className="codex-relationship-list">
+      {items.map((item) => (
+        <button
+          key={item.task_id}
+          type="button"
+          className="codex-related-item"
+          onClick={() => onSelectTask?.(item.task_id)}
+        >
+          <div className="codex-related-item__meta">
+            <span>{item.issue_key ?? issueKeyMap.get(item.task_id) ?? item.task_id}</span>
+            <span>{statusLabel(item.status, item.review_state)}</span>
+          </div>
+          <strong>{item.title}</strong>
+          <span>{item.goal_title ?? "Unlinked goal"}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function renderConsolePreview(
+  title: string,
+  preview: CodexRunConsolePreview | null | undefined
+) {
+  if (!preview?.content) {
+    return (
+      <div className="codex-empty-copy">
+        {title === "Runtime output"
+          ? "Codex has not written a runtime output file yet."
+          : `${title} has no captured output yet.`}
+      </div>
+    );
+  }
+  return (
+    <div className="codex-output-preview">
+      <div className="codex-output-preview__label">
+        {title}
+        {preview.truncated ? " (tail)" : ""}
+      </div>
+      <pre className="codex-output-preview__content">{preview.content}</pre>
+    </div>
+  );
+}
+
+export function CodexIssueDetailPanel({
+  task,
+  detail,
+  issueKeyMap,
+  actions,
+  onSelectTask,
+}: {
+  task: BoardTask | null;
+  detail: CodexIssueDetailResponse | null;
+  issueKeyMap: Map<string, string>;
+  actions?: ReactNode;
+  onSelectTask?: (taskId: string) => void;
+}) {
+  const latestArtifactSummary = useMemo(() => {
+    if (!detail?.artifacts.length) {
+      return null;
+    }
+    return [...detail.artifacts].sort((left, right) => right.created_at.localeCompare(left.created_at))[0] ?? null;
+  }, [detail]);
+  const latestRun = useMemo(() => {
+    if (!detail?.runs?.length) {
+      return null;
+    }
+    return (
+      [...detail.runs].sort((left, right) =>
+        (right.ended_at ?? right.started_at ?? "").localeCompare(left.ended_at ?? left.started_at ?? "")
+      )[0] ?? null
+    );
+  }, [detail]);
+  const latestVerification = useMemo(() => {
+    if (!detail?.verification_runs?.length) {
+      return null;
+    }
+    return (
+      [...detail.verification_runs].sort((left, right) =>
+        (right.finished_at ?? right.started_at ?? "").localeCompare(left.finished_at ?? left.started_at ?? "")
+      )[0] ?? null
+    );
+  }, [detail]);
+  const primaryArtifactId = latestArtifactSummary?.artifact_id ?? null;
+  const [primaryArtifact, setPrimaryArtifact] = useState<ArtifactDetail | null>(null);
+
+  useEffect(() => {
+    if (!primaryArtifactId) {
+      setPrimaryArtifact(null);
+      return;
+    }
+    setPrimaryArtifact(null);
+    const controller = new AbortController();
+    void fetchArtifactDetail(primaryArtifactId, controller.signal)
+      .then((payload) => setPrimaryArtifact(payload))
+      .catch((error) => {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          setPrimaryArtifact(null);
+        }
+      });
+    return () => controller.abort();
+  }, [primaryArtifactId]);
+
+  if (!task) {
+    return (
+      <aside className="codex-detail-panel codex-panel">
+        <div className="codex-empty-copy">Select an issue to inspect its runs, relationships, outputs, and history.</div>
+      </aside>
+    );
+  }
+  const detailLoading = Boolean(task && !detail);
+  const runConsole = detail?.run_console ?? null;
+  const isReview = task.status === "review";
+  const unlockCount = detail?.relationships.unlocks.length ?? 0;
+  const outputCount = detail?.artifacts.length ?? 0;
+  const hasPreview =
+    primaryArtifact?.preview.kind === "text" || primaryArtifact?.preview.kind === "json";
+  const previewLabel = primaryArtifact?.preview.kind === "json" ? "JSON preview" : "Text preview";
+  const reviewHeadline = isReview
+    ? "Decision required"
+    : task.status === "blocked"
+      ? "Intervention required"
+      : "Current task state";
+  const reviewSummary = isReview
+    ? "Codex finished work on this issue. Review the primary output and checks, then approve or request changes."
+    : task.status === "blocked"
+      ? "This issue is blocked. Inspect the latest evidence and decide how to recover it."
+      : "Inspect the latest output, run state, and linked work before taking action.";
+  const consequenceSummary = isReview
+    ? unlockCount > 0
+      ? `Approving will unblock ${unlockCount} linked issue${unlockCount === 1 ? "" : "s"}.`
+      : "Approving will move this issue out of the review queue."
+    : task.status === "blocked"
+      ? "Recovery or replanning is required before the work can continue."
+      : nextActionLabel(task);
+
+  return (
+    <aside className="codex-detail-panel codex-panel">
+      <div className="codex-panel__header">
+        <div>
+          <span className="codex-kicker">Issue detail</span>
+          <h2>
+            {detail?.task.issue_key ?? task.issue_key ?? issueKeyMap.get(task.task_id) ?? task.task_id} · {task.title}
+          </h2>
+          <p>{task.description || "No description recorded for this issue yet."}</p>
+        </div>
+        <span className={`codex-status-chip codex-status-chip--${task.status}`}>
+          {statusLabel(task.status, task.review_state)}
+        </span>
+      </div>
+
+      <section className="codex-detail-section codex-decision-summary">
+        <div className="codex-section-heading">
+          <strong>{reviewHeadline}</strong>
+        </div>
+        <div className="codex-review-callout">
+          <strong>{reviewSummary}</strong>
+          <p>{consequenceSummary}</p>
+          <div className="codex-review-facts">
+            <div className="codex-review-fact">
+              <span>Priority</span>
+              <strong>{priorityLabel(task.priority)}</strong>
+            </div>
+            <div className="codex-review-fact">
+              <span>Owner</span>
+              <strong>{task.agent?.name ?? "Unassigned"}</strong>
+            </div>
+            <div className="codex-review-fact">
+              <span>Next step</span>
+              <strong>{nextActionLabel(task)}</strong>
+            </div>
+          </div>
+          {latestRun ? (
+            <div className="codex-review-note">
+              Latest run: {latestRun.agent_name ?? latestRun.agent_id ?? "Unknown agent"} via{" "}
+              {latestRun.provider_type.replaceAll("_", " ")} at {formatTimestamp(latestRun.ended_at ?? latestRun.started_at)}.
+            </div>
+          ) : null}
+          {latestVerification ? (
+            <div className="codex-review-note">
+              Latest check: {latestVerification.command} · {latestVerification.status}
+            </div>
+          ) : null}
+          {detailLoading ? (
+            <div className="codex-review-note">Loading outputs, checks, and linked work for this issue…</div>
+          ) : null}
+        </div>
+      </section>
+
+      {actions ? <div className="codex-detail-actions">{actions}</div> : null}
+
+      {runConsole ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>{runConsole.is_live ? "Live run" : "Latest run trace"}</strong>
+            <span>{runConsole.is_live ? "active" : runConsole.status.replaceAll("_", " ")}</span>
+          </div>
+          <div className="codex-review-callout">
+            <strong>{runConsole.status_message ?? "No live runtime message recorded."}</strong>
+            <p>
+              {runConsole.agent_name ?? runConsole.agent_id ?? "Unknown agent"} via{" "}
+              {runConsole.provider_type.replaceAll("_", " ")} · started {formatTimestamp(runConsole.started_at)}
+              {runConsole.timeout_seconds ? ` · timeout ${runConsole.timeout_seconds}s` : ""}
+            </p>
+            <div className="codex-review-facts">
+              <div className="codex-review-fact">
+                <span>Status</span>
+                <strong>{runConsole.status.replaceAll("_", " ")}</strong>
+              </div>
+              <div className="codex-review-fact">
+                <span>Progress</span>
+                <strong>{runConsole.progress_pct ?? 0}%</strong>
+              </div>
+              <div className="codex-review-fact">
+                <span>Heartbeat</span>
+                <strong>{formatTimestamp(runConsole.last_heartbeat_at ?? runConsole.started_at)}</strong>
+              </div>
+            </div>
+            {runConsole.command?.length ? (
+              <div className="codex-review-note">Command: {runConsole.command.join(" ")}</div>
+            ) : null}
+          </div>
+
+          <div className="codex-detail-stack">
+            {renderConsolePreview("Runtime output", runConsole.output_preview ?? null)}
+            {renderConsolePreview("Stderr", runConsole.stderr_preview ?? null)}
+            {renderConsolePreview("Stdout", runConsole.stdout_preview ?? null)}
+          </div>
+
+          <div className="codex-section-heading">
+            <strong>Session activity</strong>
+            <span>{runConsole.activity.length}</span>
+          </div>
+          <div className="codex-history-list">
+            {runConsole.activity.length ? (
+              runConsole.activity.map((event) => (
+                <div key={`${event.activity_id ?? event.created_at}:${event.action}`} className="codex-history-item">
+                  <div className="codex-history-item__meta">
+                    <strong>{event.action.replaceAll("_", " ")}</strong>
+                    <span>{formatTimestamp(event.created_at)}</span>
+                  </div>
+                  <span>{event.description}</span>
+                </div>
+              ))
+            ) : (
+              <div className="codex-empty-copy">No session-scoped activity has been logged for this run yet.</div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="codex-detail-section">
+        <div className="codex-section-heading">
+          <strong>Latest output</strong>
+          <span>{detailLoading ? "Loading…" : outputCount}</span>
+        </div>
+        {detailLoading ? (
+          <div className="codex-empty-copy">Loading issue outputs…</div>
+        ) : primaryArtifact ? (
+          <div className="codex-output-preview">
+            <div className="codex-output-preview__meta">
+              <div>
+                <strong>{primaryArtifact.file_name}</strong>
+                <span>
+                  {primaryArtifact.artifact_type.replaceAll("_", " ")} · {formatTimestamp(primaryArtifact.created_at)}
+                </span>
+              </div>
+              {primaryArtifact.download_url ? (
+                <a className="codex-button" href={primaryArtifact.download_url} target="_blank" rel="noreferrer">
+                  Download
+                </a>
+              ) : null}
+            </div>
+            {hasPreview ? (
+              <>
+                <div className="codex-output-preview__label">
+                  {previewLabel}
+                  {primaryArtifact.preview.truncated ? " (truncated)" : ""}
+                </div>
+                <pre className="codex-output-preview__content">{primaryArtifact.preview.content}</pre>
+              </>
+            ) : (
+              <div className="codex-empty-copy">
+                Preview unavailable for this output. Use download when you need the full file.
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="codex-empty-copy">No outputs have been attached to this issue yet.</div>
+        )}
+      </section>
+
+      <section className="codex-detail-section">
+        <div className="codex-section-heading">
+          <strong>Checks</strong>
+          <span>{detailLoading ? "Loading…" : detail?.verification_runs.length ?? 0}</span>
+        </div>
+        {detailLoading ? (
+          <div className="codex-empty-copy">Loading verification results…</div>
+        ) : latestVerification ? (
+          <div className="codex-output-item">
+            <strong>{latestVerification.command}</strong>
+            <span>{latestVerification.status}</span>
+            <span>
+              {latestVerification.output_excerpt ??
+                (latestVerification.exit_code != null ? `exit ${latestVerification.exit_code}` : "No verification summary recorded.")}
+            </span>
+            <span>{formatTimestamp(latestVerification.finished_at ?? latestVerification.started_at)}</span>
+          </div>
+        ) : (
+          <div className="codex-empty-copy">No automated checks have been recorded for this issue yet.</div>
+        )}
+      </section>
+
+      <details className="codex-detail-foldout">
+        <summary>Decision context</summary>
+        <div className="codex-detail-grid">
+          <div className="codex-metric-card">
+            <span className="codex-kicker">Priority</span>
+            <strong>{priorityLabel(task.priority)}</strong>
+            <span>{task.priority}</span>
+          </div>
+          <div className="codex-metric-card">
+            <span className="codex-kicker">Owner</span>
+            <strong>{task.agent?.name ?? "Unassigned"}</strong>
+            <span>{task.goal?.title ?? "Unlinked goal"}</span>
+          </div>
+          <div className="codex-metric-card">
+            <span className="codex-kicker">Next step</span>
+            <strong>{nextActionLabel(task)}</strong>
+            <span>{task.scheduler_summary ?? "No scheduler note recorded."}</span>
+          </div>
+        </div>
+      </details>
+
+      <details className="codex-detail-foldout">
+        <summary>Dependencies and related work</summary>
+        {detailLoading ? <div className="codex-detail-section codex-empty-copy">Loading linked work…</div> : null}
+        {!detailLoading ? (
+          <>
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Dependencies</strong>
+            <span>{detail?.relationships.depends_on.length ?? 0}</span>
+          </div>
+          {renderRelationshipList(detail?.relationships.depends_on ?? [], "No upstream dependency is linked.", issueKeyMap, onSelectTask)}
+        </section>
+
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Unlocks</strong>
+            <span>{detail?.relationships.unlocks.length ?? 0}</span>
+          </div>
+          {renderRelationshipList(detail?.relationships.unlocks ?? [], "No downstream issue is linked.", issueKeyMap, onSelectTask)}
+        </section>
+
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Related on the same goal</strong>
+            <span>{detail?.relationships.related.length ?? 0}</span>
+          </div>
+          {renderRelationshipList(detail?.relationships.related ?? [], "No related issue is linked on this goal.", issueKeyMap, onSelectTask)}
+        </section>
+          </>
+        ) : null}
+      </details>
+
+      <details className="codex-detail-foldout">
+        <summary>Runs and history</summary>
+        {detailLoading ? <div className="codex-detail-section codex-empty-copy">Loading runs and history…</div> : null}
+        {!detailLoading ? (
+          <>
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Runs</strong>
+            <span>{detail?.runs.length ?? 0}</span>
+          </div>
+          <div className="codex-run-list">
+            {(detail?.runs ?? []).length ? (
+              detail?.runs.map((run) => (
+                <div key={run.session_id} className="codex-run-item">
+                  <div className="codex-run-item__meta">
+                    <strong>{run.agent_name ?? run.agent_id ?? "Unknown agent"}</strong>
+                    <span>{run.status.replaceAll("_", " ")}</span>
+                  </div>
+                  <span>{run.status_message || "No run summary recorded."}</span>
+                  <span>{formatTimestamp(run.started_at)}</span>
+                </div>
+              ))
+            ) : (
+              <div className="codex-empty-copy">No runs recorded for this issue yet.</div>
+            )}
+          </div>
+        </section>
+
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Git workspace</strong>
+            <span>{detail?.git_workspace ? "prepared" : "not prepared"}</span>
+          </div>
+          {detail?.git_workspace ? (
+            <div className="codex-output-item">
+              <strong>{detail.git_workspace.branch_name}</strong>
+              <span>{detail.git_workspace.worktree_path}</span>
+              <span>{detail.git_workspace.change_summary ?? "No local changes recorded."}</span>
+            </div>
+          ) : (
+            <div className="codex-empty-copy">No git workspace has been prepared for this issue yet.</div>
+          )}
+        </section>
+
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>History</strong>
+            <span>{detail?.history.length ?? 0}</span>
+          </div>
+          <div className="codex-history-list">
+            {(detail?.history ?? []).length ? (
+              detail?.history.map((event) => (
+                <div key={`${event.source}:${event.event_id}`} className="codex-history-item">
+                  <div className="codex-history-item__meta">
+                    <strong>{event.title}</strong>
+                    <span>{formatTimestamp(event.created_at)}</span>
+                  </div>
+                  <span>{event.description}</span>
+                </div>
+              ))
+            ) : (
+              <div className="codex-empty-copy">No history has been logged for this issue yet.</div>
+            )}
+          </div>
+        </section>
+          </>
+        ) : null}
+      </details>
+    </aside>
+  );
+}

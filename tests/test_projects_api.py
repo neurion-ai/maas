@@ -558,6 +558,11 @@ lint = "imported:lint"
             projects_payload = client.get("/api/projects").json()["projects"]
             archived_project = next(project for project in projects_payload if project["project_id"] == second_project["project_id"])
             self.assertEqual(archived_project["state"], "archived")
+            portfolio_payload = client.get("/api/portfolio").json()["projects"]
+            archived_portfolio_project = next(
+                project for project in portfolio_payload if project["project_id"] == second_project["project_id"]
+            )
+            self.assertEqual(archived_portfolio_project["state"], "archived")
             overview_response = client.get("/api/overview", params={"project_id": second_project["project_id"]})
             self.assertEqual(overview_response.status_code, 404)
 

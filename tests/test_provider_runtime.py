@@ -541,6 +541,57 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertIn("codex 1.2.3", preflight["summary"])
             self.assertEqual(preflight["execution_mode"], "codex_cli")
 
+    def test_provider_preflight_accepts_codex_home_auth_for_codex_cli(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._enable_openai_codex_cli(connection)
+                connection.commit()
+            finally:
+                connection.close()
+
+            codex_home = os.path.join(tmpdir, "codex-home")
+            os.makedirs(codex_home, exist_ok=True)
+            with open(os.path.join(codex_home, "auth.json"), "w", encoding="utf-8") as handle:
+                json.dump({"auth_mode": "chatgpt", "tokens": {"id_token": "test-token"}}, handle)
+
+            client = TestClient(create_app(tmpdir))
+            prior_key = os.environ.pop("OPENAI_API_KEY", None)
+            try:
+                with mock.patch.dict(os.environ, {"CODEX_HOME": codex_home}, clear=False):
+                    with mock.patch("maas.services.provider_runtime.shutil.which", return_value="/usr/bin/codex"):
+                        def record_preflight_run(command, cwd, capture_output, text, timeout, check, env):
+                            self.assertEqual(cwd, tmpdir)
+                            self.assertEqual(env["CODEX_HOME"], codex_home)
+                            self.assertNotIn("OPENAI_API_KEY", env)
+                            self.assertTrue(
+                                env["MAAS_RUNTIME_ROOT"].startswith(
+                                    os.path.join(tmpdir, ".maas", "projects", project_id, "runtime", "envelopes")
+                                )
+                            )
+                            completed = mock.Mock()
+                            completed.returncode = 0
+                            completed.stdout = "codex 1.2.3\n"
+                            completed.stderr = ""
+                            return completed
+
+                        with mock.patch(
+                            "maas.services.provider_runtime.subprocess.run",
+                            side_effect=record_preflight_run,
+                        ) as run_mock:
+                            response = client.post(
+                                "/api/providers/openai_codex/actions/run-preflight",
+                                json={"actor_id": "agent_allocator"},
+                            )
+            finally:
+                if prior_key is not None:
+                    os.environ["OPENAI_API_KEY"] = prior_key
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["status"], "passed")
+            self.assertEqual(run_mock.call_count, 1)
+
     def test_provider_preflight_fails_when_required_auth_is_missing(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Provider Preflight Test", description="Provider preflight test", project_type="custom")
@@ -1084,7 +1135,7 @@ class ProviderRuntimeTest(unittest.TestCase):
             os.environ["OPENAI_API_KEY"] = "test-openai-key"
             os.environ["UNRELATED_SECRET"] = "should-not-leak"
 
-            def write_codex_output(command, cwd, capture_output, text, timeout, check, env):
+            def write_codex_output(command, cwd, stdout, stderr, text, timeout, check, env):
                 self.assertEqual(command[0:2], ["codex", "exec"])
                 self.assertIn("--model", command)
                 self.assertEqual(env["OPENAI_API_KEY"], "test-openai-key")
@@ -1109,10 +1160,12 @@ class ProviderRuntimeTest(unittest.TestCase):
                 output_file = command[command.index("-o") + 1]
                 with open(output_file, "w", encoding="utf-8") as handle:
                     handle.write("Codex completed the task.")
+                stdout.write("{\"event\":\"done\"}\n")
+                stderr.write("")
+                stdout.flush()
+                stderr.flush()
                 completed = mock.Mock()
                 completed.returncode = 0
-                completed.stdout = "{\"event\":\"done\"}\n"
-                completed.stderr = ""
                 return completed
 
             try:
@@ -1328,7 +1381,7 @@ class ProviderRuntimeTest(unittest.TestCase):
             client = TestClient(create_app(tmpdir))
             os.environ["OPENAI_API_KEY"] = "test-openai-key"
 
-            def write_codex_output(command, cwd, capture_output, text, timeout, check, env):
+            def write_codex_output(command, cwd, stdout, stderr, text, timeout, check, env):
                 self.assertEqual(cwd, repo_root)
                 self.assertEqual(env["MAAS_PROJECT_ROOT"], repo_root)
                 self.assertEqual(env["MAAS_PROJECT_ID"], project_id)
@@ -1341,10 +1394,12 @@ class ProviderRuntimeTest(unittest.TestCase):
                 self.assertTrue(output_file.startswith(env["MAAS_RUNTIME_ROOT"]))
                 with open(output_file, "w", encoding="utf-8") as handle:
                     handle.write("Imported project Codex run completed.")
+                stdout.write("done\n")
+                stderr.write("")
+                stdout.flush()
+                stderr.flush()
                 completed = mock.Mock()
                 completed.returncode = 0
-                completed.stdout = "done\n"
-                completed.stderr = ""
                 return completed
 
             try:

@@ -1,17 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { CodexIssueDetailPanel } from "../components/CodexIssueDetailPanel";
-import { boardCounts, formatTimestamp, issueKeyMap, mapBoardStatus, nextActionLabel, openBoardTasks, priorityLabel, resolveRunControlState, resolvedBoardTasks, statusLabel } from "../lib/codexMvp";
+import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap, nextActionLabel, openBoardTasks, priorityLabel, resolvedBoardTasks, statusLabel } from "../lib/codexMvp";
 import { fetchCodexIssueDetail, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
 import { fetchBoard, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
-import { useLivePulse } from "../lib/useLivePulse";
+import { useThrottledLivePulse } from "../lib/useLivePulse";
 import type { BoardTask, CodexIssueDetailResponse, PortfolioProject } from "../types";
 
 type WorkViewMode = "list" | "board";
 
-function laneTitle(key: "todo" | "in_progress" | "review" | "blocked") {
-  return key === "todo" ? "Todo" : key === "in_progress" ? "In progress" : key === "review" ? "Review" : "Blocked";
+const RUN_CONTROL_MIN_PENDING_MS = 900;
+
+function laneTitle(key: "planned" | "ready" | "assigned" | "in_progress" | "review" | "blocked") {
+  if (key === "planned") {
+    return "Planned";
+  }
+  if (key === "ready") {
+    return "Ready";
+  }
+  if (key === "assigned") {
+    return "Assigned";
+  }
+  return key === "in_progress" ? "In progress" : key === "review" ? "Review" : "Blocked";
 }
 
 function issueLabel(task: BoardTask, fallbackKeys: Map<string, string>) {
@@ -27,7 +38,7 @@ export function CodexWorkPage() {
   const [project, setProject] = useState<PortfolioProject | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
-  const livePulse = useLivePulse();
+  const livePulse = useThrottledLivePulse(1200);
 
   async function loadBoard(signal?: AbortSignal) {
     const [payload, portfolioPayload] = await Promise.all([fetchBoard({}, signal), fetchPortfolio()]);
@@ -67,6 +78,21 @@ export function CodexWorkPage() {
         }
       });
     return () => controller.abort();
+  }, [selectedTaskId]);
+
+  useEffect(() => {
+    if (!selectedTaskId) {
+      return;
+    }
+    const controller = new AbortController();
+    void fetchCodexIssueDetail(selectedTaskId, controller.signal, () => setNotice("Issue detail refresh fell back to cached data."))
+      .then((payload) => setDetail(payload))
+      .catch((error) => {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          setNotice("Issue detail refresh failed.");
+        }
+      });
+    return () => controller.abort();
   }, [selectedTaskId, livePulse]);
 
   const keyMap = useMemo(
@@ -81,17 +107,33 @@ export function CodexWorkPage() {
     () => [...tasks, ...resolvedTasks].find((task) => task.task_id === selectedTaskId) ?? tasks[0] ?? resolvedTasks[0] ?? null,
     [tasks, resolvedTasks, selectedTaskId]
   );
-  const runControl = useMemo(() => resolveRunControlState(project, tasks), [project, tasks]);
+  const launchPosture = useMemo(() => describeLaunchPosture(project), [project]);
 
   const grouped = useMemo(
     () => ({
-      todo: tasks.filter((task) => mapBoardStatus(task.status) === "todo"),
-      in_progress: tasks.filter((task) => mapBoardStatus(task.status) === "in_progress"),
-      review: tasks.filter((task) => mapBoardStatus(task.status) === "review"),
-      blocked: tasks.filter((task) => mapBoardStatus(task.status) === "blocked"),
+      planned: tasks.filter((task) => task.status === "planned"),
+      ready: tasks.filter((task) => task.status === "ready"),
+      assigned: tasks.filter((task) => task.status === "assigned"),
+      in_progress: tasks.filter((task) => task.status === "in_progress"),
+      review: tasks.filter((task) => task.status === "review"),
+      blocked: tasks.filter((task) => task.status === "blocked"),
     }),
     [tasks]
   );
+  const visibleLanes = useMemo(
+    () =>
+      (["planned", "ready", "assigned", "in_progress", "review", "blocked"] as const).filter(
+        (lane) => grouped[lane].length > 0 || ["ready", "assigned", "in_progress", "review", "blocked"].includes(lane)
+      ),
+    [grouped]
+  );
+
+  async function holdPendingState(startedAt: number) {
+    const remaining = RUN_CONTROL_MIN_PENDING_MS - (Date.now() - startedAt);
+    if (remaining > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, remaining));
+    }
+  }
 
   async function runAction(key: string, action: () => Promise<unknown>, message: string) {
     setPendingKey(key);
@@ -227,6 +269,7 @@ export function CodexWorkPage() {
   }
 
   async function handleRunCycle() {
+    const startedAt = Date.now();
     setPendingKey("run-cycle");
     setNotice(null);
     try {
@@ -235,10 +278,15 @@ export function CodexWorkPage() {
       if (selectedTaskId) {
         setDetail(await fetchCodexIssueDetail(selectedTaskId));
       }
+      await holdPendingState(startedAt);
+      await loadBoard();
+      if (selectedTaskId) {
+        setDetail(await fetchCodexIssueDetail(selectedTaskId));
+      }
       const queued = result.provider_jobs_queued ?? 0;
-      const started = result.provider_jobs_processed ?? 0;
+      const started = (result.provider_jobs_processed ?? 0) + (result.provider_jobs_dispatched ?? 0);
       setNotice(
-        `Run complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued for execution.`
+        `Cycle complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued${launchPosture.mode !== "running" ? " while launches stayed paused" : ""}.`
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Run failed.");
@@ -251,6 +299,7 @@ export function CodexWorkPage() {
     if (!project) {
       return;
     }
+    const startedAt = Date.now();
     setPendingKey("pause-cycle");
     setNotice(null);
     try {
@@ -258,6 +307,8 @@ export function CodexWorkPage() {
         queue_mode: "paused",
         max_running_jobs: project.provider_capacity.max_running_jobs,
       });
+      await loadBoard();
+      await holdPendingState(startedAt);
       await loadBoard();
       setNotice("Paused new Codex launches. Active runs will continue until they finish.");
     } catch (error) {
@@ -271,6 +322,7 @@ export function CodexWorkPage() {
     if (!project) {
       return;
     }
+    const startedAt = Date.now();
     setPendingKey("resume-cycle");
     setNotice(null);
     try {
@@ -283,7 +335,12 @@ export function CodexWorkPage() {
       if (selectedTaskId) {
         setDetail(await fetchCodexIssueDetail(selectedTaskId));
       }
-      const started = result.provider_jobs_processed ?? 0;
+      await holdPendingState(startedAt);
+      await loadBoard();
+      if (selectedTaskId) {
+        setDetail(await fetchCodexIssueDetail(selectedTaskId));
+      }
+      const started = (result.provider_jobs_processed ?? 0) + (result.provider_jobs_dispatched ?? 0);
       setNotice(`Resumed execution. ${started} Codex run${started === 1 ? "" : "s"} started.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Resume failed.");
@@ -301,29 +358,26 @@ export function CodexWorkPage() {
           <p>The board only shows active flow. Resolved work stays searchable instead of filling a giant Done lane.</p>
         </div>
         <div className="codex-page__actions">
+          <button type="button" className="codex-button codex-button--primary" disabled={pendingKey !== null} onClick={() => void handleRunCycle()}>
+            {pendingKey === "run-cycle" ? "Running..." : "Run next cycle"}
+          </button>
           <button
             type="button"
-            className="codex-button codex-button--primary"
-            disabled={pendingKey !== null}
+            className="codex-button"
+            disabled={pendingKey !== null || !project}
             onClick={() => {
-              if (runControl.mode === "pause") {
+              if (launchPosture.mode === "running") {
                 void handlePause();
                 return;
               }
-              if (runControl.mode === "resume") {
-                void handleResumeCycle();
-                return;
-              }
-              void handleRunCycle();
+              void handleResumeCycle();
             }}
           >
-            {pendingKey === "run-cycle"
-              ? "Running..."
-              : pendingKey === "pause-cycle"
-                ? "Pausing..."
-                : pendingKey === "resume-cycle"
-                  ? "Resuming..."
-                  : runControl.label}
+            {pendingKey === "pause-cycle"
+              ? "Pausing..."
+              : pendingKey === "resume-cycle"
+                ? "Resuming..."
+                : launchPosture.actionLabel}
           </button>
         </div>
       </header>
@@ -338,11 +392,14 @@ export function CodexWorkPage() {
           </button>
         </div>
         <div className="codex-chip-row">
-          <span className="codex-chip">{counts.todo} todo</span>
+          <span className="codex-chip">{counts.planned} planned</span>
+          <span className="codex-chip">{counts.ready} ready</span>
+          <span className="codex-chip">{counts.assigned} assigned</span>
           <span className="codex-chip">{counts.in_progress} in progress</span>
           <span className="codex-chip">{counts.review} review</span>
           <span className="codex-chip">{counts.blocked} blocked</span>
           <span className="codex-chip">{counts.done} resolved</span>
+          <span className="codex-chip">{launchPosture.label}</span>
         </div>
       </div>
 
@@ -354,7 +411,7 @@ export function CodexWorkPage() {
             <div className="codex-list-panel codex-panel">{tasks.map((task) => renderWorkRow(task))}</div>
           ) : (
             <div className="codex-board-grid">
-              {(["todo", "in_progress", "review", "blocked"] as const).map((lane) => (
+              {visibleLanes.map((lane) => (
                 <section key={lane} className="codex-board-lane codex-panel">
                   <div className="codex-board-lane__header">
                     <strong>{laneTitle(lane)}</strong>

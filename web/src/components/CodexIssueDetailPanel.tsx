@@ -4,6 +4,13 @@ import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview } from
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
 
+function formatExecutionModeLabel(value?: string | null) {
+  if (!value) {
+    return "unknown";
+  }
+  return value.replaceAll("_", " ");
+}
+
 function renderRelationshipList(
   items: CodexIssueDetailResponse["relationships"]["depends_on"],
   emptyLabel: string,
@@ -97,8 +104,22 @@ export function CodexIssueDetailPanel({
       )[0] ?? null
     );
   }, [detail]);
-  const primaryArtifactId = latestArtifactSummary?.artifact_id ?? null;
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const selectedArtifactSummary = useMemo(() => {
+    if (!detail?.artifacts.length) {
+      return null;
+    }
+    return (
+      detail.artifacts.find((artifact) => artifact.artifact_id === selectedArtifactId) ??
+      latestArtifactSummary
+    );
+  }, [detail?.artifacts, latestArtifactSummary, selectedArtifactId]);
+  const primaryArtifactId = selectedArtifactSummary?.artifact_id ?? null;
   const [primaryArtifact, setPrimaryArtifact] = useState<ArtifactDetail | null>(null);
+
+  useEffect(() => {
+    setSelectedArtifactId(latestArtifactSummary?.artifact_id ?? null);
+  }, [latestArtifactSummary?.artifact_id, task?.task_id]);
 
   useEffect(() => {
     if (!primaryArtifactId) {
@@ -149,6 +170,95 @@ export function CodexIssueDetailPanel({
     : task.status === "blocked"
       ? "Recovery or replanning is required before the work can continue."
       : nextActionLabel(task);
+  const executionMode = runConsole?.execution_mode ?? latestRun?.execution_mode ?? null;
+  const externalRuntime = runConsole?.external_runtime ?? latestRun?.external_runtime ?? null;
+  const isSimulationRun = executionMode === "local_simulation";
+  const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
+  const checks = detail?.verification_runs ?? [];
+  const reviewBundle = (
+    <>
+      <section className="codex-detail-section">
+        <div className="codex-section-heading">
+          <strong>Latest output</strong>
+          <span>{detailLoading ? "Loading…" : outputCount}</span>
+        </div>
+        {detailLoading ? (
+          <div className="codex-empty-copy">Loading issue outputs…</div>
+        ) : primaryArtifact ? (
+          <>
+            {(detail?.artifacts.length ?? 0) > 1 ? (
+              <div className="codex-chip-row codex-output-selector">
+                {detail?.artifacts.map((artifact) => (
+                  <button
+                    key={artifact.artifact_id}
+                    type="button"
+                    className={`codex-chip ${artifact.artifact_id === selectedArtifactSummary?.artifact_id ? "codex-chip--active" : ""}`}
+                    onClick={() => setSelectedArtifactId(artifact.artifact_id)}
+                  >
+                    {artifact.file_name}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="codex-output-preview">
+              <div className="codex-output-preview__meta">
+                <div>
+                  <strong>{primaryArtifact.file_name}</strong>
+                  <span>
+                    {primaryArtifact.artifact_type.replaceAll("_", " ")} · {formatTimestamp(primaryArtifact.created_at)}
+                  </span>
+                </div>
+                {primaryArtifact.download_url ? (
+                  <a className="codex-button" href={primaryArtifact.download_url} target="_blank" rel="noreferrer">
+                    Download
+                  </a>
+                ) : null}
+              </div>
+              {hasPreview ? (
+                <>
+                  <div className="codex-output-preview__label">
+                    {previewLabel}
+                    {primaryArtifact.preview.truncated ? " (truncated)" : ""}
+                  </div>
+                  <pre className="codex-output-preview__content">{primaryArtifact.preview.content}</pre>
+                </>
+              ) : (
+                <div className="codex-empty-copy">
+                  Preview unavailable for this output. Use download when you need the full file.
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="codex-empty-copy">No outputs have been attached to this issue yet.</div>
+        )}
+      </section>
+
+      <section className="codex-detail-section">
+        <div className="codex-section-heading">
+          <strong>Checks</strong>
+          <span>{detailLoading ? "Loading…" : checks.length}</span>
+        </div>
+        {detailLoading ? (
+          <div className="codex-empty-copy">Loading verification results…</div>
+        ) : checks.length ? (
+          <div className="codex-run-list">
+            {checks.map((run) => (
+              <div key={run.verification_run_id} className="codex-output-item">
+                <strong>{run.command}</strong>
+                <span>{run.status}</span>
+                <span>{run.output_excerpt ?? (run.exit_code != null ? `exit ${run.exit_code}` : "No verification summary recorded.")}</span>
+                <span>{formatTimestamp(run.finished_at ?? run.started_at)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="codex-empty-copy">No automated checks have been recorded for this issue yet.</div>
+        )}
+      </section>
+      {issueActions}
+    </>
+  );
 
   return (
     <aside className="codex-detail-panel codex-panel">
@@ -164,6 +274,12 @@ export function CodexIssueDetailPanel({
           {statusLabel(task.status, task.review_state)}
         </span>
       </div>
+
+      {isSimulationRun ? (
+        <div className="codex-banner codex-banner--warn">
+          This evidence came from a simulated run, not a live Codex execution. Review it as flow testing, not as production output.
+        </div>
+      ) : null}
 
       <section className="codex-detail-section codex-decision-summary">
         <div className="codex-section-heading">
@@ -189,8 +305,12 @@ export function CodexIssueDetailPanel({
           {latestRun ? (
             <div className="codex-review-note">
               Latest run: {latestRun.agent_name ?? latestRun.agent_id ?? "Unknown agent"} via{" "}
-              {latestRun.provider_type.replaceAll("_", " ")} at {formatTimestamp(latestRun.ended_at ?? latestRun.started_at)}.
+              {latestRun.provider_type.replaceAll("_", " ")} · {formatExecutionModeLabel(latestRun.execution_mode)} at{" "}
+              {formatTimestamp(latestRun.ended_at ?? latestRun.started_at)}.
             </div>
+          ) : null}
+          {externalRuntime && !isSimulationRun ? (
+            <div className="codex-review-note">External runtime: {formatExecutionModeLabel(externalRuntime)}</div>
           ) : null}
           {latestVerification ? (
             <div className="codex-review-note">
@@ -203,9 +323,7 @@ export function CodexIssueDetailPanel({
         </div>
       </section>
 
-      {actions ? <div className="codex-detail-actions">{actions}</div> : null}
-
-      {runConsole ? (
+      {runConsole?.is_live ? (
         <section className="codex-detail-section">
           <div className="codex-section-heading">
             <strong>{runConsole.is_live ? "Live run" : "Latest run trace"}</strong>
@@ -215,7 +333,8 @@ export function CodexIssueDetailPanel({
             <strong>{runConsole.status_message ?? "No live runtime message recorded."}</strong>
             <p>
               {runConsole.agent_name ?? runConsole.agent_id ?? "Unknown agent"} via{" "}
-              {runConsole.provider_type.replaceAll("_", " ")} · started {formatTimestamp(runConsole.started_at)}
+              {runConsole.provider_type.replaceAll("_", " ")} · {formatExecutionModeLabel(runConsole.execution_mode)} · started{" "}
+              {formatTimestamp(runConsole.started_at)}
               {runConsole.timeout_seconds ? ` · timeout ${runConsole.timeout_seconds}s` : ""}
             </p>
             <div className="codex-review-facts">
@@ -265,68 +384,29 @@ export function CodexIssueDetailPanel({
         </section>
       ) : null}
 
-      <section className="codex-detail-section">
-        <div className="codex-section-heading">
-          <strong>Latest output</strong>
-          <span>{detailLoading ? "Loading…" : outputCount}</span>
-        </div>
-        {detailLoading ? (
-          <div className="codex-empty-copy">Loading issue outputs…</div>
-        ) : primaryArtifact ? (
-          <div className="codex-output-preview">
-            <div className="codex-output-preview__meta">
-              <div>
-                <strong>{primaryArtifact.file_name}</strong>
-                <span>
-                  {primaryArtifact.artifact_type.replaceAll("_", " ")} · {formatTimestamp(primaryArtifact.created_at)}
-                </span>
-              </div>
-              {primaryArtifact.download_url ? (
-                <a className="codex-button" href={primaryArtifact.download_url} target="_blank" rel="noreferrer">
-                  Download
-                </a>
-              ) : null}
-            </div>
-            {hasPreview ? (
-              <>
-                <div className="codex-output-preview__label">
-                  {previewLabel}
-                  {primaryArtifact.preview.truncated ? " (truncated)" : ""}
-                </div>
-                <pre className="codex-output-preview__content">{primaryArtifact.preview.content}</pre>
-              </>
-            ) : (
-              <div className="codex-empty-copy">
-                Preview unavailable for this output. Use download when you need the full file.
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="codex-empty-copy">No outputs have been attached to this issue yet.</div>
-        )}
-      </section>
+      {reviewBundle}
 
-      <section className="codex-detail-section">
-        <div className="codex-section-heading">
-          <strong>Checks</strong>
-          <span>{detailLoading ? "Loading…" : detail?.verification_runs.length ?? 0}</span>
-        </div>
-        {detailLoading ? (
-          <div className="codex-empty-copy">Loading verification results…</div>
-        ) : latestVerification ? (
-          <div className="codex-output-item">
-            <strong>{latestVerification.command}</strong>
-            <span>{latestVerification.status}</span>
-            <span>
-              {latestVerification.output_excerpt ??
-                (latestVerification.exit_code != null ? `exit ${latestVerification.exit_code}` : "No verification summary recorded.")}
-            </span>
-            <span>{formatTimestamp(latestVerification.finished_at ?? latestVerification.started_at)}</span>
+      {runConsole && !runConsole.is_live ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Latest run trace</strong>
+            <span>{runConsole.status.replaceAll("_", " ")}</span>
           </div>
-        ) : (
-          <div className="codex-empty-copy">No automated checks have been recorded for this issue yet.</div>
-        )}
-      </section>
+          <div className="codex-review-callout">
+            <strong>{runConsole.status_message ?? "No runtime summary recorded."}</strong>
+            <p>
+              {runConsole.agent_name ?? runConsole.agent_id ?? "Unknown agent"} via{" "}
+              {runConsole.provider_type.replaceAll("_", " ")} · {formatExecutionModeLabel(runConsole.execution_mode)} · started{" "}
+              {formatTimestamp(runConsole.started_at)}
+            </p>
+          </div>
+          <div className="codex-detail-stack">
+            {renderConsolePreview("Runtime output", runConsole.output_preview ?? null)}
+            {renderConsolePreview("Stderr", runConsole.stderr_preview ?? null)}
+            {renderConsolePreview("Stdout", runConsole.stdout_preview ?? null)}
+          </div>
+        </section>
+      ) : null}
 
       <details className="codex-detail-foldout">
         <summary>Decision context</summary>

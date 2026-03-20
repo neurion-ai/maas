@@ -480,14 +480,14 @@ def review_task(connection, task_id, actor_id, decision):
         connection.execute(
             """
             UPDATE tasks
-            SET status = 'planned',
+            SET status = 'blocked',
                 review_state = 'changes_requested',
                 updated_at = CURRENT_TIMESTAMP
             WHERE task_id = ?
             """,
             (task_id,),
         )
-        description = "Review rejected; task returned to the assignable queue."
+        description = "Review rejected; task blocked until requested changes are addressed."
 
     _audit(
         connection,

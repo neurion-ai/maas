@@ -120,8 +120,9 @@ export function PortfolioPage() {
       const payload = await runOrchestratorPass(4, 2);
       setOrchestratorResult(payload);
       setPortfolio(await fetchPortfolio());
+      const launched = (payload.provider_jobs_processed ?? 0) + (payload.provider_jobs_dispatched ?? 0);
       setNotice(
-        `Orchestrator assigned ${payload.assigned_count} tasks, processed ${payload.provider_jobs_processed} queued jobs, and touched ${payload.project_runs.length} projects.`
+        `Orchestrator assigned ${payload.assigned_count} tasks, launched ${launched} provider run${launched === 1 ? "" : "s"}, and touched ${payload.project_runs.length} projects.`
       );
     } catch {
       setNotice("Orchestrator pass failed; keeping the current portfolio snapshot.");
@@ -315,7 +316,7 @@ export function PortfolioPage() {
           </div>
           {orchestratorResult ? (
             <span className="status-chip">
-              Last pass: {orchestratorResult.provider_jobs_processed} jobs, {orchestratorResult.assigned_count} assignments
+              Last pass: {(orchestratorResult.provider_jobs_processed ?? 0) + (orchestratorResult.provider_jobs_dispatched ?? 0)} jobs, {orchestratorResult.assigned_count} assignments
             </span>
           ) : null}
         </header>

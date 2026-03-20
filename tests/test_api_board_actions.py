@@ -106,7 +106,7 @@ lint = "example:main"
             self.assertEqual(len(matching_cards), 1)
             self.assertEqual(matching_cards[0]["status"], "done")
 
-    def test_rejected_review_task_returns_to_assignable_status(self):
+    def test_rejected_review_task_stays_blocked_until_changes_are_addressed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Reject Test", description="Reject review path", project_type="custom")
             client = TestClient(create_app(tmpdir))
@@ -130,7 +130,7 @@ lint = "example:main"
                 if task["task_id"] == review_task_id
             ]
             self.assertEqual(len(matching_cards), 1)
-            self.assertEqual(matching_cards[0]["status"], "planned")
+            self.assertEqual(matching_cards[0]["status"], "blocked")
             self.assertEqual(matching_cards[0]["review_state"], "changes_requested")
 
     def test_risky_reassign_routes_to_escalation_instead_of_executing(self):

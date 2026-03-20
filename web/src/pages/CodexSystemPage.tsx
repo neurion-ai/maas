@@ -43,15 +43,18 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
       (summary, provider) => {
         summary.total += 1;
         const preflightStatus = provider.latest_preflight?.status ?? null;
-        const isReady =
-          provider.status === "configured" ||
-          provider.status === "available" ||
-          provider.status === "simulated" ||
-          preflightStatus === "passed" ||
-          preflightStatus === "simulation_ready" ||
-          (provider.is_runnable ?? false);
-        if (isReady) {
-          summary.ready += 1;
+        const executionMode = provider.effective_execution_mode ?? provider.execution_mode;
+        const isSimulation = executionMode === "local_simulation" || preflightStatus === "simulation_ready";
+        const isLiveReady =
+          !isSimulation &&
+          (provider.status === "configured" ||
+            provider.status === "available" ||
+            preflightStatus === "passed" ||
+            (provider.is_runnable ?? false));
+        if (isLiveReady) {
+          summary.liveReady += 1;
+        } else if (isSimulation) {
+          summary.simulation += 1;
         }
         if (provider.status === "misconfigured") {
           summary.issues += 1;
@@ -60,7 +63,7 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
         summary.running += provider.job_summary?.running_jobs ?? 0;
         return summary;
       },
-      { total: 0, ready: 0, issues: 0, queued: 0, running: 0 }
+      { total: 0, liveReady: 0, simulation: 0, issues: 0, queued: 0, running: 0 }
     );
   }, [providers]);
 
@@ -83,9 +86,9 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
           <p>{counts.in_progress} active · {counts.review} review</p>
         </article>
         <article className="codex-panel codex-stat">
-          <strong>{providerSummary.ready}</strong>
-          <span>Ready runtimes</span>
-          <p>{providerSummary.issues} with issues</p>
+          <strong>{providerSummary.liveReady}</strong>
+          <span>Live-ready runtimes</span>
+          <p>{providerSummary.simulation} simulation · {providerSummary.issues} with issues</p>
         </article>
         <article className="codex-panel codex-stat">
           <strong>{providerSummary.running}</strong>
@@ -112,9 +115,13 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
               <div key={provider.id} className="codex-run-item">
                 <div className="codex-run-item__meta">
                   <strong>{provider.name}</strong>
-                  <span>{provider.execution_mode.replaceAll("_", " ")}</span>
+                  <span>{(provider.effective_execution_mode ?? provider.execution_mode).replaceAll("_", " ")}</span>
                 </div>
-                <span>{provider.latest_preflight?.status ?? "not checked"}</span>
+                <span>
+                  {(provider.effective_execution_mode ?? provider.execution_mode) === "local_simulation"
+                    ? "simulation"
+                    : provider.latest_preflight?.status ?? "not checked"}
+                </span>
                 <span>{formatTimestamp(provider.latest_preflight?.checked_at ?? null)}</span>
               </div>
             ))}
@@ -136,9 +143,9 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
             >
               <div className="codex-run-item__meta">
                 <strong>Todo</strong>
-                <span>{counts.todo}</span>
+                <span>{counts.ready + counts.assigned + counts.planned}</span>
               </div>
-              <span>Ready or assigned work waiting for the next cycle.</span>
+              <span>{counts.ready} ready · {counts.assigned} assigned · {counts.planned} planned</span>
             </button>
             <button
               type="button"

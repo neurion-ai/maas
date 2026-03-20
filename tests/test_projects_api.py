@@ -57,6 +57,62 @@ lint = "imported:lint"
             self.assertEqual(payload["projects"][1]["state"], "active")
             self.assertEqual(payload["projects"][1]["onboarding_mode"], "greenfield")
 
+    def test_greenfield_create_can_provision_a_fresh_workspace_root(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Fresh Workspace",
+                    "description": "greenfield",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                    "create_source_root": True,
+                },
+            )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertTrue(payload["metadata"]["generated_source_root"])
+            self.assertTrue(os.path.isdir(payload["metadata"]["source_root"]))
+            self.assertIn(os.path.join(tmpdir, "workspaces"), payload["metadata"]["source_root"])
+
+    def test_delete_project_removes_generated_workspace_and_project_record(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Disposable Workspace",
+                    "description": "greenfield",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                    "create_source_root": True,
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            payload = create_response.json()
+            project_id = payload["project"]["project_id"]
+            source_root = payload["metadata"]["source_root"]
+
+            delete_response = client.post(
+                f"/api/projects/{project_id}/actions/delete",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(delete_response.status_code, 200)
+            self.assertEqual(delete_response.json()["state"], "deleted")
+            self.assertFalse(os.path.exists(source_root))
+
+            projects_payload = client.get("/api/projects").json()
+            self.assertFalse(any(project["project_id"] == project_id for project in projects_payload["projects"]))
+
     def test_system_pick_directory_endpoint_returns_native_picker_result(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

@@ -29,6 +29,7 @@ interface ProjectsPageProps {
   onCreateProject: (event: FormEvent<HTMLFormElement>) => void;
   onArchiveProject: (projectId: string) => Promise<void>;
   onRestoreProject: (projectId: string) => Promise<void>;
+  onDeleteProject: (projectId: string) => Promise<void>;
   onNavigate?: (view: "command" | "work" | "issues" | "agents" | "system" | "projects") => void;
 }
 
@@ -250,6 +251,7 @@ export function ProjectsPage({
   onCreateProject,
   onArchiveProject,
   onRestoreProject,
+  onDeleteProject,
   onNavigate
 }: ProjectsPageProps) {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
@@ -267,6 +269,10 @@ export function ProjectsPage({
   const selectedPortfolioProject =
     portfolio?.projects.find((project) => project.project_id === selectedProject?.project_id) ?? null;
   const otherActiveProjects = activeProjects.filter((project) => project.project_id !== selectedProject?.project_id);
+  const portfolioById = useMemo(
+    () => new Map((portfolio?.projects ?? []).map((project) => [project.project_id, project])),
+    [portfolio?.projects]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -302,8 +308,9 @@ export function ProjectsPage({
       if (selectedProject) {
         setSelectedOverview(await fetchOverview());
       }
+      const launched = (payload.provider_jobs_processed ?? 0) + (payload.provider_jobs_dispatched ?? 0);
       setNotice(
-        `Orchestrator touched ${payload.project_runs.length} projects, assigned ${payload.assigned_count} tasks, and processed ${payload.provider_jobs_processed} queued jobs.`
+        `Orchestrator touched ${payload.project_runs.length} projects, assigned ${payload.assigned_count} tasks, and launched ${launched} provider run${launched === 1 ? "" : "s"}.`
       );
     } catch {
       setNotice("Orchestrator pass failed; keeping the latest available portfolio state.");
@@ -321,6 +328,17 @@ export function ProjectsPage({
     () => buildNextSteps(selectedProject, selectedPortfolioProject, selectedOverview),
     [selectedOverview, selectedPortfolioProject, selectedProject]
   );
+
+  function archiveDisabledReason(projectId: string) {
+    const portfolioProject = portfolioById.get(projectId);
+    if (activeProjects.length <= 1) {
+      return "Create another active project before archiving the last one.";
+    }
+    if ((portfolioProject?.active_sessions ?? 0) > 0 || (portfolioProject?.provider_capacity.running_jobs ?? 0) > 0) {
+      return "Wait for active runs to finish before archiving this project.";
+    }
+    return null;
+  }
 
   function coerceDroppedPath(dataTransfer: DataTransfer) {
     const uriList = dataTransfer.getData("text/uri-list").trim();
@@ -471,17 +489,32 @@ export function ProjectsPage({
                 >
                   Keep selected
                 </button>
-                {activeProjects.length > 1 ? (
-                  <button
-                    type="button"
-                    className="hero-button hero-button--ghost hero-button--compact"
-                    disabled={projectSubmitting}
-                    onClick={() => void onArchiveProject(selectedProject.project_id)}
-                  >
-                    Archive project
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  disabled={projectSubmitting || archiveDisabledReason(selectedProject.project_id) != null}
+                  onClick={() => void onArchiveProject(selectedProject.project_id)}
+                  title={archiveDisabledReason(selectedProject.project_id) ?? undefined}
+                >
+                  Archive project
+                </button>
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  disabled={projectSubmitting}
+                  onClick={() => {
+                    if (!window.confirm(`Delete ${selectedProject.name}? This removes its MAAS state${selectedProject.source_root ? " and any generated workspace path if MAAS created it" : ""}.`)) {
+                      return;
+                    }
+                    void onDeleteProject(selectedProject.project_id);
+                  }}
+                >
+                  Delete project
+                </button>
               </div>
+              {archiveDisabledReason(selectedProject.project_id) ? (
+                <p className="field-hint">{archiveDisabledReason(selectedProject.project_id)}</p>
+              ) : null}
             </div>
           ) : (
             <div className="empty-state empty-state--compact">
@@ -678,13 +711,30 @@ export function ProjectsPage({
                       <button
                         type="button"
                         className="hero-button hero-button--ghost hero-button--compact"
-                        disabled={projectSubmitting}
+                        disabled={projectSubmitting || archiveDisabledReason(project.project_id) != null}
                         onClick={() => void onArchiveProject(project.project_id)}
+                        title={archiveDisabledReason(project.project_id) ?? undefined}
                       >
                         Archive
                       </button>
                     ) : null}
+                    <button
+                      type="button"
+                      className="hero-button hero-button--ghost hero-button--compact"
+                      disabled={projectSubmitting}
+                      onClick={() => {
+                        if (!window.confirm(`Delete ${project.name}? This removes its MAAS state${project.source_root ? " and any generated workspace path if MAAS created it" : ""}.`)) {
+                          return;
+                        }
+                        void onDeleteProject(project.project_id);
+                      }}
+                    >
+                      Delete
+                    </button>
                   </div>
+                  {archiveDisabledReason(project.project_id) ? (
+                    <p className="field-hint">{archiveDisabledReason(project.project_id)}</p>
+                  ) : null}
                 </div>
               );
             })}
@@ -775,7 +825,12 @@ export function ProjectsPage({
                     required
                   />
                 </label>
-              ) : null}
+              ) : (
+                <p className="project-form__hint">
+                  Leave the source root blank and MAAS will create a fresh workspace folder under{" "}
+                  <code>workspaces/&lt;project-name&gt;</code> in this repo root.
+                </p>
+              )}
               <details className="advanced-pane">
                 <summary>Optional metadata</summary>
                 <div className="advanced-pane__content">
@@ -803,7 +858,7 @@ export function ProjectsPage({
               <p className="project-form__hint">
                 {setupMode === "import"
                   ? "Point MAAS at a local repo and it will open with a brownfield review flow before wider automation."
-                  : "Create a clean workspace and let MAAS seed the first greenfield plan."}
+                  : "Create a clean workspace and let MAAS seed the first greenfield plan. Use Delete project later if you want to wipe the MAAS state and generated workspace."}
               </p>
               <div className="surface-card__actions">
                 <button
@@ -841,6 +896,19 @@ export function ProjectsPage({
                       onClick={() => void onRestoreProject(project.project_id)}
                     >
                       Restore
+                    </button>
+                    <button
+                      type="button"
+                      className="hero-button hero-button--ghost hero-button--compact"
+                      disabled={projectSubmitting}
+                      onClick={() => {
+                        if (!window.confirm(`Delete ${project.name}? This removes its MAAS state${project.source_root ? " and any generated workspace path if MAAS created it" : ""}.`)) {
+                          return;
+                        }
+                        void onDeleteProject(project.project_id);
+                      }}
+                    >
+                      Delete
                     </button>
                   </div>
                 </div>

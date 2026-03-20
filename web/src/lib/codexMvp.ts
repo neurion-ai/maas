@@ -52,6 +52,9 @@ export function boardCounts(columns: BoardColumn[]) {
   const open = openBoardTasks(columns);
   const resolved = resolvedBoardTasks(columns);
   return {
+    planned: open.filter((task) => task.status === "planned").length,
+    ready: open.filter((task) => task.status === "ready").length,
+    assigned: open.filter((task) => task.status === "assigned").length,
     todo: open.filter((task) => mapBoardStatus(task.status) === "todo").length,
     in_progress: open.filter((task) => mapBoardStatus(task.status) === "in_progress").length,
     review: open.filter((task) => mapBoardStatus(task.status) === "review").length,
@@ -115,25 +118,35 @@ export function formatTimestamp(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
-export type CodexRunControlState =
-  | { mode: "run"; label: "Run" }
-  | { mode: "pause"; label: "Pause" }
-  | { mode: "resume"; label: "Resume" };
+export type CodexLaunchPosture = {
+  mode: "running" | "draining" | "paused";
+  label: string;
+  actionLabel: string;
+  summary: string;
+};
 
-export function resolveRunControlState(project: PortfolioProject | null, tasks: BoardTask[]): CodexRunControlState {
-  if (!project) {
-    return { mode: "run", label: "Run" };
+export function describeLaunchPosture(project: PortfolioProject | null): CodexLaunchPosture {
+  const queueMode = project?.provider_capacity.queue_mode ?? "running";
+  if (queueMode === "paused") {
+    return {
+      mode: "paused",
+      label: "Launches paused",
+      actionLabel: "Resume launches",
+      summary: "Assigned work can queue up, but no new Codex runs will start until launches resume.",
+    };
   }
-  if (project.provider_capacity.queue_mode === "paused" || project.provider_capacity.queue_mode === "draining") {
-    return { mode: "resume", label: "Resume" };
+  if (queueMode === "draining") {
+    return {
+      mode: "draining",
+      label: "Launches draining",
+      actionLabel: "Resume launches",
+      summary: "Current runs can finish, but the queue is draining instead of starting new Codex work.",
+    };
   }
-  if (
-    project.active_sessions > 0 ||
-    project.provider_capacity.running_jobs > 0 ||
-    project.provider_capacity.queued_jobs > 0 ||
-    tasks.some((task) => task.status === "in_progress")
-  ) {
-    return { mode: "pause", label: "Pause" };
-  }
-  return { mode: "run", label: "Run" };
+  return {
+    mode: "running",
+    label: "Launches running",
+    actionLabel: "Pause launches",
+    summary: "Assigned work can start new Codex runs as capacity opens.",
+  };
 }

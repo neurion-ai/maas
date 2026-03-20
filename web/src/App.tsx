@@ -3,11 +3,12 @@ import { CommandPalette, type CommandPaletteAction } from "./components/CommandP
 import {
   archiveProject,
   createProject,
+  deleteProject,
   fetchProjects,
   restoreProject,
 } from "./lib/controlRoomApi";
 import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId } from "./lib/projectScope";
-import { LivePulseProvider, useLivePulse, useLiveStatus } from "./lib/useLivePulse";
+import { LivePulseProvider, useLiveStatus, useThrottledLivePulse } from "./lib/useLivePulse";
 import { CommandPage } from "./pages/CommandPage";
 import { CodexAgentsPage } from "./pages/CodexAgentsPage";
 import { CodexIssuesPage } from "./pages/CodexIssuesPage";
@@ -95,11 +96,17 @@ function AppShell() {
   const [projectNotice, setProjectNotice] = useState<string | null>(null);
   const [projectSubmitting, setProjectSubmitting] = useState(false);
   const { connected, transport } = useLiveStatus();
-  const livePulse = useLivePulse();
+  const livePulse = useThrottledLivePulse(1500);
 
   const activeProjects = projects.filter((project) => project.state !== "archived");
   const activeProject =
     activeProjects.find((project) => project.project_id === selectedProjectId) ?? activeProjects[0] ?? null;
+
+  useEffect(() => {
+    if (!activeProjects.length && activeView !== "projects" && activeView !== "settings") {
+      setActiveView("projects");
+    }
+  }, [activeProjects.length, activeView]);
 
   async function loadProjects(preferredProjectId?: string | null) {
     const payload = await fetchProjects();
@@ -204,12 +211,15 @@ function AppShell() {
         description: projectForm.description.trim(),
         project_type: projectForm.projectType.trim() || "custom",
         mode: projectForm.mode,
-        source_root: projectForm.sourceRoot.trim() || undefined
+        source_root: projectForm.sourceRoot.trim() || undefined,
+        create_source_root: projectForm.mode === "greenfield" && !projectForm.sourceRoot.trim(),
       });
       await loadProjects(payload.project.project_id);
       setProjectForm(DEFAULT_PROJECT_FORM);
       setActiveView("command");
-      setProjectNotice(`Created ${payload.project.name} in ${payload.mode} mode from ${payload.metadata.source_root}.`);
+      setProjectNotice(
+        `Created ${payload.project.name} in ${payload.mode} mode${payload.metadata.generated_source_root ? ` with a fresh workspace at ${payload.metadata.source_root}` : ` from ${payload.metadata.source_root}`}.`
+      );
     } catch (error) {
       setProjectNotice(error instanceof Error ? error.message : "Could not create project.");
     } finally {
@@ -240,6 +250,20 @@ function AppShell() {
       setProjectNotice("Restored project.");
     } catch (error) {
       setProjectNotice(error instanceof Error ? error.message : "Could not restore project.");
+    } finally {
+      setProjectSubmitting(false);
+    }
+  }
+
+  async function handleDeleteProject(projectId: string) {
+    setProjectSubmitting(true);
+    setProjectNotice(null);
+    try {
+      await deleteProject(projectId);
+      await loadProjects(projectId === selectedProjectId ? null : selectedProjectId);
+      setProjectNotice("Deleted project.");
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Could not delete project.");
     } finally {
       setProjectSubmitting(false);
     }
@@ -400,10 +424,11 @@ function AppShell() {
               }}
               onProjectFormChange={setProjectForm}
               onCreateProject={handleCreateProject}
-              onArchiveProject={handleArchiveProject}
-              onRestoreProject={handleRestoreProject}
-              onNavigate={setActiveView}
-            />
+            onArchiveProject={handleArchiveProject}
+            onRestoreProject={handleRestoreProject}
+            onDeleteProject={handleDeleteProject}
+            onNavigate={setActiveView}
+          />
           ) : null}
           {activeView === "settings" ? <SettingsPage theme={theme} onThemeChange={setTheme} /> : null}
         </div>

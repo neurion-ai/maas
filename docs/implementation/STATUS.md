@@ -36,6 +36,7 @@ See:
 - [10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md)
 - [11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md)
 - [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md)
+- [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend
@@ -133,6 +134,14 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#168` is implemented on `codex/codex-mvp-shell-integration`
 - [x] `#169` is implemented on `codex/codex-mvp-shell-integration`
 - [x] `#170` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#171` is implemented on `codex/codex-mvp-hardening`
+- [x] `#172` is implemented on `codex/codex-mvp-hardening`
+- [x] `#173` is implemented on `codex/codex-mvp-hardening`
+- [x] `#174` is implemented on `codex/codex-mvp-hardening`
+- [x] `#175` is implemented on `codex/codex-mvp-hardening`
+- [x] `#176` is implemented on `codex/codex-mvp-hardening`
+- [x] `#177` is implemented on `codex/codex-mvp-hardening`
+- [x] `#178` is implemented on `codex/codex-mvp-hardening`
 
 ## Extended Numbered Roadmap
 

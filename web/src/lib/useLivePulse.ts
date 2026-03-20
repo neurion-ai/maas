@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { appendProjectScope, getSelectedProjectId, subscribeProjectScope } from "./projectScope";
 
 type LiveTransport = "websocket" | "sse" | "polling";
@@ -155,6 +155,49 @@ export function LivePulseProvider({ children }: { children: ReactNode }) {
 
 export function useLivePulse() {
   return useLiveStatus().pulse;
+}
+
+export function useThrottledLivePulse(minIntervalMs = 1200) {
+  const pulse = useLivePulse();
+  const [throttledPulse, setThrottledPulse] = useState(pulse);
+  const lastEmitAtRef = useRef(0);
+  const latestPulseRef = useRef(pulse);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    latestPulseRef.current = pulse;
+    const now = Date.now();
+    const elapsed = now - lastEmitAtRef.current;
+
+    const emit = () => {
+      lastEmitAtRef.current = Date.now();
+      timerRef.current = null;
+      setThrottledPulse(latestPulseRef.current);
+    };
+
+    if (lastEmitAtRef.current === 0 || elapsed >= minIntervalMs) {
+      if (timerRef.current != null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      emit();
+      return;
+    }
+
+    if (timerRef.current == null) {
+      timerRef.current = window.setTimeout(emit, minIntervalMs - elapsed);
+    }
+  }, [pulse, minIntervalMs]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current != null) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  return throttledPulse;
 }
 
 export function useLiveStatus() {

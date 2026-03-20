@@ -209,21 +209,26 @@ def _task_runs(connection, project_id, task_id):
         """,
         (project_id, task_id),
     ).fetchall()
-    return [
-        {
-            "session_id": row["session_id"],
-            "agent_id": row["agent_id"],
-            "agent_name": row["agent_name"],
-            "provider_type": row["provider_type"],
-            "status": row["status"],
-            "progress_pct": row["progress_pct"],
-            "status_message": row["status_message"],
-            "last_heartbeat_at": row["last_heartbeat_at"],
-            "started_at": row["started_at"],
-            "ended_at": row["ended_at"],
-        }
-        for row in rows
-    ]
+    items = []
+    for row in rows:
+        start_details = _session_start_details(connection, project_id, task_id, row["session_id"])
+        items.append(
+            {
+                "session_id": row["session_id"],
+                "agent_id": row["agent_id"],
+                "agent_name": row["agent_name"],
+                "provider_type": row["provider_type"],
+                "execution_mode": start_details.get("execution_mode"),
+                "external_runtime": start_details.get("external_runtime"),
+                "status": row["status"],
+                "progress_pct": row["progress_pct"],
+                "status_message": row["status_message"],
+                "last_heartbeat_at": row["last_heartbeat_at"],
+                "started_at": row["started_at"],
+                "ended_at": row["ended_at"],
+            }
+        )
+    return items
 
 
 def _session_activity(connection, project_id, task_id, session_id, limit=12):
@@ -291,6 +296,8 @@ def _issue_run_console(connection, project_paths, project_id, task_id, runs):
         "agent_id": focus_run["agent_id"],
         "agent_name": focus_run["agent_name"],
         "provider_type": focus_run["provider_type"],
+        "execution_mode": start_details.get("execution_mode"),
+        "external_runtime": start_details.get("external_runtime"),
         "status": focus_run["status"],
         "progress_pct": focus_run["progress_pct"],
         "status_message": focus_run["status_message"],

@@ -24,6 +24,7 @@ from maas.services.provider_workers import run_provider_worker_once
 from maas.services.projects import (
     archive_project,
     create_project,
+    delete_project,
     list_projects,
     rescan_brownfield_project,
     restore_project,
@@ -117,6 +118,7 @@ def build_parser():
     project_create_parser.add_argument("--type", default="custom")
     project_create_parser.add_argument("--mode", choices=("auto", "greenfield", "brownfield"), default="auto")
     project_create_parser.add_argument("--source-root")
+    project_create_parser.add_argument("--create-source-root", action="store_true")
 
     project_archive_parser = project_subparsers.add_parser("archive")
     project_archive_parser.add_argument("--project-root", default=".")
@@ -127,6 +129,11 @@ def build_parser():
     project_restore_parser.add_argument("--project-root", default=".")
     project_restore_parser.add_argument("--project-id", required=True)
     project_restore_parser.add_argument("--actor-id", required=True)
+
+    project_delete_parser = project_subparsers.add_parser("delete")
+    project_delete_parser.add_argument("--project-root", default=".")
+    project_delete_parser.add_argument("--project-id", required=True)
+    project_delete_parser.add_argument("--actor-id", required=True)
 
     project_rescan_parser = project_subparsers.add_parser("rescan-brownfield")
     project_rescan_parser.add_argument("--project-root", default=".")
@@ -592,6 +599,7 @@ def command_project(args):
                         project_type=args.type,
                         mode=args.mode,
                         source_root=args.source_root,
+                        create_source_root=args.create_source_root,
                     ),
                     indent=2,
                 )
@@ -600,6 +608,8 @@ def command_project(args):
             print(json.dumps(archive_project(connection, args.project_id, args.actor_id), indent=2))
         elif args.project_command == "restore":
             print(json.dumps(restore_project(connection, args.project_id, args.actor_id), indent=2))
+        elif args.project_command == "delete":
+            print(json.dumps(delete_project(connection, paths, args.project_id, args.actor_id), indent=2))
         elif args.project_command == "rescan-brownfield":
             print(json.dumps(rescan_brownfield_project(connection, paths, args.project_id, args.actor_id), indent=2))
         elif args.project_command == "update-onboarding-review":

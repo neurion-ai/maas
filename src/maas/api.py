@@ -18,6 +18,7 @@ from maas.services.artifacts import (
     resolve_artifact_download,
 )
 from maas.services.board import fetch_board
+from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -769,6 +770,18 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/agents/{agent_id}")
+    def agent_detail(agent_id: str, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            payload = fetch_agent_detail(connection, scoped_project_id, agent_id)
+            if payload is None:
+                raise HTTPException(status_code=404, detail="agent not found")
+            return payload
+        finally:
+            connection.close()
+
     @app.get("/api/activity")
     def activity(limit=20, project_id: str = None):
         connection = connect(paths)
@@ -835,6 +848,18 @@ def create_app(project_root="."):
             if workspace is None:
                 raise HTTPException(status_code=404, detail="git workspace not prepared")
             return workspace
+        finally:
+            connection.close()
+
+    @app.get("/api/issues/{task_id}")
+    def issue_detail(task_id: str, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            payload = fetch_issue_detail(connection, paths, scoped_project_id, task_id)
+            if payload is None:
+                raise HTTPException(status_code=404, detail="issue not found")
+            return payload
         finally:
             connection.close()
 

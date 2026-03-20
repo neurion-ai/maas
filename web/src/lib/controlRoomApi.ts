@@ -7,6 +7,8 @@ import type {
   ArtifactDetail,
   ArtifactPurgeResponse,
   ArtifactsResponse,
+  CodexAgentDetailResponse,
+  CodexIssueDetailResponse,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
@@ -826,6 +828,55 @@ export async function fetchArtifactDetail(artifactId: string, signal?: AbortSign
     throw new Error(`Unexpected status: ${response.status}`);
   }
   return (await response.json()) as ArtifactDetail;
+}
+
+export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexIssueDetailResponse>(
+    `/api/issues/${taskId}`,
+    {
+      task: {
+        task_id: taskId,
+        title: "Issue detail unavailable",
+        description: "",
+        status: "ready",
+        priority: 50,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      relationships: {
+        depends_on: [],
+        unlocks: [],
+        related: [],
+      },
+      runs: [],
+      history: [],
+      artifacts: [],
+      artifact_summary: ARTIFACTS_FALLBACK.summary,
+      verification_runs: [],
+      git_workspace: null,
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexAgentDetail(agentId: string, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexAgentDetailResponse>(
+    `/api/agents/${agentId}`,
+    {
+      agent: {
+        agent_id: agentId,
+        role: "agent",
+        display_name: "Agent detail unavailable",
+        status: "idle",
+      },
+      owned_issues: [],
+      runs: [],
+      history: [],
+    },
+    signal,
+    onFallback
+  );
 }
 
 export async function fetchArtifactComparison(leftArtifactId: string, rightArtifactId: string, signal?: AbortSignal) {

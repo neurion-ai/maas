@@ -2,11 +2,28 @@
 
 ## Summary
 
-MAAS is being implemented as a single-project, greenfield-first, board-first agent operating system. The first shipped slice centers the Kanban board, seeded task graph, SQLite blackboard, and lifecycle contract so humans can see work moving from planned to done.
+MAAS is pivoting toward a Codex-first autonomous-work control plane.
+
+The original shipped slices in this repository centered a single-project, board-first, software-delivery-oriented operating model. That implementation history still matters, but it no longer defines the intended product surface.
+
+The corrected near-term roadmap direction is:
+
+- one human supervising Codex-driven autonomous work
+- MAAS as the control plane for goals, issues, runs, agents, events, and incidents
+- `Codex` as the only execution runtime in the MVP
+- a product surface centered on `Command`, `Work`, `Issues`, `Agents`, and `System`
 
 ## Current Status
 
 This roadmap now needs to be read alongside the actual implementation status in `docs/implementation/STATUS.md`.
+
+For the broader pivot spec, see [09-autonomous-organization-pivot.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/09-autonomous-organization-pivot.md).
+
+For the clean-sheet frontend reset, see [10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
+
+For the corrected Codex MVP product shape, see [11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md).
+
+For the concrete backend/frontend integration sequence, see [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md).
 
 Legend for numbered roadmap checklists:
 
@@ -14,6 +31,32 @@ Legend for numbered roadmap checklists:
 - `[ ]` not yet completed in the current numbered delivery sequence
 
 Use "Current stacked development chain above `main`" to see which completed items are on `main` versus stacked branches.
+
+## Pivot Sequence
+
+The next product-defining sequence starts after the historical `#81-#151` chain and focuses on the Codex-first MAAS MVP instead of trying to salvage the previous frontend model.
+
+- [ ] `#152` Product ontology reset around goal, issue, run, agent, event, and incident
+- [ ] `#153` Codex-only execution model and operator-facing runtime simplification
+- [ ] `#154` Command surface for approvals, blocked work, active runs, and latest landed changes
+- [ ] `#155` Work surface with shared list/board views, issue detail, and execution history
+- [ ] `#156` Issues surface for approvals, failures, blocked work, and recovery guidance
+- [ ] `#157` Agents surface with active ownership, execution threads, and agent health
+- [ ] `#158` System surface for logs, metrics, traces, and machine health
+- [ ] `#159` Git-like event/history model embedded across work, issues, agents, and system
+- [ ] `#160` Guided intake and first-run loop for backlog import, launch, and operator intervention
+- [x] `#161` Frontend shell and token migration into the real React app
+- [x] `#162` Canonical issue read model and API
+- [x] `#163` Real `Work` surface integration
+- [x] `#164` Command read model and page integration
+- [x] `#165` Issues queue and resolved-history integration
+- [x] `#166` Embedded Git-like event/history model
+- [x] `#167` Agent execution and execution-thread model
+- [x] `#168` System surface integration
+- [x] `#169` Guided intake and first-run flow in the real app
+- [x] `#170` Legacy-page removal and integration hardening
+
+These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 
 Current stacked development chain above `main`:
 

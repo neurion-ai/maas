@@ -11,6 +11,9 @@ from maas.services.lifecycle import end_session, start_session
 
 
 class BoardApiActionsTest(unittest.TestCase):
+    def _column_by_key(self, payload, key):
+        return next(column for column in payload["columns"] if column["key"] == key)
+
     def _seed_brownfield_repo(self, project_root):
         import os
 
@@ -84,7 +87,7 @@ lint = "example:main"
             self.assertEqual(payload["summary"]["total_tasks"], 1)
             self.assertTrue(payload["selected_filters"]["review_only"])
 
-            review_task_id = payload["columns"][3]["tasks"][0]["task_id"]
+            review_task_id = self._column_by_key(payload, "review")["tasks"][0]["task_id"]
             action_response = client.post(
                 "/api/tasks/{0}/actions/review".format(review_task_id),
                 json={"actor_id": "agent_reviewer", "decision": "approve"},
@@ -110,7 +113,7 @@ lint = "example:main"
 
             response = client.get("/api/board", params={"review_only": "true"})
             self.assertEqual(response.status_code, 200)
-            review_task_id = response.json()["columns"][3]["tasks"][0]["task_id"]
+            review_task_id = self._column_by_key(response.json(), "review")["tasks"][0]["task_id"]
 
             reject_response = client.post(
                 "/api/tasks/{0}/actions/review".format(review_task_id),
@@ -415,6 +418,42 @@ lint = "example:main"
             self.assertEqual(open_alerts, 0)
             self.assertEqual(ready_or_planned, 6 + repo_plan_tasks)
 
+    def test_approving_brownfield_review_with_allocator_alias_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._seed_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Alias Approval Test", description="brownfield alias review", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            review_payload = client.get("/api/board", params={"search": "Review imported project understanding"}).json()
+            review_task = [
+                task
+                for column in review_payload["columns"]
+                for task in column["tasks"]
+                if task["title"] == "Review imported project understanding"
+            ][0]
+
+            response = client.post(
+                f"/api/tasks/{review_task['task_id']}/actions/review",
+                json={"actor_id": "agent_allocator", "decision": "approve"},
+            )
+            self.assertEqual(response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                config = json.loads(connection.execute("SELECT config_json FROM projects LIMIT 1").fetchone()["config_json"])
+                audit_rows = connection.execute(
+                    """
+                    SELECT action_type
+                    FROM audit_trail
+                    WHERE action_type = 'review_task'
+                    """
+                ).fetchall()
+            finally:
+                connection.close()
+
+            self.assertEqual(config["onboarding"]["review_status"], "approved")
+            self.assertTrue(audit_rows)
+
     def test_rejecting_brownfield_review_keeps_imported_tasks_gated(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             self._seed_brownfield_repo(tmpdir)
@@ -522,7 +561,7 @@ lint = "example:main"
             board_response = client.get("/api/board")
             self.assertEqual(board_response.status_code, 200)
             payload = board_response.json()
-            in_progress_task = payload["columns"][2]["tasks"][0]
+            in_progress_task = self._column_by_key(payload, "in_progress")["tasks"][0]
 
             pause_response = client.post(
                 "/api/agents/agent_builder/actions/pause",
@@ -1562,7 +1601,7 @@ lint = "example:main"
             client = TestClient(create_app(tmpdir))
 
             board_payload = client.get("/api/board", params={"review_only": "true"}).json()
-            review_task = board_payload["columns"][3]["tasks"][0]
+            review_task = self._column_by_key(board_payload, "review")["tasks"][0]
 
             denied_response = client.post(
                 "/api/tasks/{0}/actions/review".format(review_task["task_id"]),
@@ -1593,7 +1632,7 @@ lint = "example:main"
             client = TestClient(create_app(tmpdir))
 
             board_payload = client.get("/api/board", params={"review_only": "true"}).json()
-            review_task = board_payload["columns"][3]["tasks"][0]
+            review_task = self._column_by_key(board_payload, "review")["tasks"][0]
 
             denied_response = client.post(
                 "/api/tasks/{0}/actions/review".format(review_task["task_id"]),

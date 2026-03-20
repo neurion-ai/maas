@@ -1,6 +1,10 @@
 # MAAS
 
-MAAS is a board-first multi-agent operating system. This repository now contains:
+MAAS is pivoting toward a Codex-first autonomous-work control plane.
+
+The product goal is no longer "software delivery dashboard plus agent runtime controls." The new near-term target is a system that lets one human operator supervise Codex-driven autonomous work: steer goals, monitor issues, review runs, inspect agent execution threads and ownership, clear incidents, and trust the machine because every meaningful action is logged and replayable.
+
+Today this repository still contains a large amount of implementation from the earlier board-first software-delivery phase, including:
 
 - a Python core with SQLite-backed state
 - a greenfield bootstrap flow
@@ -19,6 +23,43 @@ MAAS is a board-first multi-agent operating system. This repository now contains
 - role-baseline permission enforcement for steering and alert actions
 - an escalation queue for risky steering approvals
 - implementation specs for the planned roadmap
+
+## Product Pivot
+
+The new MAAS direction is:
+
+- `Goal`, `Issue`, `Run`, `Agent`, `Event`, and `Incident` as the main operator-facing control objects
+- `Codex` as the sole MVP execution runtime
+- MAAS itself owning orchestration, state transitions, review gates, history, logs, metrics, and recovery
+- issue inventory plus kanban flow as two views of the same work instead of separate products
+
+The corrected MVP UI is shaped around five primary surfaces:
+
+- `Command`: what needs operator judgment now
+- `Work`: shared `List | Board` view of issues plus detail and execution history
+- `Issues`: approvals, blocked work, failed runs, and recovery recommendations
+- `Agents`: active ownership, execution threads, current work, and health
+- `System`: logs, metrics, traces, queue pressure, and machine health
+
+What MAAS should *not* be:
+
+- a generic dashboard with random metrics
+- a provider-zoo admin console
+- a fake AI company org chart
+- a generic PM tool with AI garnish
+- a Codex wrapper with no operator control value
+
+The broader pivot context is documented in [docs/implementation/09-autonomous-organization-pivot.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/09-autonomous-organization-pivot.md).
+
+The corrected Codex-first MVP shape is documented in [docs/implementation/11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md).
+
+The integration sequence for moving the standalone mockup into the real backend/frontend stack is documented in [docs/implementation/12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md).
+
+The current integration branch replaces the old shell with real `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects` surfaces in the React app, backed by stable issue identity, issue detail read models, agent detail read models, and Codex-oriented system views.
+
+The frontend reset document for rebuilding the product from scratch is in [docs/implementation/10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
+
+There is also a separate standalone mockup for the corrected MVP direction in [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md). It is intentionally disconnected from the current `web/` frontend.
 
 ## Implementation Snapshot
 
@@ -101,8 +142,20 @@ Current stacked development chain above `main`:
 - `#149` exists on `codex/linear-vibekanban-cockpit`
 - `#150` exists on `codex/linear-vibekanban-cockpit`
 - `#151` exists on `codex/linear-vibekanban-cockpit`
+- `#161` exists on `codex/codex-mvp-shell-integration`
+- `#162` exists on `codex/codex-mvp-shell-integration`
+- `#163` exists on `codex/codex-mvp-shell-integration`
+- `#164` exists on `codex/codex-mvp-shell-integration`
+- `#165` exists on `codex/codex-mvp-shell-integration`
+- `#166` exists on `codex/codex-mvp-shell-integration`
+- `#167` exists on `codex/codex-mvp-shell-integration`
+- `#168` exists on `codex/codex-mvp-shell-integration`
+- `#169` exists on `codex/codex-mvp-shell-integration`
+- `#170` exists on `codex/codex-mvp-shell-integration`
 
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
+
+The current Codex-MVP integration sequence on `codex/codex-mvp-shell-integration` carries that product reset into the real app with a new shell, canonical issue identity, issue detail and agent detail read models, and integrated `Command` / `Work` / `Issues` / `Agents` / `System` surfaces.
 
 ### Current project state
 

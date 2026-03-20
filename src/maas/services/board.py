@@ -5,6 +5,7 @@ import json
 import os
 
 from maas.constants import BOARD_COLUMNS
+from maas.services.codex_mvp import issue_key_lookup
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
 from maas.services.verification import fetch_latest_verification_by_task
@@ -73,8 +74,6 @@ def _matches_filters(row, filters):
 
 
 def _board_column_key(status):
-    if status == "assigned":
-        return "ready"
     return status
 
 
@@ -133,6 +132,7 @@ def _project_supports_git_workspaces(connection, project_id):
 
 
 def fetch_board(connection, filters=None, project_id=None):
+    issue_keys = issue_key_lookup(connection, project_id)
     failure_query = """
         SELECT task_id, COUNT(*) AS failure_count, MAX(created_at) AS latest_failure_at
         FROM failure_log
@@ -249,6 +249,7 @@ def fetch_board(connection, filters=None, project_id=None):
             git_supported_by_project[row["project_id"]] = _project_supports_git_workspaces(connection, row["project_id"])
         card = {
             "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]),
             "title": row["title"],
             "description": row["description"],
             "status": row["status"],
@@ -353,6 +354,7 @@ def fetch_board(connection, filters=None, project_id=None):
         "summary": {
             "total_tasks": len(filtered_rows),
             "active_agents": active_agents,
+            "assigned_tasks": len(cards_by_status.get("assigned", [])),
             "active_tasks": len(cards_by_status.get("in_progress", [])),
             "review_tasks": len(cards_by_status.get("review", [])),
             "blocked_tasks": len(cards_by_status.get("blocked", [])),

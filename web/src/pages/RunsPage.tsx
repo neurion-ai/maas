@@ -17,6 +17,13 @@ import { AgentRosterPage } from "./AgentRosterPage";
 import { ArtifactsPage } from "./ArtifactsPage";
 import { ProvidersPage } from "./ProvidersPage";
 
+type SectionFeedbackTone = "default" | "error";
+
+interface SectionFeedbackState {
+  tone: SectionFeedbackTone;
+  message: string;
+}
+
 function formatTime(value?: string | null) {
   if (!value) {
     return "Not recorded";
@@ -77,6 +84,8 @@ export function RunsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [providerFeedback, setProviderFeedback] = useState<Record<string, string | null>>({});
+  const [launchFeedback, setLaunchFeedback] = useState<SectionFeedbackState | null>(null);
+  const [processingFeedback, setProcessingFeedback] = useState<SectionFeedbackState | null>(null);
   const livePulse = useLivePulse();
 
   async function loadRuns() {
@@ -124,15 +133,38 @@ export function RunsPage() {
     };
   }, [livePulse]);
 
-  async function runAction(actionKey: string, message: string, action: () => Promise<unknown>, fallback: string) {
+  async function runAction<T>(
+    actionKey: string,
+    action: () => Promise<T>,
+    successMessage: (result: T) => string,
+    fallback: string,
+    setFeedback?: (feedback: SectionFeedbackState | null) => void
+  ) {
+    const startedAt = Date.now();
     setPendingActionKey(actionKey);
-    setNotice(null);
+    if (setFeedback) {
+      setFeedback(null);
+    } else {
+      setNotice(null);
+    }
     try {
-      await action();
+      const result = await action();
+      await waitForMinimumFeedback(startedAt, 900);
       await loadRuns();
-      setNotice(message);
+      const message = successMessage(result);
+      if (setFeedback) {
+        setFeedback({ tone: "default", message });
+      } else {
+        setNotice(message);
+      }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : fallback);
+      await waitForMinimumFeedback(startedAt, 900);
+      const message = error instanceof Error ? error.message : fallback;
+      if (setFeedback) {
+        setFeedback({ tone: "error", message });
+      } else {
+        setNotice(message);
+      }
     } finally {
       setPendingActionKey(null);
     }
@@ -284,6 +316,11 @@ export function RunsPage() {
               <h2>Manual run targets</h2>
             </div>
           </div>
+          {launchFeedback ? (
+            <p className={`runtime-section-feedback ${launchFeedback.tone === "error" ? "runtime-section-feedback--error" : ""}`}>
+              {launchFeedback.message}
+            </p>
+          ) : null}
           <div className="list-stack">
             {runTargets.length ? (
               runTargets.slice(0, 8).map((target: ProviderRunTarget) => (
@@ -309,9 +346,10 @@ export function RunsPage() {
                         onClick={() =>
                           void runAction(
                             `queue:${provider.id}:${target.task_id}`,
-                            `Queued ${provider.name} for ${target.title}.`,
                             () => queueProviderTask(provider.id, target.project_id, target.agent_id, target.task_id),
-                            `Failed to queue ${provider.name} for ${target.title}.`
+                            (result) => `Queued ${provider.name} for ${target.title}. Job ${result.job_id} is now waiting in Queue processing.`,
+                            `Failed to queue ${provider.name} for ${target.title}.`,
+                            setLaunchFeedback
                           )
                         }
                       >
@@ -326,9 +364,13 @@ export function RunsPage() {
                         onClick={() =>
                           void runAction(
                             `run:${providerItems[0].id}:${target.task_id}`,
-                            `Started ${providerItems[0].name} for ${target.title}.`,
                             () => runProviderTask(providerItems[0].id, target.project_id, target.agent_id, target.task_id),
-                            `Direct run failed for ${target.title}.`
+                            () =>
+                              providerItems[0].effective_execution_mode === "local_simulation"
+                                ? `${providerItems[0].name} completed in simulation mode; ${target.title} moved out of the launch queue.`
+                                : `${providerItems[0].name} started for ${target.title}. Watch Recent outputs for progress.`,
+                            `Direct run failed for ${target.title}.`,
+                            setLaunchFeedback
                           )
                         }
                       >
@@ -356,6 +398,11 @@ export function RunsPage() {
               <h2>Queue processing</h2>
             </div>
           </div>
+          {processingFeedback ? (
+            <p className={`runtime-section-feedback ${processingFeedback.tone === "error" ? "runtime-section-feedback--error" : ""}`}>
+              {processingFeedback.message}
+            </p>
+          ) : null}
           <div className="list-stack">
             {queuedJobs.slice(0, 6).map((job: ProviderJobItem) => (
               <div key={job.job_id} className="list-row">
@@ -374,9 +421,15 @@ export function RunsPage() {
                     onClick={() =>
                       void runAction(
                         `job:${job.job_id}`,
-                        `Processed queued job ${job.job_id}.`,
                         () => processProviderJob(job.job_id),
-                        `Failed to process queued job ${job.job_id}.`
+                        (result) =>
+                          result.status === "completed"
+                            ? `Processed queued job ${job.job_id}; the provider run completed successfully.`
+                            : result.status === "failed"
+                              ? `Processed queued job ${job.job_id}; execution failed and was recorded.`
+                              : `Processed queued job ${job.job_id}.`,
+                        `Failed to process queued job ${job.job_id}.`,
+                        setProcessingFeedback
                       )
                     }
                   >
@@ -406,9 +459,13 @@ export function RunsPage() {
                     onClick={() =>
                       void runAction(
                         `worker:${worker.worker_id}`,
-                        `Worker ${worker.worker_id} ran one queue pass.`,
                         () => runProviderWorkerOnce(worker.worker_id, worker.provider_id ?? undefined),
-                        `Worker run failed for ${worker.worker_id}.`
+                        (result) =>
+                          result.processed && result.job
+                            ? `Worker ${worker.worker_id} picked up ${result.job.title ?? result.job.job_id}.`
+                            : `Worker ${worker.worker_id} ran one queue pass but found no startable job.`,
+                        `Worker run failed for ${worker.worker_id}.`,
+                        setProcessingFeedback
                       )
                     }
                   >

@@ -1,5 +1,43 @@
 # MAAS Development Status
 
+## Current Product Direction
+
+MAAS is pivoting away from the previous "board-first software delivery control room" framing toward a Codex-first autonomous-work control plane.
+
+The corrected near-term thesis is:
+
+- MAAS is the control plane for Codex-driven autonomous work
+- the MVP is explicitly `Codex-only`
+- MAAS owns orchestration, state transitions, review gates, logs, metrics, incident handling, and operator control
+
+The operator-facing nouns should be kept tight:
+
+- `Goal`
+- `Issue`
+- `Run`
+- `Agent`
+- `Event`
+- `Incident`
+
+The intended primary surfaces are:
+
+- `Command`
+- `Work`
+- `Issues`
+- `Agents`
+- `System`
+
+This matters because a large amount of code below still reflects the earlier software-delivery phase. The historical implementation checklist remains useful as implementation history, but it should not be mistaken for the current MVP shape.
+
+See:
+
+- [README.md](/Users/bigcube/Desktop/repos/maas/README.md)
+- [09-autonomous-organization-pivot.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/09-autonomous-organization-pivot.md)
+- [10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md)
+- [11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md)
+- [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md)
+- [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
+
 ## Legend
 
 - `[x]` completed in the current numbered delivery sequence
@@ -84,6 +122,17 @@ The "Current Development Sequence" section below shows whether a completed item 
 The current numbered `#81-#151` sequence is fully implemented on the stacked branch chain above `main`.
 
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
+
+- [x] `#161` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#162` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#163` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#164` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#165` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#166` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#167` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#168` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#169` is implemented on `codex/codex-mvp-shell-integration`
+- [x] `#170` is implemented on `codex/codex-mvp-shell-integration`
 
 ## Extended Numbered Roadmap
 
@@ -171,6 +220,7 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [ ] MAAS is not yet a production-ready autonomous platform.
 - [x] The stacked UX redesign now provides a simpler mental model, dual-theme shell, guided home surface, unified Work/Runs/Incidents pages, and command-palette navigation on top of the existing backend stack.
 - [x] The current dense-control-room branch goes further by replacing the oversized hero/dashboard posture with a compact operator cockpit: top status strip, agent rail, dense kanban, incident rail, curated ticker, and selected-task evidence inspector.
+- [x] The current Codex-MVP integration branch now replaces that shell in the real app with `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects`, backed by stable issue identity plus issue-detail and agent-detail aggregates.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`

@@ -241,6 +241,7 @@ export interface ProjectCreateRequest {
   project_type: string;
   mode: "auto" | "greenfield" | "brownfield";
   source_root?: string;
+  create_source_root?: boolean;
 }
 
 export interface ProjectCreateResponse {
@@ -250,12 +251,13 @@ export interface ProjectCreateResponse {
     understanding_path: string;
     discovery_path?: string | null;
     source_root: string;
+    generated_source_root?: boolean;
   };
 }
 
 export interface ProjectActionResponse {
   project_id: string;
-  state: "active" | "archived";
+  state: "active" | "archived" | "deleted";
 }
 
 export interface DirectoryPickerResponse {
@@ -1236,6 +1238,8 @@ export interface OrchestratorProjectRun extends SupervisorProjectRun {
     project_id: string;
   }>;
   provider_jobs_processed: number;
+  provider_jobs_dispatched?: number;
+  dispatched_worker_ids?: string[];
   processed_jobs: Array<{
     job_id: string;
     provider_id: string;
@@ -1248,6 +1252,7 @@ export interface OrchestratorProjectRun extends SupervisorProjectRun {
 export interface OrchestratorRunResponse extends SupervisorRunResponse {
   provider_jobs_queued: number;
   provider_jobs_processed: number;
+  provider_jobs_dispatched?: number;
   project_runs: OrchestratorProjectRun[];
 }
 
@@ -1270,6 +1275,8 @@ export interface CodexIssueRunItem {
   agent_id?: string | null;
   agent_name?: string | null;
   provider_type: string;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
   status: string;
   progress_pct?: number | null;
   status_message?: string | null;
@@ -1298,6 +1305,8 @@ export interface CodexRunConsole {
   agent_id?: string | null;
   agent_name?: string | null;
   provider_type: string;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
   status: string;
   progress_pct?: number | null;
   status_message?: string | null;

@@ -3,9 +3,10 @@
 import json
 
 from maas.ids import generate_id
-from maas.providers import list_provider_status, provider_run_targets
+from maas.providers import get_provider_runtime_settings, list_provider_status, provider_run_targets
 from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.provider_runtime import process_next_provider_job, queue_provider_task
+from maas.services.provider_workers import launch_detached_provider_workers
 from maas.supervisor import run_supervisor_once
 
 
@@ -87,6 +88,29 @@ def _queue_launch_ready_codex_work(connection, project_paths, project_id, queue_
     return queued_jobs
 
 
+def _provider_uses_detached_workers(connection, project_id, provider_id):
+    provider, _settings = get_provider_runtime_settings(
+        provider_id,
+        connection=connection,
+        project_id=project_id,
+    )
+    return provider.get("effective_execution_mode") in {"codex_cli", "claude_cli"}
+
+
+def _queued_provider_job_count(connection, project_id, provider_id):
+    row = connection.execute(
+        """
+        SELECT COUNT(*) AS queued_jobs
+        FROM provider_job_queue
+        WHERE project_id = ?
+          AND provider_id = ?
+          AND status = 'queued'
+        """,
+        (project_id, provider_id),
+    ).fetchone()
+    return int(row["queued_jobs"]) if row is not None else 0
+
+
 def run_orchestrator_once(
     connection,
     project_paths,
@@ -105,10 +129,13 @@ def run_orchestrator_once(
     project_runs = []
     total_jobs_queued = 0
     total_jobs_processed = 0
+    total_jobs_dispatched = 0
     for project_run in supervisor_result["project_runs"]:
         scoped_project_id = project_run["project_id"]
         queued_jobs = []
         processed_jobs = []
+        dispatched_worker_ids = []
+        detached_workers_started = False
         provider_statuses = list_provider_status(connection, project_id=scoped_project_id)
         queue_controls = _provider_queue_controls(provider_statuses)
         project_capacity = queue_capacity_snapshot(connection, scoped_project_id)
@@ -122,6 +149,7 @@ def run_orchestrator_once(
                 "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
                 "provider_jobs_queued": 0,
                 "provider_jobs_processed": 0,
+                "provider_jobs_dispatched": 0,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
             }
@@ -133,6 +161,8 @@ def run_orchestrator_once(
                     "queued_jobs": [],
                     "provider_jobs_processed": 0,
                     "processed_jobs": [],
+                    "provider_jobs_dispatched": 0,
+                    "dispatched_worker_ids": [],
                     "queue_controls": queue_controls,
                     "project_capacity": project_capacity,
                 }
@@ -146,10 +176,33 @@ def run_orchestrator_once(
                 queue_controls,
                 provider_job_limit,
             )
+        queued_job_counts = {}
+        for job in queued_jobs:
+            queued_job_counts[job["provider_id"]] = queued_job_counts.get(job["provider_id"], 0) + 1
         for provider_id, control in queue_controls.items():
             if control["queue_paused"]:
                 continue
             effective_limit = min(max(provider_job_limit or 0, 0), control["job_limit_per_pass"])
+            if effective_limit <= 0:
+                continue
+            if _provider_uses_detached_workers(connection, scoped_project_id, provider_id):
+                launch_count = min(
+                    _queued_provider_job_count(connection, scoped_project_id, provider_id),
+                    effective_limit,
+                )
+                if launch_count > 0:
+                    if not detached_workers_started:
+                        connection.commit()
+                        detached_workers_started = True
+                    dispatched_worker_ids.extend(
+                        launch_detached_provider_workers(
+                            project_paths,
+                            project_id=scoped_project_id,
+                            provider_id=provider_id,
+                            worker_count=launch_count,
+                        )
+                    )
+                continue
             for _ in range(effective_limit):
                 next_job = process_next_provider_job(
                     connection,
@@ -163,6 +216,7 @@ def run_orchestrator_once(
                 processed_jobs.append(next_job["job"])
         total_jobs_queued += len(queued_jobs)
         total_jobs_processed += len(processed_jobs)
+        total_jobs_dispatched += len(dispatched_worker_ids)
         summary = {
             "assigned_count": project_run["assigned_count"],
             "ready_changes": len(project_run["ready_changes"]),
@@ -171,6 +225,7 @@ def run_orchestrator_once(
             "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
             "provider_jobs_queued": len(queued_jobs),
             "provider_jobs_processed": len(processed_jobs),
+            "provider_jobs_dispatched": len(dispatched_worker_ids),
             "queue_controls": queue_controls,
             "project_capacity": project_capacity,
         }
@@ -182,6 +237,8 @@ def run_orchestrator_once(
                 "queued_jobs": queued_jobs,
                 "provider_jobs_processed": len(processed_jobs),
                 "processed_jobs": processed_jobs,
+                "provider_jobs_dispatched": len(dispatched_worker_ids),
+                "dispatched_worker_ids": dispatched_worker_ids,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
             }
@@ -197,5 +254,6 @@ def run_orchestrator_once(
         "auto_replanned_tasks": supervisor_result.get("auto_replanned_tasks") or [],
         "provider_jobs_queued": total_jobs_queued,
         "provider_jobs_processed": total_jobs_processed,
+        "provider_jobs_dispatched": total_jobs_dispatched,
         "project_runs": project_runs,
     }

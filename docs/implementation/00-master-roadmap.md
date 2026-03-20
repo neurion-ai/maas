@@ -25,6 +25,8 @@ For the corrected Codex MVP product shape, see [11-codex-mvp-shape.md](/Users/bi
 
 For the concrete backend/frontend integration sequence, see [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md).
 
+For the current Codex MVP hardening sequence, see [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -55,6 +57,14 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#168` System surface integration
 - [x] `#169` Guided intake and first-run flow in the real app
 - [x] `#170` Legacy-page removal and integration hardening
+- [x] `#171` Truthful run-state and control model
+- [x] `#172` Review-first issue detail
+- [x] `#173` Live run console and trace quality
+- [x] `#174` Work flow clarity and board semantics
+- [x] `#175` Agents usability pass
+- [x] `#176` Project lifecycle and clean-start UX
+- [x] `#177` Simulation/live boundary hardening
+- [x] `#178` End-to-end reliability and regression suite
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

@@ -72,6 +72,8 @@ class CodexMvpApiTest(unittest.TestCase):
                                 "timeout_seconds": 900,
                                 "command": ["codex", "exec", "Task: example"],
                                 "runtime_root": envelope["root"],
+                                "execution_mode": "codex_cli",
+                                "external_runtime": "codex_cli",
                             }
                         ),
                     ),
@@ -121,6 +123,8 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertTrue(payload["run_console"]["is_live"])
             self.assertEqual(payload["run_console"]["timeout_seconds"], 900)
             self.assertEqual(payload["run_console"]["command"], ["codex", "exec", "Task: example"])
+            self.assertEqual(payload["run_console"]["execution_mode"], "codex_cli")
+            self.assertEqual(payload["run_console"]["external_runtime"], "codex_cli")
             self.assertIn("step 1 complete", payload["run_console"]["output_preview"]["content"])
             self.assertIn("stdout line 2", payload["run_console"]["stdout_preview"]["content"])
             self.assertIn("stderr line 1", payload["run_console"]["stderr_preview"]["content"])
@@ -202,6 +206,27 @@ class CodexMvpApiTest(unittest.TestCase):
                     """,
                     (generate_id("vrf"), project_id, selected_task["task_id"]),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'provider_adapter_started', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        project_id,
+                        selected_task["assigned_agent_id"],
+                        selected_task["task_id"],
+                        "Codex adapter started local execution.",
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "execution_mode": "local_simulation",
+                                "external_runtime": "local_simulation",
+                            }
+                        ),
+                    ),
+                )
                 connection.commit()
             finally:
                 connection.close()
@@ -224,6 +249,7 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(payload["task"]["issue_key"], selected_board_task["issue_key"])
             self.assertGreaterEqual(len(payload["history"]), 1)
             self.assertEqual(payload["runs"][0]["session_id"], session_id)
+            self.assertEqual(payload["runs"][0]["execution_mode"], "local_simulation")
             self.assertEqual(payload["verification_runs"][0]["command"], "pytest tests/test_dashboard.py")
             self.assertEqual(payload["artifacts"][0]["artifact_type"], "note")
             self.assertEqual(payload["relationships"]["depends_on"][0]["task_id"], dependency_task["task_id"])

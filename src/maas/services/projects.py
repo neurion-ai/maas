@@ -2,6 +2,8 @@
 
 import json
 import os
+import re
+import shutil
 
 from maas.config import DEFAULT_PROJECT_TYPE, build_default_project_config
 from maas.ids import generate_id
@@ -131,6 +133,24 @@ def _normalize_source_root(project_paths, source_root):
     if not os.path.isdir(normalized):
         raise ValueError("source root must be an existing directory")
     return normalized
+
+
+def _slugify_name(value):
+    slug = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
+    return slug or "workspace"
+
+
+def _provision_greenfield_source_root(project_paths, name):
+    base_dir = os.path.join(project_paths.root, "workspaces")
+    os.makedirs(base_dir, exist_ok=True)
+    slug = _slugify_name(name)
+    candidate = os.path.join(base_dir, slug)
+    suffix = 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(base_dir, "{0}-{1}".format(slug, suffix))
+        suffix += 1
+    os.makedirs(candidate, exist_ok=False)
+    return os.path.abspath(candidate)
 
 
 def _write_project_metadata(project_paths, project_id, config, mode, discovery):
@@ -350,6 +370,7 @@ def create_project(
     project_type=None,
     mode="auto",
     source_root=None,
+    create_source_root=False,
 ):
     cleaned_name = (name or "").strip()
     if not cleaned_name:
@@ -358,7 +379,12 @@ def create_project(
     if resolved_mode not in ("auto", "greenfield", "brownfield"):
         raise ValueError("unsupported project mode")
 
-    resolved_source_root = _normalize_source_root(project_paths, source_root)
+    auto_created_source_root = False
+    if resolved_mode == "greenfield" and create_source_root and not source_root:
+        resolved_source_root = _provision_greenfield_source_root(project_paths, cleaned_name)
+        auto_created_source_root = True
+    else:
+        resolved_source_root = _normalize_source_root(project_paths, source_root)
     detected_mode = detect_bootstrap_mode(resolved_source_root) if resolved_mode == "auto" else resolved_mode
     discovery = discover_brownfield_project(resolved_source_root) if detected_mode == "brownfield" else None
     config = build_default_project_config(
@@ -373,6 +399,7 @@ def create_project(
         onboarding = dict(config.get("onboarding") or {})
         onboarding["review_overrides"] = default_onboarding_review_overrides(onboarding.get("discovery_summary") or {})
         config["onboarding"] = onboarding
+    config.setdefault("project", {})["generated_source_root"] = auto_created_source_root
 
     project_id = seed_project(
         connection,
@@ -402,6 +429,7 @@ def create_project(
         {
             "mode": detected_mode,
             "source_root": resolved_source_root,
+            "generated_source_root": auto_created_source_root,
             "name": cleaned_name,
         },
     )
@@ -450,6 +478,7 @@ def create_project(
             "understanding_path": project_paths.project_understanding_path(project_id),
             "discovery_path": project_paths.project_discovery_path(project_id) if discovery is not None else None,
             "source_root": resolved_source_root,
+            "generated_source_root": auto_created_source_root,
         },
     }
 
@@ -513,6 +542,54 @@ def restore_project(connection, project_id, actor_id):
     _audit(connection, project_id, actor_id, "restore_project", "project", project_id, {})
     connection.commit()
     return {"project_id": project_id, "state": "active"}
+
+
+def delete_project(connection, project_paths, project_id, actor_id):
+    project = resolve_project(connection, project_id, include_archived=True)
+    if project is None:
+        raise ValueError("project not found")
+    active_session = connection.execute(
+        """
+        SELECT session_id
+        FROM sessions
+        WHERE project_id = ? AND status = 'active'
+        LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if active_session is not None:
+        raise ValueError("cannot delete a project with an active session")
+    active_provider_job = connection.execute(
+        """
+        SELECT job_id
+        FROM provider_job_queue
+        WHERE project_id = ? AND status IN ('queued', 'running')
+        LIMIT 1
+        """,
+        (project_id,),
+    ).fetchone()
+    if active_provider_job is not None:
+        raise ValueError("cannot delete a project with queued or running provider jobs")
+
+    config = _load_project_config(project["config_json"])
+    generated_source_root = bool((config.get("project") or {}).get("generated_source_root"))
+    source_root = os.path.abspath(project["source_root"] or (config.get("project") or {}).get("source_root") or "")
+
+    connection.execute("DELETE FROM projects WHERE project_id = ?", (project_id,))
+    connection.commit()
+
+    workspace_root = project_paths.project_workspace(project_id)
+    if os.path.isdir(workspace_root):
+        shutil.rmtree(workspace_root, ignore_errors=True)
+
+    if generated_source_root and source_root and os.path.isdir(source_root):
+        generated_root = os.path.abspath(os.path.join(project_paths.root, "workspaces"))
+        if source_root == generated_root or not source_root.startswith(generated_root + os.sep):
+            source_root = ""
+        if source_root:
+            shutil.rmtree(source_root, ignore_errors=True)
+
+    return {"project_id": project_id, "state": "deleted"}
 
 
 def rescan_brownfield_project(connection, project_paths, project_id, actor_id):

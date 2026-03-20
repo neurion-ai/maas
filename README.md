@@ -55,6 +55,8 @@ The corrected Codex-first MVP shape is documented in [docs/implementation/11-cod
 
 The integration sequence for moving the standalone mockup into the real backend/frontend stack is documented in [docs/implementation/12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md).
 
+The current hardening and truthfulness pass for the integrated Codex MVP is documented in [docs/implementation/13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md).
+
 The current integration branch replaces the old shell with real `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects` surfaces in the React app, backed by stable issue identity, issue detail read models, agent detail read models, and Codex-oriented system views.
 
 The frontend reset document for rebuilding the product from scratch is in [docs/implementation/10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
@@ -152,10 +154,20 @@ Current stacked development chain above `main`:
 - `#168` exists on `codex/codex-mvp-shell-integration`
 - `#169` exists on `codex/codex-mvp-shell-integration`
 - `#170` exists on `codex/codex-mvp-shell-integration`
+- `#171` exists on `codex/codex-mvp-hardening`
+- `#172` exists on `codex/codex-mvp-hardening`
+- `#173` exists on `codex/codex-mvp-hardening`
+- `#174` exists on `codex/codex-mvp-hardening`
+- `#175` exists on `codex/codex-mvp-hardening`
+- `#176` exists on `codex/codex-mvp-hardening`
+- `#177` exists on `codex/codex-mvp-hardening`
+- `#178` exists on `codex/codex-mvp-hardening`
 
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 
 The current Codex-MVP integration sequence on `codex/codex-mvp-shell-integration` carries that product reset into the real app with a new shell, canonical issue identity, issue detail and agent detail read models, and integrated `Command` / `Work` / `Issues` / `Agents` / `System` surfaces.
+
+The current hardening sequence on `codex/codex-mvp-hardening` makes the integrated MVP truthful in live use: explicit run-cycle vs launch posture controls, review-first issue detail, simulation/live warnings, project delete plus fresh workspace creation, and tighter lifecycle regressions.
 
 ### Current project state
 

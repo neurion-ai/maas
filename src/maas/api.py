@@ -48,6 +48,7 @@ from maas.services.portfolio import fetch_portfolio
 from maas.services.projects import (
     archive_project,
     create_project,
+    delete_project,
     list_projects,
     rescan_brownfield_project,
     resolve_project_id,
@@ -263,6 +264,7 @@ class ProjectCreateRequest(BaseModel):
     project_type: str = "custom"
     mode: str = "auto"
     source_root: Optional[str] = None
+    create_source_root: bool = False
 
 
 class ProjectOnboardingReviewUpdateRequest(BaseModel):
@@ -374,6 +376,7 @@ def create_app(project_root="."):
                 project_type=payload.project_type,
                 mode=payload.mode,
                 source_root=payload.source_root,
+                create_source_root=payload.create_source_root,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -402,6 +405,16 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return restore_project(connection, project_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/delete")
+    def projects_delete(project_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return delete_project(connection, paths, project_id, payload.actor_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

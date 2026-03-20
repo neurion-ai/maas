@@ -17,6 +17,15 @@ function formatHeartbeat(seconds?: number | null) {
   return `${Math.round(seconds / 60)}m ago`;
 }
 
+function formatAgentRole(agent: AgentRosterEntry) {
+  const display = agent.display_name.trim().toLowerCase();
+  const role = agent.role.trim().toLowerCase();
+  if (!role || role === display) {
+    return null;
+  }
+  return agent.role;
+}
+
 export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [agents, setAgents] = useState<AgentRosterEntry[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -94,15 +103,16 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
               className={`codex-agent-row ${selectedAgentId === agent.agent_id ? "is-selected" : ""}`}
               onClick={() => setSelectedAgentId(agent.agent_id)}
             >
-              <div className="codex-work-row__header">
-                <div>
+              <div className="codex-agent-row__top">
+                <div className="codex-agent-row__identity">
                   <strong>{agent.display_name}</strong>
-                  <span>{agent.role}</span>
+                  {formatAgentRole(agent) ? <span>{formatAgentRole(agent)}</span> : null}
                 </div>
-                <span>{agent.status}</span>
+                <span className={`codex-status-chip codex-status-chip--${agent.status}`}>{agent.status.replaceAll("_", " ")}</span>
               </div>
-              <div className="codex-work-row__meta">
-                <span>{agent.current_task_title ?? "Idle"}</span>
+              <div className="codex-agent-row__task">{agent.current_task_title ?? "Idle"}</div>
+              <div className="codex-agent-row__meta">
+                <span>{agent.current_task_id ?? "No active issue"}</span>
                 <span>{formatHeartbeat(agent.heartbeat_age_seconds)}</span>
               </div>
             </button>

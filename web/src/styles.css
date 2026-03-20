@@ -4654,6 +4654,11 @@ body {
   background: color-mix(in srgb, var(--panel) 92%, transparent 8%);
 }
 
+.codex-chip--active {
+  border-color: var(--line-strong);
+  background: color-mix(in srgb, var(--panel-strong) 94%, var(--accent-soft) 6%);
+}
+
 .codex-status-chip--review,
 .codex-status-chip--blocked {
   border-color: color-mix(in srgb, var(--warn) 30%, var(--line) 70%);
@@ -4743,6 +4748,11 @@ body {
   border-radius: 12px;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel-strong) 88%, transparent 12%);
+}
+
+.codex-banner--warn {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--line) 65%);
+  background: color-mix(in srgb, var(--warn-soft) 18%, var(--panel-strong) 82%);
 }
 
 .codex-metric-grid {
@@ -4836,6 +4846,23 @@ body {
   background: color-mix(in srgb, var(--panel) 90%, transparent 10%);
 }
 
+.codex-list-section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.codex-output-selector {
+  margin-bottom: 12px;
+}
+
+.field-hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.4;
+}
+
 .codex-run-item--interactive,
 .codex-history-item--interactive {
   width: 100%;
@@ -4851,6 +4878,53 @@ body {
 
 .codex-history-item--interactive:disabled {
   cursor: default;
+}
+
+.codex-agent-row {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-agent-row__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.codex-agent-row__identity {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.codex-agent-row__identity strong,
+.codex-agent-row__task,
+.codex-agent-row__meta span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.codex-agent-row__identity span,
+.codex-agent-row__task,
+.codex-agent-row__meta {
+  color: var(--muted);
+}
+
+.codex-agent-row__task {
+  line-height: 1.4;
+}
+
+.codex-agent-row__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.codex-agent-row__meta span:last-child {
+  flex-shrink: 0;
 }
 
 .codex-stack-item__header,

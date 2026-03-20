@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { fetchAlerts, fetchAgentRoster, fetchFailures, fetchIncidentTimeline, fetchOverview, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
-import { boardCounts, formatTimestamp, issueKeyMap, openBoardTasks, operatorQueueTasks, resolveRunControlState, resolvedBoardTasks } from "../lib/codexMvp";
+import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap, openBoardTasks, operatorQueueTasks, resolvedBoardTasks } from "../lib/codexMvp";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { AlertItem, BoardTask, FailureItem, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
 
 type ViewTarget = "work" | "issues" | "agents" | "system" | "projects";
+
+const RUN_CONTROL_MIN_PENDING_MS = 900;
 
 function issueLabel(task: BoardTask, fallbackKeys: Map<string, string>) {
   return task.issue_key ?? fallbackKeys.get(task.task_id) ?? task.task_id;
@@ -61,18 +63,28 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
 
   const queue = useMemo(() => operatorQueueTasks(tasks).slice(0, 6), [tasks]);
-  const runControl = useMemo(() => resolveRunControlState(project, tasks), [project, tasks]);
+  const launchPosture = useMemo(() => describeLaunchPosture(project), [project]);
+
+  async function holdPendingState(startedAt: number) {
+    const remaining = RUN_CONTROL_MIN_PENDING_MS - (Date.now() - startedAt);
+    if (remaining > 0) {
+      await new Promise((resolve) => window.setTimeout(resolve, remaining));
+    }
+  }
 
   async function handleRun() {
+    const startedAt = Date.now();
     setPendingKey("run");
     setNotice(null);
     try {
       const result = await runOrchestratorPass(6, 4, true);
       await loadCommand();
+      await holdPendingState(startedAt);
+      await loadCommand();
       const queued = result.provider_jobs_queued ?? 0;
-      const started = result.provider_jobs_processed ?? 0;
+      const started = (result.provider_jobs_processed ?? 0) + (result.provider_jobs_dispatched ?? 0);
       setNotice(
-        `Run complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued for execution.`
+        `Cycle complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued${launchPosture.mode !== "running" ? " while launches stayed paused" : ""}.`
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Run failed.");
@@ -85,6 +97,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     if (!project) {
       return;
     }
+    const startedAt = Date.now();
     setPendingKey("pause");
     setNotice(null);
     try {
@@ -92,6 +105,8 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
         queue_mode: "paused",
         max_running_jobs: project.provider_capacity.max_running_jobs,
       });
+      await loadCommand();
+      await holdPendingState(startedAt);
       await loadCommand();
       setNotice("Paused new Codex launches. Active runs will continue until they finish.");
     } catch (error) {
@@ -105,6 +120,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     if (!project) {
       return;
     }
+    const startedAt = Date.now();
     setPendingKey("resume");
     setNotice(null);
     try {
@@ -114,7 +130,9 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       });
       const result = await runOrchestratorPass(6, 4, true);
       await loadCommand();
-      const started = result.provider_jobs_processed ?? 0;
+      await holdPendingState(startedAt);
+      await loadCommand();
+      const started = (result.provider_jobs_processed ?? 0) + (result.provider_jobs_dispatched ?? 0);
       setNotice(`Resumed execution. ${started} Codex run${started === 1 ? "" : "s"} started.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Resume failed.");
@@ -132,29 +150,26 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
           <p>Use this page to decide what needs intervention now, not to micromanage every task.</p>
         </div>
         <div className="codex-page__actions">
+          <button type="button" className="codex-button codex-button--primary" disabled={pendingKey !== null} onClick={() => void handleRun()}>
+            {pendingKey === "run" ? "Running..." : "Run next cycle"}
+          </button>
           <button
             type="button"
-            className="codex-button codex-button--primary"
-            disabled={pendingKey !== null}
+            className="codex-button"
+            disabled={pendingKey !== null || !project}
             onClick={() => {
-              if (runControl.mode === "pause") {
+              if (launchPosture.mode === "running") {
                 void handlePause();
                 return;
               }
-              if (runControl.mode === "resume") {
-                void handleResume();
-                return;
-              }
-              void handleRun();
+              void handleResume();
             }}
           >
-            {pendingKey === "run"
-              ? "Running..."
-              : pendingKey === "pause"
-                ? "Pausing..."
-                : pendingKey === "resume"
-                  ? "Resuming..."
-                  : runControl.label}
+            {pendingKey === "pause"
+              ? "Pausing..."
+              : pendingKey === "resume"
+                ? "Resuming..."
+                : launchPosture.actionLabel}
           </button>
         </div>
       </header>
@@ -169,6 +184,11 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
           <strong>{runningAgents}</strong>
           <span>Active agents</span>
           <p>{overview?.summary.tasks_in_progress ?? 0} tasks currently running</p>
+        </article>
+        <article className="codex-panel codex-stat">
+          <strong>{launchPosture.label}</strong>
+          <span>Launch posture</span>
+          <p>{launchPosture.summary}</p>
         </article>
         <article className="codex-panel codex-stat">
           <strong>{resolved.length}</strong>

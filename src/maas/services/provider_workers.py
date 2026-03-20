@@ -2,7 +2,10 @@
 
 from datetime import datetime
 import json
+import threading
 
+from maas.db import connect
+from maas.ids import generate_id
 from maas.services.provider_jobs import fetch_provider_job, next_queued_provider_job_id
 from maas.services.projects import list_projects, resolve_project_id
 from maas.services.queue_capacity import can_start_provider_jobs
@@ -266,3 +269,32 @@ def run_provider_worker_once(connection, project_paths, worker_id, project_id=No
     )
     connection.commit()
     return {"processed": True, "job": job, "worker_id": worker_id}
+
+
+def _run_detached_provider_worker(project_paths, worker_id, project_id=None, provider_id=None):
+    connection = connect(project_paths)
+    try:
+        run_provider_worker_once(
+            connection,
+            project_paths,
+            worker_id,
+            project_id=project_id,
+            provider_id=provider_id,
+        )
+    finally:
+        connection.close()
+
+
+def launch_detached_provider_workers(project_paths, project_id=None, provider_id=None, worker_count=1):
+    launched_worker_ids = []
+    for _ in range(max(int(worker_count or 0), 0)):
+        worker_id = generate_id("pworker")
+        thread = threading.Thread(
+            target=_run_detached_provider_worker,
+            args=(project_paths, worker_id, project_id, provider_id),
+            daemon=True,
+            name="maas-provider-worker-{0}".format(worker_id),
+        )
+        thread.start()
+        launched_worker_ids.append(worker_id)
+    return launched_worker_ids

@@ -59,6 +59,8 @@ export function CodexIssuesPage() {
   const keyMap = useMemo(() => issueKeyMap([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const queueItems = useMemo(() => operatorQueueTasks(tasks), [tasks]);
+  const reviewItems = useMemo(() => queueItems.filter((task) => task.status === "review"), [queueItems]);
+  const blockedItems = useMemo(() => queueItems.filter((task) => task.status === "blocked"), [queueItems]);
   const visibleItems = issuesTab === "queue" ? queueItems : resolved;
   const selectedTask = useMemo(() => {
     const allItems = [...queueItems, ...resolved];
@@ -211,31 +213,107 @@ export function CodexIssuesPage() {
 
       <div className="codex-work-layout">
         <div className="codex-list-panel codex-panel">
-          {visibleItems.map((task) => (
-            <button
-              key={task.task_id}
-              type="button"
-              className={`codex-work-row ${selectedTaskId === task.task_id ? "is-selected" : ""}`}
-              onClick={() => setSelectedTaskId(task.task_id)}
-            >
-              <div className="codex-work-row__header">
-                <div>
-                  <strong>
-                    {issueLabel(task, keyMap)} · {task.title}
-                  </strong>
-                  <span>{task.goal?.title ?? "Unlinked goal"}</span>
+          {issuesTab === "queue" ? (
+            <>
+              <section className="codex-list-section">
+                <div className="codex-section-heading">
+                  <strong>Review queue</strong>
+                  <span>{reviewItems.length}</span>
                 </div>
-                <span>{formatTimestamp(task.latest_failure_at ?? task.latest_verification_at ?? null)}</span>
-              </div>
-              <div className="codex-work-row__meta">
-                <span>{task.agent?.name ?? "Unassigned"}</span>
-                <span>{statusLabel(task.status, task.review_state)}</span>
-                <span>{priorityLabel(task.priority)}</span>
-              </div>
-              <p>{task.description ?? "No issue summary recorded."}</p>
-            </button>
-          ))}
-          {!visibleItems.length ? <div className="codex-empty-copy">No issues in this view.</div> : null}
+                {reviewItems.length ? (
+                  reviewItems.map((task) => (
+                    <button
+                      key={task.task_id}
+                      type="button"
+                      className={`codex-work-row ${selectedTaskId === task.task_id ? "is-selected" : ""}`}
+                      onClick={() => setSelectedTaskId(task.task_id)}
+                    >
+                      <div className="codex-work-row__header">
+                        <div>
+                          <strong>
+                            {issueLabel(task, keyMap)} · {task.title}
+                          </strong>
+                          <span>{task.goal?.title ?? "Unlinked goal"}</span>
+                        </div>
+                        <span>{formatTimestamp(task.latest_verification_at ?? null)}</span>
+                      </div>
+                      <div className="codex-work-row__meta">
+                        <span>{task.agent?.name ?? "Unassigned"}</span>
+                        <span>{priorityLabel(task.priority)}</span>
+                        <span>{task.validation_commands?.length ?? 0} checks</span>
+                      </div>
+                      <p>{task.description ?? "No issue summary recorded."}</p>
+                    </button>
+                  ))
+                ) : (
+                  <div className="codex-empty-copy">Nothing is waiting for operator review right now.</div>
+                )}
+              </section>
+
+              <section className="codex-list-section">
+                <div className="codex-section-heading">
+                  <strong>Blocked queue</strong>
+                  <span>{blockedItems.length}</span>
+                </div>
+                {blockedItems.length ? (
+                  blockedItems.map((task) => (
+                    <button
+                      key={task.task_id}
+                      type="button"
+                      className={`codex-work-row ${selectedTaskId === task.task_id ? "is-selected" : ""}`}
+                      onClick={() => setSelectedTaskId(task.task_id)}
+                    >
+                      <div className="codex-work-row__header">
+                        <div>
+                          <strong>
+                            {issueLabel(task, keyMap)} · {task.title}
+                          </strong>
+                          <span>{task.goal?.title ?? "Unlinked goal"}</span>
+                        </div>
+                        <span>{formatTimestamp(task.latest_failure_at ?? null)}</span>
+                      </div>
+                      <div className="codex-work-row__meta">
+                        <span>{task.agent?.name ?? "Unassigned"}</span>
+                        <span>{statusLabel(task.status, task.review_state)}</span>
+                        <span>{task.failure_count ?? 0} failures</span>
+                      </div>
+                      <p>{task.description ?? "No issue summary recorded."}</p>
+                    </button>
+                  ))
+                ) : (
+                  <div className="codex-empty-copy">Nothing is blocked right now.</div>
+                )}
+              </section>
+            </>
+          ) : (
+            <>
+              {visibleItems.map((task) => (
+                <button
+                  key={task.task_id}
+                  type="button"
+                  className={`codex-work-row ${selectedTaskId === task.task_id ? "is-selected" : ""}`}
+                  onClick={() => setSelectedTaskId(task.task_id)}
+                >
+                  <div className="codex-work-row__header">
+                    <div>
+                      <strong>
+                        {issueLabel(task, keyMap)} · {task.title}
+                      </strong>
+                      <span>{task.goal?.title ?? "Unlinked goal"}</span>
+                    </div>
+                    <span>{formatTimestamp(task.latest_failure_at ?? task.latest_verification_at ?? null)}</span>
+                  </div>
+                  <div className="codex-work-row__meta">
+                    <span>{task.agent?.name ?? "Unassigned"}</span>
+                    <span>{statusLabel(task.status, task.review_state)}</span>
+                    <span>{priorityLabel(task.priority)}</span>
+                  </div>
+                  <p>{task.description ?? "No issue summary recorded."}</p>
+                </button>
+              ))}
+              {!visibleItems.length ? <div className="codex-empty-copy">No issues in this view.</div> : null}
+            </>
+          )}
         </div>
 
         <CodexIssueDetailPanel

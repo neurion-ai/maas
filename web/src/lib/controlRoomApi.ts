@@ -647,6 +647,13 @@ export async function restoreProject(projectId: string) {
   return response as ProjectActionResponse;
 }
 
+export async function deleteProject(projectId: string) {
+  const response = await postJson<ProjectActionResponse>(`/api/projects/${projectId}/actions/delete`, {
+    actor_id: "agent_allocator"
+  });
+  return response as ProjectActionResponse;
+}
+
 export async function updateBrownfieldOnboardingReview(
   projectId: string,
   payload: {

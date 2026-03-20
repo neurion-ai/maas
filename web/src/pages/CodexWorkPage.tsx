@@ -220,12 +220,16 @@ export function CodexWorkPage() {
     setPendingKey("run-cycle");
     setNotice(null);
     try {
-      const result = await runOrchestratorPass(6, 4);
+      const result = await runOrchestratorPass(6, 4, true);
       await loadBoard();
       if (selectedTaskId) {
         setDetail(await fetchCodexIssueDetail(selectedTaskId));
       }
-      setNotice(`Ran the next cycle: ${result.assigned_count} task assignments and ${result.provider_jobs_processed} provider jobs.`);
+      const queued = result.provider_jobs_queued ?? 0;
+      const started = result.provider_jobs_processed ?? 0;
+      setNotice(
+        `Run complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued for execution.`
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Run failed.");
     } finally {
@@ -248,7 +252,7 @@ export function CodexWorkPage() {
             disabled={pendingKey === "run-cycle"}
             onClick={() => void handleRunCycle()}
           >
-            {pendingKey === "run-cycle" ? "Running..." : "Run next cycle"}
+            {pendingKey === "run-cycle" ? "Running..." : "Run"}
           </button>
         </div>
       </header>

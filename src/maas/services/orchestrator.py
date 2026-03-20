@@ -3,9 +3,9 @@
 import json
 
 from maas.ids import generate_id
-from maas.providers import list_provider_status
+from maas.providers import list_provider_status, provider_run_targets
 from maas.services.queue_capacity import queue_capacity_snapshot
-from maas.services.provider_runtime import process_next_provider_job
+from maas.services.provider_runtime import process_next_provider_job, queue_provider_task
 from maas.supervisor import run_supervisor_once
 
 
@@ -25,9 +25,9 @@ def _record_orchestrator_activity(connection, project_id, summary):
     )
 
 
-def _provider_queue_controls(connection, project_id):
+def _provider_queue_controls(provider_statuses):
     controls = {}
-    for provider in list_provider_status(connection, project_id=project_id):
+    for provider in provider_statuses:
         settings = provider.get("configurable_runtime_controls") or {}
         raw_limit = settings.get("job_limit_per_pass", 0)
         raw_paused = settings.get("queue_paused", False)
@@ -46,12 +46,54 @@ def _provider_queue_controls(connection, project_id):
     return controls
 
 
+def _preferred_codex_provider_id(provider_statuses):
+    for provider in provider_statuses:
+        if provider["id"] == "openai_codex" and provider.get("is_runnable"):
+            return provider["id"]
+    return None
+
+
+def _queue_launch_ready_codex_work(connection, project_paths, project_id, queue_controls, provider_job_limit):
+    provider_id = _preferred_codex_provider_id(list_provider_status(connection, project_id=project_id))
+    if provider_id is None:
+        return []
+
+    control = queue_controls.get(provider_id) or {}
+    if control.get("queue_paused"):
+        return []
+
+    effective_limit = min(max(provider_job_limit or 0, 0), control.get("job_limit_per_pass", 0))
+    if effective_limit <= 0:
+        return []
+
+    queued_jobs = []
+    for target in provider_run_targets(connection, project_id, limit=effective_limit):
+        try:
+            queued_jobs.append(
+                queue_provider_task(
+                    connection,
+                    project_paths,
+                    provider_id=provider_id,
+                    actor_id="agent_allocator",
+                    project_id=project_id,
+                    agent_id=target["agent_id"],
+                    task_id=target["task_id"],
+                )
+            )
+        except ValueError as exc:
+            if "already exists" in str(exc) or "not eligible" in str(exc):
+                continue
+            raise
+    return queued_jobs
+
+
 def run_orchestrator_once(
     connection,
     project_paths,
     allocate_limit=None,
     provider_job_limit=2,
     project_id=None,
+    auto_launch_assigned_work=False,
 ):
     supervisor_result = run_supervisor_once(
         connection,
@@ -61,11 +103,14 @@ def run_orchestrator_once(
     )
 
     project_runs = []
+    total_jobs_queued = 0
     total_jobs_processed = 0
     for project_run in supervisor_result["project_runs"]:
         scoped_project_id = project_run["project_id"]
+        queued_jobs = []
         processed_jobs = []
-        queue_controls = _provider_queue_controls(connection, scoped_project_id)
+        provider_statuses = list_provider_status(connection, project_id=scoped_project_id)
+        queue_controls = _provider_queue_controls(provider_statuses)
         project_capacity = queue_capacity_snapshot(connection, scoped_project_id)
         if project_capacity["queue_mode"] != "running":
             queue_controls["__project_capacity__"] = project_capacity
@@ -75,6 +120,7 @@ def run_orchestrator_once(
                 "stale_sessions": len(project_run["stale_sessions"]),
                 "auto_recovered_tasks": len(project_run["auto_recovered_tasks"]),
                 "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
+                "provider_jobs_queued": 0,
                 "provider_jobs_processed": 0,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
@@ -83,6 +129,8 @@ def run_orchestrator_once(
             project_runs.append(
                 {
                     **project_run,
+                    "provider_jobs_queued": 0,
+                    "queued_jobs": [],
                     "provider_jobs_processed": 0,
                     "processed_jobs": [],
                     "queue_controls": queue_controls,
@@ -90,6 +138,14 @@ def run_orchestrator_once(
                 }
             )
             continue
+        if auto_launch_assigned_work:
+            queued_jobs = _queue_launch_ready_codex_work(
+                connection,
+                project_paths,
+                scoped_project_id,
+                queue_controls,
+                provider_job_limit,
+            )
         for provider_id, control in queue_controls.items():
             if control["queue_paused"]:
                 continue
@@ -105,6 +161,7 @@ def run_orchestrator_once(
                 if not next_job["processed"]:
                     break
                 processed_jobs.append(next_job["job"])
+        total_jobs_queued += len(queued_jobs)
         total_jobs_processed += len(processed_jobs)
         summary = {
             "assigned_count": project_run["assigned_count"],
@@ -112,6 +169,7 @@ def run_orchestrator_once(
             "stale_sessions": len(project_run["stale_sessions"]),
             "auto_recovered_tasks": len(project_run["auto_recovered_tasks"]),
             "auto_replanned_tasks": len(project_run.get("auto_replanned_tasks") or []),
+            "provider_jobs_queued": len(queued_jobs),
             "provider_jobs_processed": len(processed_jobs),
             "queue_controls": queue_controls,
             "project_capacity": project_capacity,
@@ -120,6 +178,8 @@ def run_orchestrator_once(
         project_runs.append(
             {
                 **project_run,
+                "provider_jobs_queued": len(queued_jobs),
+                "queued_jobs": queued_jobs,
                 "provider_jobs_processed": len(processed_jobs),
                 "processed_jobs": processed_jobs,
                 "queue_controls": queue_controls,
@@ -135,6 +195,7 @@ def run_orchestrator_once(
         "stale_sessions": supervisor_result["stale_sessions"],
         "auto_recovered_tasks": supervisor_result["auto_recovered_tasks"],
         "auto_replanned_tasks": supervisor_result.get("auto_replanned_tasks") or [],
+        "provider_jobs_queued": total_jobs_queued,
         "provider_jobs_processed": total_jobs_processed,
         "project_runs": project_runs,
     }

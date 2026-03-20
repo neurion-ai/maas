@@ -1230,10 +1230,11 @@ export async function runSupervisorPass(allocateLimit?: number) {
   return payload as SupervisorRunResponse;
 }
 
-export async function runOrchestratorPass(allocateLimit?: number, providerJobLimit = 2) {
+export async function runOrchestratorPass(allocateLimit?: number, providerJobLimit = 2, autoLaunchAssignedWork = false) {
   const payload = await postJson<OrchestratorRunResponse>("/api/orchestrator/run", {
     allocate_limit: allocateLimit ?? null,
     provider_job_limit: providerJobLimit,
+    auto_launch_assigned_work: autoLaunchAssignedWork,
     project_id: getSelectedProjectId()
   });
   return payload as OrchestratorRunResponse;

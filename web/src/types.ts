@@ -1227,6 +1227,14 @@ export interface SupervisorRunResponse {
 }
 
 export interface OrchestratorProjectRun extends SupervisorProjectRun {
+  provider_jobs_queued: number;
+  queued_jobs: Array<{
+    job_id: string;
+    provider_id: string;
+    status: string;
+    task_id: string;
+    project_id: string;
+  }>;
   provider_jobs_processed: number;
   processed_jobs: Array<{
     job_id: string;
@@ -1238,6 +1246,7 @@ export interface OrchestratorProjectRun extends SupervisorProjectRun {
 }
 
 export interface OrchestratorRunResponse extends SupervisorRunResponse {
+  provider_jobs_queued: number;
   provider_jobs_processed: number;
   project_runs: OrchestratorProjectRun[];
 }

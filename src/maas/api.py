@@ -179,6 +179,7 @@ class OrchestratorRunRequest(BaseModel):
     allocate_limit: int = None
     provider_job_limit: int = 2
     project_id: Optional[str] = None
+    auto_launch_assigned_work: bool = False
 
 
 class EscalationRequestPayload(BaseModel):
@@ -734,6 +735,7 @@ def create_app(project_root="."):
                 allocate_limit=payload.allocate_limit,
                 provider_job_limit=payload.provider_job_limit,
                 project_id=selected_project_id,
+                auto_launch_assigned_work=payload.auto_launch_assigned_work,
             )
         finally:
             connection.close()

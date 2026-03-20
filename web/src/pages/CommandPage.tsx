@@ -57,9 +57,13 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     setPendingKey("run");
     setNotice(null);
     try {
-      const result = await runOrchestratorPass(6, 4);
+      const result = await runOrchestratorPass(6, 4, true);
       await loadCommand();
-      setNotice(`Ran the next cycle: ${result.assigned_count} task assignments and ${result.provider_jobs_processed} provider jobs.`);
+      const queued = result.provider_jobs_queued ?? 0;
+      const started = result.provider_jobs_processed ?? 0;
+      setNotice(
+        `Run complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued for execution.`
+      );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Run failed.");
     } finally {
@@ -77,7 +81,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
         </div>
         <div className="codex-page__actions">
           <button type="button" className="codex-button codex-button--primary" disabled={pendingKey === "run"} onClick={() => void handleRun()}>
-            {pendingKey === "run" ? "Running..." : "Run next cycle"}
+            {pendingKey === "run" ? "Running..." : "Run"}
           </button>
         </div>
       </header>

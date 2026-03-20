@@ -33,6 +33,68 @@ def _insert_assigned_task(connection, project_id, goal_id, agent_id, title):
 
 
 class OrchestratorApiTest(unittest.TestCase):
+    def test_orchestrator_run_auto_launches_codex_work_when_requested(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Orchestrator Codex Launch Test",
+                description="orchestrator codex launch test",
+                project_type="custom",
+            )
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute(
+                    "SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["goal_id"]
+                connection.execute("UPDATE tasks SET status = 'done', review_state = 'approved'")
+                task_id = _insert_assigned_task(
+                    connection,
+                    project_id,
+                    goal_id,
+                    "agent_reviewer",
+                    "Auto launch Codex work",
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/orchestrator/run",
+                json={"allocate_limit": 0, "provider_job_limit": 2, "auto_launch_assigned_work": True},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["provider_jobs_queued"], 1)
+            self.assertEqual(payload["provider_jobs_processed"], 1)
+            self.assertTrue(
+                any(
+                    any(job["task_id"] == task_id and job["provider_id"] == "openai_codex" for job in project_run["queued_jobs"])
+                    for project_run in payload["project_runs"]
+                )
+            )
+
+            connection = connect(paths)
+            try:
+                job_row = connection.execute(
+                    """
+                    SELECT provider_id, status, session_id
+                    FROM provider_job_queue
+                    WHERE task_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (task_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(job_row["provider_id"], "openai_codex")
+            self.assertEqual(job_row["status"], "completed")
+            self.assertIsNotNone(job_row["session_id"])
+
     def test_orchestrator_run_processes_provider_jobs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

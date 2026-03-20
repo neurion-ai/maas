@@ -672,10 +672,14 @@ def _provider_run_targets(connection, project_id, limit=5):
     return [dict(row) for row in rows]
 
 
+def provider_run_targets(connection, project_id, limit=5):
+    return _provider_run_targets(connection, project_id, limit=limit)
+
+
 def fetch_provider_runtime_overview(connection=None, project_id=None):
     return {
         "providers": list_provider_status(connection=connection, project_id=project_id),
-        "run_targets": _provider_run_targets(connection, project_id),
+        "run_targets": provider_run_targets(connection, project_id),
         "job_queue": fetch_provider_jobs(connection, project_id=project_id, limit=12),
         "worker_summary": fetch_provider_worker_summary(connection, project_id=project_id)
         if connection is not None

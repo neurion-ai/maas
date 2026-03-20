@@ -849,6 +849,7 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
         related: [],
       },
       runs: [],
+      run_console: null,
       history: [],
       artifacts: [],
       artifact_summary: ARTIFACTS_FALLBACK.summary,

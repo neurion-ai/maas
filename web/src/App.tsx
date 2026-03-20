@@ -5,8 +5,6 @@ import {
   createProject,
   fetchProjects,
   restoreProject,
-  runOrchestratorPass,
-  runSupervisorPass
 } from "./lib/controlRoomApi";
 import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId } from "./lib/projectScope";
 import { LivePulseProvider, useLivePulse, useLiveStatus } from "./lib/useLivePulse";
@@ -16,14 +14,15 @@ import { CodexIssuesPage } from "./pages/CodexIssuesPage";
 import { CodexSystemPage } from "./pages/CodexSystemPage";
 import { CodexWorkPage } from "./pages/CodexWorkPage";
 import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import type { ProjectSummary } from "./types";
 
-type View = "command" | "work" | "issues" | "agents" | "system" | "projects";
+type View = "command" | "work" | "issues" | "agents" | "system" | "projects" | "settings";
 type ThemeMode = "light" | "dark";
 
 const THEME_STORAGE_KEY = "maas:theme";
 
-const VIEWS: Array<{ id: View; label: string; summary: string }> = [
+const PRIMARY_VIEWS: Array<{ id: Exclude<View, "settings">; label: string; summary: string }> = [
   {
     id: "command",
     label: "Command",
@@ -56,6 +55,15 @@ const VIEWS: Array<{ id: View; label: string; summary: string }> = [
   }
 ];
 
+const ALL_VIEWS: Array<{ id: View; label: string; summary: string }> = [
+  ...PRIMARY_VIEWS,
+  {
+    id: "settings",
+    label: "Settings",
+    summary: "Application preferences and global display controls."
+  }
+];
+
 const DEFAULT_PROJECT_FORM: ProjectFormState = {
   name: "",
   description: "",
@@ -66,7 +74,7 @@ const DEFAULT_PROJECT_FORM: ProjectFormState = {
 
 function getInitialView(): View {
   const hash = window.location.hash.replace("#", "");
-  return (VIEWS.find((view) => view.id === hash)?.id ?? "command") as View;
+  return (ALL_VIEWS.find((view) => view.id === hash)?.id ?? "command") as View;
 }
 
 function getInitialTheme(): ThemeMode {
@@ -238,7 +246,7 @@ function AppShell() {
   }
 
   const commandActions = useMemo<CommandPaletteAction[]>(() => {
-    const navigationActions: CommandPaletteAction[] = VIEWS.map((view) => ({
+    const navigationActions: CommandPaletteAction[] = ALL_VIEWS.map((view) => ({
       id: `view:${view.id}`,
       label: `Go to ${view.label}`,
       description: view.summary,
@@ -260,19 +268,6 @@ function AppShell() {
     return [
       ...navigationActions,
       {
-        id: "command:run",
-        label: "Run work loop",
-        description: "Advance the board and drain the queue using the default operator path.",
-        keywords: ["run", "queue", "board", "supervisor", "orchestrator"],
-        run: () => {
-          if ((activeProject?.task_count ?? 0) > 0) {
-            void runOrchestratorPass(4, 2);
-          } else {
-            void runSupervisorPass(3);
-          }
-        }
-      },
-      {
         id: "command:theme",
         label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
         description: "Toggle the MAAS theme.",
@@ -281,7 +276,7 @@ function AppShell() {
       },
       ...projectActions
     ];
-  }, [activeProject?.task_count, activeProjects, theme]);
+  }, [activeProjects, theme]);
 
   return (
     <div className="codex-shell">
@@ -298,50 +293,54 @@ function AppShell() {
           Command palette
         </button>
 
-        <nav className="codex-sidebar__nav" aria-label="Primary views">
-          {VIEWS.map((view) => (
-            <button
-              key={view.id}
-              type="button"
-              className={`codex-sidebar__nav-item ${activeView === view.id ? "is-active" : ""}`}
-              title={view.summary}
-              onClick={() => setActiveView(view.id)}
-            >
-              <span>{view.label}</span>
-              {view.id === "work" ? <span>{activeProject?.task_count ?? 0}</span> : null}
-            </button>
-          ))}
-        </nav>
-
-        <div className="codex-sidebar__section">
-          <span className="codex-sidebar__label">Projects</span>
-          <div className="codex-sidebar__projects">
-            {activeProjects.map((project) => (
+        <div className="codex-sidebar__scroll">
+          <nav className="codex-sidebar__nav" aria-label="Primary views">
+            {PRIMARY_VIEWS.map((view) => (
               <button
-                key={project.project_id}
+                key={view.id}
                 type="button"
-                className={`codex-sidebar__project ${selectedProjectId === project.project_id ? "is-active" : ""}`}
-                onClick={() => {
-                  persistSelectedProjectId(project.project_id);
-                  setSelectedProjectId(project.project_id);
-                }}
+                className={`codex-sidebar__nav-item ${activeView === view.id ? "is-active" : ""}`}
+                title={view.summary}
+                onClick={() => setActiveView(view.id)}
               >
-                <span>{project.name}</span>
-                <span>{project.task_count}</span>
+                <span>{view.label}</span>
+                {view.id === "work" ? <span>{activeProject?.task_count ?? 0}</span> : null}
               </button>
             ))}
+          </nav>
+
+          <div className="codex-sidebar__section">
+            <span className="codex-sidebar__label">Projects</span>
+            <div className="codex-sidebar__projects">
+              {activeProjects.map((project) => (
+                <button
+                  key={project.project_id}
+                  type="button"
+                  className={`codex-sidebar__project ${selectedProjectId === project.project_id ? "is-active" : ""}`}
+                  onClick={() => {
+                    persistSelectedProjectId(project.project_id);
+                    setSelectedProjectId(project.project_id);
+                  }}
+                >
+                  <span>{project.name}</span>
+                  <span>{project.task_count}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
         <div className="codex-sidebar__footer">
           <button
             type="button"
-            className="codex-sidebar__text-button"
-            onClick={() => setTheme((current) => (current === "dark" ? "light" : "dark"))}
+            className={`codex-sidebar__nav-item ${activeView === "settings" ? "is-active" : ""}`}
+            title="Application preferences and display controls."
+            onClick={() => setActiveView("settings")}
           >
-            {theme === "dark" ? "Light theme" : "Dark theme"}
+            <span>Settings</span>
           </button>
         </div>
+
       </aside>
 
       <main className="codex-shell__main">
@@ -406,6 +405,7 @@ function AppShell() {
               onNavigate={setActiveView}
             />
           ) : null}
+          {activeView === "settings" ? <SettingsPage theme={theme} onThemeChange={setTheme} /> : null}
         </div>
       </main>
 

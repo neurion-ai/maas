@@ -1,4 +1,4 @@
-import type { BoardColumn, BoardTask } from "../types";
+import type { BoardColumn, BoardTask, PortfolioProject } from "../types";
 
 export type CodexWorkStatus = "todo" | "in_progress" | "review" | "blocked" | "done";
 
@@ -113,4 +113,27 @@ export function formatTimestamp(value?: string | null) {
     return "Not recorded";
   }
   return new Date(value).toLocaleString();
+}
+
+export type CodexRunControlState =
+  | { mode: "run"; label: "Run" }
+  | { mode: "pause"; label: "Pause" }
+  | { mode: "resume"; label: "Resume" };
+
+export function resolveRunControlState(project: PortfolioProject | null, tasks: BoardTask[]): CodexRunControlState {
+  if (!project) {
+    return { mode: "run", label: "Run" };
+  }
+  if (project.provider_capacity.queue_mode === "paused" || project.provider_capacity.queue_mode === "draining") {
+    return { mode: "resume", label: "Resume" };
+  }
+  if (
+    project.active_sessions > 0 ||
+    project.provider_capacity.running_jobs > 0 ||
+    project.provider_capacity.queued_jobs > 0 ||
+    tasks.some((task) => task.status === "in_progress")
+  ) {
+    return { mode: "pause", label: "Pause" };
+  }
+  return { mode: "run", label: "Run" };
 }

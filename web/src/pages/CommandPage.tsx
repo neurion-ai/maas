@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchAlerts, fetchAgentRoster, fetchFailures, fetchIncidentTimeline, fetchOverview, runOrchestratorPass } from "../lib/controlRoomApi";
+import { fetchAlerts, fetchAgentRoster, fetchFailures, fetchIncidentTimeline, fetchOverview, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
-import { boardCounts, formatTimestamp, issueKeyMap, openBoardTasks, operatorQueueTasks, resolvedBoardTasks } from "../lib/codexMvp";
+import { boardCounts, formatTimestamp, issueKeyMap, openBoardTasks, operatorQueueTasks, resolveRunControlState, resolvedBoardTasks } from "../lib/codexMvp";
+import { getSelectedProjectId } from "../lib/projectScope";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { AlertItem, BoardTask, FailureItem, OverviewResponse, TimelineEvent } from "../types";
+import type { AlertItem, BoardTask, FailureItem, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
 
 type ViewTarget = "work" | "issues" | "agents" | "system" | "projects";
 
@@ -19,19 +20,21 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [failures, setFailures] = useState<FailureItem[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [project, setProject] = useState<PortfolioProject | null>(null);
   const [runningAgents, setRunningAgents] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   async function loadCommand(signal?: AbortSignal) {
-    const [boardPayload, overviewPayload, alertsPayload, failuresPayload, timelinePayload, rosterPayload] = await Promise.all([
+    const [boardPayload, overviewPayload, alertsPayload, failuresPayload, timelinePayload, rosterPayload, portfolioPayload] = await Promise.all([
       fetchBoard({}, signal),
       fetchOverview(),
       fetchAlerts(),
       fetchFailures(),
       fetchIncidentTimeline({ limit: 18 }, signal),
       fetchAgentRoster(),
+      fetchPortfolio(),
     ]);
     setOverview(overviewPayload);
     setTasks(openBoardTasks(boardPayload.columns));
@@ -40,6 +43,12 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     setFailures(failuresPayload.recent);
     setTimeline(timelinePayload.events);
     setRunningAgents(rosterPayload.agents.filter((agent) => agent.status === "running").length);
+    const selectedProjectId = getSelectedProjectId();
+    setProject(
+      portfolioPayload.projects.find((item) => item.project_id === selectedProjectId) ??
+        portfolioPayload.projects[0] ??
+        null
+    );
   }
 
   useEffect(() => {
@@ -52,6 +61,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
 
   const queue = useMemo(() => operatorQueueTasks(tasks).slice(0, 6), [tasks]);
+  const runControl = useMemo(() => resolveRunControlState(project, tasks), [project, tasks]);
 
   async function handleRun() {
     setPendingKey("run");
@@ -71,6 +81,48 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     }
   }
 
+  async function handlePause() {
+    if (!project) {
+      return;
+    }
+    setPendingKey("pause");
+    setNotice(null);
+    try {
+      await updateProjectProviderCapacity(project.project_id, {
+        queue_mode: "paused",
+        max_running_jobs: project.provider_capacity.max_running_jobs,
+      });
+      await loadCommand();
+      setNotice("Paused new Codex launches. Active runs will continue until they finish.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Pause failed.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleResume() {
+    if (!project) {
+      return;
+    }
+    setPendingKey("resume");
+    setNotice(null);
+    try {
+      await updateProjectProviderCapacity(project.project_id, {
+        queue_mode: "running",
+        max_running_jobs: project.provider_capacity.max_running_jobs,
+      });
+      const result = await runOrchestratorPass(6, 4, true);
+      await loadCommand();
+      const started = result.provider_jobs_processed ?? 0;
+      setNotice(`Resumed execution. ${started} Codex run${started === 1 ? "" : "s"} started.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Resume failed.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
   return (
     <section className="codex-page">
       <header className="codex-page__header">
@@ -80,8 +132,29 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
           <p>Use this page to decide what needs intervention now, not to micromanage every task.</p>
         </div>
         <div className="codex-page__actions">
-          <button type="button" className="codex-button codex-button--primary" disabled={pendingKey === "run"} onClick={() => void handleRun()}>
-            {pendingKey === "run" ? "Running..." : "Run"}
+          <button
+            type="button"
+            className="codex-button codex-button--primary"
+            disabled={pendingKey !== null}
+            onClick={() => {
+              if (runControl.mode === "pause") {
+                void handlePause();
+                return;
+              }
+              if (runControl.mode === "resume") {
+                void handleResume();
+                return;
+              }
+              void handleRun();
+            }}
+          >
+            {pendingKey === "run"
+              ? "Running..."
+              : pendingKey === "pause"
+                ? "Pausing..."
+                : pendingKey === "resume"
+                  ? "Resuming..."
+                  : runControl.label}
           </button>
         </div>
       </header>

@@ -1,9 +1,46 @@
 """Codex MVP read models."""
 
+import json
+import os
+
 from maas.services.artifacts import fetch_artifacts
 from maas.services.git_workspaces import fetch_task_git_workspace
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
+
+
+RUN_CONSOLE_PREVIEW_MAX_CHARS = 6000
+
+
+def _tail_console_preview(path):
+    if not path or not os.path.exists(path) or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            read_start = max(size - (RUN_CONSOLE_PREVIEW_MAX_CHARS * 4), 0)
+            handle.seek(read_start)
+            payload = handle.read()
+    except OSError:
+        return None
+    content = payload.decode("utf-8", errors="ignore")
+    truncated = len(content) > RUN_CONSOLE_PREVIEW_MAX_CHARS
+    if truncated:
+        content = content[-RUN_CONSOLE_PREVIEW_MAX_CHARS:]
+    return {
+        "path": path,
+        "content": content,
+        "truncated": truncated,
+    }
+
+
+def _load_json(value):
+    try:
+        payload = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def issue_key_lookup(connection, project_id=None):
@@ -189,6 +226,88 @@ def _task_runs(connection, project_id, task_id):
     ]
 
 
+def _session_activity(connection, project_id, task_id, session_id, limit=12):
+    rows = connection.execute(
+        """
+        SELECT activity_id, action, description, severity, created_at, details_json
+        FROM activity_log
+        WHERE project_id = ?
+          AND task_id = ?
+          AND json_extract(details_json, '$.session_id') = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT ?
+        """,
+        (project_id, task_id, session_id, limit),
+    ).fetchall()
+    items = []
+    for row in rows:
+        details = _load_json(row["details_json"])
+        items.append(
+            {
+                "activity_id": row["activity_id"],
+                "action": row["action"],
+                "description": row["description"],
+                "severity": row["severity"],
+                "created_at": row["created_at"],
+                "details": details,
+            }
+        )
+    return items
+
+
+def _session_start_details(connection, project_id, task_id, session_id):
+    row = connection.execute(
+        """
+        SELECT details_json
+        FROM activity_log
+        WHERE project_id = ?
+          AND task_id = ?
+          AND action = 'provider_adapter_started'
+          AND json_extract(details_json, '$.session_id') = ?
+        ORDER BY created_at ASC, rowid ASC
+        LIMIT 1
+        """,
+        (project_id, task_id, session_id),
+    ).fetchone()
+    if row is None:
+        return {}
+    return _load_json(row["details_json"])
+
+
+def _issue_run_console(connection, project_paths, project_id, task_id, runs):
+    if not runs:
+        return None
+    active_run = next((run for run in runs if run["status"] == "active"), None)
+    focus_run = active_run or runs[0]
+    session_id = focus_run["session_id"]
+    envelope_root = project_paths.runtime_envelope_root(project_id, session_id)
+    output_preview = _tail_console_preview(os.path.join(envelope_root, "runtime-output.txt"))
+    stdout_preview = _tail_console_preview(os.path.join(envelope_root, "stdout.log"))
+    stderr_preview = _tail_console_preview(os.path.join(envelope_root, "stderr.log"))
+    activity = _session_activity(connection, project_id, task_id, session_id)
+    start_details = _session_start_details(connection, project_id, task_id, session_id)
+    return {
+        "session_id": session_id,
+        "agent_id": focus_run["agent_id"],
+        "agent_name": focus_run["agent_name"],
+        "provider_type": focus_run["provider_type"],
+        "status": focus_run["status"],
+        "progress_pct": focus_run["progress_pct"],
+        "status_message": focus_run["status_message"],
+        "last_heartbeat_at": focus_run["last_heartbeat_at"],
+        "started_at": focus_run["started_at"],
+        "ended_at": focus_run["ended_at"],
+        "is_live": focus_run["status"] == "active",
+        "timeout_seconds": start_details.get("timeout_seconds"),
+        "command": start_details.get("command"),
+        "runtime_root": start_details.get("runtime_root") or envelope_root,
+        "output_preview": output_preview,
+        "stdout_preview": stdout_preview,
+        "stderr_preview": stderr_preview,
+        "activity": activity,
+    }
+
+
 def _agent_owned_issues(connection, project_id, agent_id, issue_keys):
     rows = connection.execute(
         """
@@ -348,6 +467,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
 
     relationships = _task_relationships(connection, project_id, task_id, task_row["goal_id"], issue_keys)
     runs = _task_runs(connection, project_id, task_id)
+    run_console = _issue_run_console(connection, project_paths, project_id, task_id, runs)
     history = fetch_incident_timeline(connection, project_id=project_id, task_id=task_id, limit=30, order="desc")["events"]
     verification_runs = fetch_verification_runs(connection, project_id=project_id, task_id=task_id, limit=10)
     git_workspace = fetch_task_git_workspace(connection, task_id)
@@ -387,6 +507,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         },
         "relationships": relationships,
         "runs": runs,
+        "run_console": run_console,
         "history": history,
         "artifacts": artifact_payload["items"],
         "artifact_summary": artifact_payload["summary"],

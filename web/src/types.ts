@@ -1278,6 +1278,42 @@ export interface CodexIssueRunItem {
   ended_at?: string | null;
 }
 
+export interface CodexRunConsolePreview {
+  path: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface CodexRunConsoleActivityItem {
+  activity_id?: string | null;
+  action: string;
+  description: string;
+  severity: string;
+  created_at: string;
+  details?: Record<string, unknown>;
+}
+
+export interface CodexRunConsole {
+  session_id: string;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  provider_type: string;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  last_heartbeat_at?: string | null;
+  started_at: string;
+  ended_at?: string | null;
+  is_live: boolean;
+  timeout_seconds?: number | null;
+  command?: string[] | null;
+  runtime_root?: string | null;
+  output_preview?: CodexRunConsolePreview | null;
+  stdout_preview?: CodexRunConsolePreview | null;
+  stderr_preview?: CodexRunConsolePreview | null;
+  activity: CodexRunConsoleActivityItem[];
+}
+
 export interface VerificationRun {
   verification_run_id: string;
   task_id: string;
@@ -1363,6 +1399,7 @@ export interface CodexIssueDetailResponse {
     related: CodexIssueRelationshipItem[];
   };
   runs: CodexIssueRunItem[];
+  run_console?: CodexRunConsole | null;
   history: TimelineEvent[];
   artifacts: ArtifactItem[];
   artifact_summary: ArtifactsResponse["summary"];

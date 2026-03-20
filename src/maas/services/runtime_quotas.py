@@ -69,7 +69,7 @@ def runtime_quotas_from_row(project_row):
 
 
 def fetch_project_runtime_quotas(connection, project_id=None):
-    project_row = resolve_project(connection, project_id, include_archived=False)
+    project_row = resolve_project(connection, project_id, include_archived=True)
     if project_row is None:
         raise ValueError("project not found")
     return runtime_quotas_from_row(project_row)

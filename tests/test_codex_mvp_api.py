@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -9,6 +10,122 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 class CodexMvpApiTest(unittest.TestCase):
+    def test_issue_detail_exposes_live_run_console(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = bootstrap_project(tmpdir, name="Codex Live Console Test", description="codex live console", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id, title
+                    FROM tasks
+                    WHERE assigned_agent_id IS NOT NULL
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                project_id = task["project_id"]
+                session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress', progress_pct = 60
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'active', 'openai_codex', 60,
+                        'OpenAI Codex CLI is executing live CLI work', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (session_id, project_id, task["assigned_agent_id"], task["task_id"]),
+                )
+                envelope = paths.ensure_runtime_envelope(project_id, session_id)
+                with open(os.path.join(envelope["root"], "runtime-output.txt"), "w", encoding="utf-8") as handle:
+                    handle.write("draft output\nstep 1 complete\n")
+                with open(os.path.join(envelope["root"], "stdout.log"), "w", encoding="utf-8") as handle:
+                    handle.write("stdout line 1\nstdout line 2\n")
+                with open(os.path.join(envelope["root"], "stderr.log"), "w", encoding="utf-8") as handle:
+                    handle.write("stderr line 1\n")
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'provider_adapter_started', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        project_id,
+                        task["assigned_agent_id"],
+                        task["task_id"],
+                        "OpenAI Codex adapter started local execution.",
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "timeout_seconds": 900,
+                                "command": ["codex", "exec", "Task: example"],
+                                "runtime_root": envelope["root"],
+                            }
+                        ),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'provider_execution_progress', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        project_id,
+                        task["assigned_agent_id"],
+                        task["task_id"],
+                        "OpenAI Codex adapter is executing the live CLI provider run.",
+                        json.dumps({"session_id": session_id}),
+                    ),
+                )
+                for index in range(15):
+                    connection.execute(
+                        """
+                        INSERT INTO activity_log (
+                            activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                        ) VALUES (?, ?, ?, ?, 'provider_execution_progress', 'runtime', ?, ?, 'info')
+                        """,
+                        (
+                            generate_id("act"),
+                            project_id,
+                            task["assigned_agent_id"],
+                            task["task_id"],
+                            f"progress tick {index}",
+                            json.dumps({"session_id": session_id, "tick": index}),
+                        ),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.get(f"/api/issues/{task['task_id']}")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertIsNotNone(payload["run_console"])
+            self.assertEqual(payload["run_console"]["session_id"], session_id)
+            self.assertTrue(payload["run_console"]["is_live"])
+            self.assertEqual(payload["run_console"]["timeout_seconds"], 900)
+            self.assertEqual(payload["run_console"]["command"], ["codex", "exec", "Task: example"])
+            self.assertIn("step 1 complete", payload["run_console"]["output_preview"]["content"])
+            self.assertIn("stdout line 2", payload["run_console"]["stdout_preview"]["content"])
+            self.assertIn("stderr line 1", payload["run_console"]["stderr_preview"]["content"])
+            self.assertGreaterEqual(len(payload["run_console"]["activity"]), 2)
+
     def test_issue_detail_exposes_relationships_runs_history_and_stable_issue_key(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(tmpdir, name="Codex MVP Test", description="codex mvp", project_type="custom")

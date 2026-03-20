@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { CodexIssueDetailPanel } from "../components/CodexIssueDetailPanel";
-import { boardCounts, formatTimestamp, issueKeyMap, mapBoardStatus, nextActionLabel, openBoardTasks, priorityLabel, resolvedBoardTasks, statusLabel } from "../lib/codexMvp";
-import { fetchCodexIssueDetail, runOrchestratorPass } from "../lib/controlRoomApi";
+import { boardCounts, formatTimestamp, issueKeyMap, mapBoardStatus, nextActionLabel, openBoardTasks, priorityLabel, resolveRunControlState, resolvedBoardTasks, statusLabel } from "../lib/codexMvp";
+import { fetchCodexIssueDetail, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
 import { fetchBoard, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
+import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { BoardTask, CodexIssueDetailResponse } from "../types";
+import type { BoardTask, CodexIssueDetailResponse, PortfolioProject } from "../types";
 
 type WorkViewMode = "list" | "board";
 
@@ -23,17 +24,24 @@ export function CodexWorkPage() {
   const [resolvedTasks, setResolvedTasks] = useState<BoardTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => consumePendingTaskFocus());
   const [detail, setDetail] = useState<CodexIssueDetailResponse | null>(null);
+  const [project, setProject] = useState<PortfolioProject | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   async function loadBoard(signal?: AbortSignal) {
-    const payload = await fetchBoard({}, signal);
+    const [payload, portfolioPayload] = await Promise.all([fetchBoard({}, signal), fetchPortfolio()]);
     const openTasks = openBoardTasks(payload.columns);
     const doneTasks = resolvedBoardTasks(payload.columns);
     setTasks(openTasks);
     setResolvedTasks(doneTasks);
     setSelectedTaskId((current) => current ?? openTasks[0]?.task_id ?? doneTasks[0]?.task_id ?? null);
+    const selectedProjectId = getSelectedProjectId();
+    setProject(
+      portfolioPayload.projects.find((item) => item.project_id === selectedProjectId) ??
+        portfolioPayload.projects[0] ??
+        null
+    );
   }
 
   useEffect(() => {
@@ -49,6 +57,7 @@ export function CodexWorkPage() {
       setDetail(null);
       return;
     }
+    setDetail(null);
     const controller = new AbortController();
     void fetchCodexIssueDetail(selectedTaskId, controller.signal, () => setNotice("Issue detail refresh fell back to cached data."))
       .then((payload) => setDetail(payload))
@@ -72,6 +81,7 @@ export function CodexWorkPage() {
     () => [...tasks, ...resolvedTasks].find((task) => task.task_id === selectedTaskId) ?? tasks[0] ?? resolvedTasks[0] ?? null,
     [tasks, resolvedTasks, selectedTaskId]
   );
+  const runControl = useMemo(() => resolveRunControlState(project, tasks), [project, tasks]);
 
   const grouped = useMemo(
     () => ({
@@ -237,6 +247,51 @@ export function CodexWorkPage() {
     }
   }
 
+  async function handlePause() {
+    if (!project) {
+      return;
+    }
+    setPendingKey("pause-cycle");
+    setNotice(null);
+    try {
+      await updateProjectProviderCapacity(project.project_id, {
+        queue_mode: "paused",
+        max_running_jobs: project.provider_capacity.max_running_jobs,
+      });
+      await loadBoard();
+      setNotice("Paused new Codex launches. Active runs will continue until they finish.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Pause failed.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleResumeCycle() {
+    if (!project) {
+      return;
+    }
+    setPendingKey("resume-cycle");
+    setNotice(null);
+    try {
+      await updateProjectProviderCapacity(project.project_id, {
+        queue_mode: "running",
+        max_running_jobs: project.provider_capacity.max_running_jobs,
+      });
+      const result = await runOrchestratorPass(6, 4, true);
+      await loadBoard();
+      if (selectedTaskId) {
+        setDetail(await fetchCodexIssueDetail(selectedTaskId));
+      }
+      const started = result.provider_jobs_processed ?? 0;
+      setNotice(`Resumed execution. ${started} Codex run${started === 1 ? "" : "s"} started.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Resume failed.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
   return (
     <section className="codex-page">
       <header className="codex-page__header">
@@ -249,10 +304,26 @@ export function CodexWorkPage() {
           <button
             type="button"
             className="codex-button codex-button--primary"
-            disabled={pendingKey === "run-cycle"}
-            onClick={() => void handleRunCycle()}
+            disabled={pendingKey !== null}
+            onClick={() => {
+              if (runControl.mode === "pause") {
+                void handlePause();
+                return;
+              }
+              if (runControl.mode === "resume") {
+                void handleResumeCycle();
+                return;
+              }
+              void handleRunCycle();
+            }}
           >
-            {pendingKey === "run-cycle" ? "Running..." : "Run"}
+            {pendingKey === "run-cycle"
+              ? "Running..."
+              : pendingKey === "pause-cycle"
+                ? "Pausing..."
+                : pendingKey === "resume-cycle"
+                  ? "Resuming..."
+                  : runControl.label}
           </button>
         </div>
       </header>

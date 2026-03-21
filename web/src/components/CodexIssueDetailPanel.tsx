@@ -214,6 +214,7 @@ export function CodexIssueDetailPanel({
   const executionMode = runConsole?.execution_mode ?? latestRun?.execution_mode ?? null;
   const externalRuntime = runConsole?.external_runtime ?? latestRun?.external_runtime ?? null;
   const isSimulationRun = executionMode === "local_simulation";
+  const reviewDecision = detail?.review_decision ?? null;
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
   const selectedRunRecord = selectedRunDetail;
@@ -330,6 +331,11 @@ export function CodexIssueDetailPanel({
         <div className="codex-review-callout">
           <strong>{reviewSummary}</strong>
           <p>{consequenceSummary}</p>
+          {reviewDecision ? (
+            <div className="codex-review-note">
+              {reviewDecision.summary} {reviewDecision.detail}
+            </div>
+          ) : null}
           <div className="codex-review-facts">
             <div className="codex-review-fact">
               <span>Priority</span>

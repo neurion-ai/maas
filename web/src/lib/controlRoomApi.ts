@@ -886,6 +886,13 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
       artifacts: [],
       artifact_summary: ARTIFACTS_FALLBACK.summary,
       verification_runs: [],
+      review_decision: {
+        status: "unavailable",
+        batch_review_eligible: false,
+        auto_approve_eligible: false,
+        summary: "Issue review policy is unavailable.",
+        detail: "Review guidance could not be loaded from the backend.",
+      },
       git_workspace: null,
     },
     signal,

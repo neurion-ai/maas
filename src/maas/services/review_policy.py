@@ -147,20 +147,97 @@ def _is_brownfield_onboarding_review_task(connection, task_row):
     return onboarding.get("mode") == "brownfield" and task_row["title"] == BROWNFIELD_REVIEW_TASK_TITLE
 
 
-def should_auto_approve_after_verification(connection, task_row, verification_runs, project_policy):
+def evaluate_review_decision_state(connection, task_row, project_policy, verification_runs=None, failure_count=0, onboarding_mode=None):
     if task_row is None:
-        return False, "Task not found."
+        return {
+            "status": "unavailable",
+            "batch_review_eligible": False,
+            "auto_approve_eligible": False,
+            "summary": "Task not found.",
+            "detail": "The review policy could not be evaluated because the task record is missing.",
+        }
     if task_row["status"] != "review":
-        return False, "Task is not waiting in review."
-    if not project_policy.get("auto_approve_low_risk", False):
-        return False, "Auto-approve is disabled."
+        return {
+            "status": "not_in_review",
+            "batch_review_eligible": False,
+            "auto_approve_eligible": False,
+            "summary": "This issue is not currently waiting in review.",
+            "detail": "Review decisions only apply after Codex finishes a run and the issue moves into review.",
+        }
+    is_brownfield_onboarding_review = False
+    if onboarding_mode == "brownfield" and task_row["title"] == BROWNFIELD_REVIEW_TASK_TITLE:
+        is_brownfield_onboarding_review = True
+    elif connection is not None and task_row.get("project_id"):
+        is_brownfield_onboarding_review = _is_brownfield_onboarding_review_task(connection, task_row)
+    if is_brownfield_onboarding_review:
+        return {
+            "status": "manual_required",
+            "batch_review_eligible": False,
+            "auto_approve_eligible": False,
+            "summary": "Manual review is required.",
+            "detail": "Brownfield onboarding reviews must stay manual so imported understanding is explicitly approved by an operator.",
+        }
     if task_row["priority"] > project_policy["max_priority_for_auto_approve"]:
-        return False, "Priority is above the auto-approve threshold."
-    if _is_brownfield_onboarding_review_task(connection, task_row):
-        return False, "Brownfield onboarding reviews must stay manual."
+        return {
+            "status": "manual_required",
+            "batch_review_eligible": False,
+            "auto_approve_eligible": False,
+            "summary": "Manual review is required.",
+            "detail": "Priority is above the low-risk review threshold for batch or automatic approval.",
+        }
+    if failure_count:
+        return {
+            "status": "manual_required",
+            "batch_review_eligible": False,
+            "auto_approve_eligible": False,
+            "summary": "Manual review is required.",
+            "detail": "Issues with recorded failures stay manual even if Codex produced output.",
+        }
     if project_policy.get("require_verification_pass", True):
         if not verification_runs:
-            return False, "No verification evidence was recorded."
+            return {
+                "status": "manual_required",
+                "batch_review_eligible": False,
+                "auto_approve_eligible": False,
+                "summary": "Manual review is required.",
+                "detail": "No verification evidence was recorded, so the issue cannot be batch-decided or auto-approved.",
+            }
         if any(run.get("status") != "passed" for run in verification_runs):
-            return False, "One or more verification runs did not pass."
-    return True, "Low-risk verified work can auto-advance."
+            return {
+                "status": "manual_required",
+                "batch_review_eligible": False,
+                "auto_approve_eligible": False,
+                "summary": "Manual review is required.",
+                "detail": "One or more verification runs did not pass.",
+            }
+    auto_approve_enabled = project_policy.get("auto_approve_low_risk", False)
+    return {
+        "status": "low_risk_review",
+        "batch_review_eligible": True,
+        "auto_approve_eligible": auto_approve_enabled,
+        "summary": (
+            "Low-risk verified work can auto-advance."
+            if auto_approve_enabled
+            else "Low-risk verified work can be batch-reviewed."
+        ),
+        "detail": (
+            "Project policy would auto-approve this issue after verification."
+            if auto_approve_enabled
+            else "Project policy keeps this issue manual, but it still meets the low-risk batch-review rules."
+        ),
+    }
+
+
+def should_auto_approve_after_verification(connection, task_row, verification_runs, project_policy):
+    state = evaluate_review_decision_state(
+        connection,
+        task_row,
+        project_policy,
+        verification_runs=verification_runs,
+        failure_count=0,
+    )
+    if not project_policy.get("auto_approve_low_risk", False):
+        return False, "Auto-approve is disabled."
+    if not state["auto_approve_eligible"]:
+        return False, state["detail"]
+    return True, state["summary"]

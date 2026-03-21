@@ -5,10 +5,9 @@ import json
 import os
 
 from maas.constants import BOARD_COLUMNS
-from maas.services.bootstrap import BROWNFIELD_REVIEW_TASK_TITLE
 from maas.services.codex_mvp import issue_key_lookup
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
-from maas.services.review_policy import review_policy_from_row
+from maas.services.review_policy import evaluate_review_decision_state, review_policy_from_row
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
 from maas.services.verification import fetch_latest_verification_by_task
 
@@ -178,19 +177,19 @@ def _operator_bucket_for_card(card):
 
 
 def _batch_review_eligibility(card, project_operator_config):
-    if card["status"] != "review":
-        return False, "Only review issues can be batch-decided."
-    if card["title"] == BROWNFIELD_REVIEW_TASK_TITLE and project_operator_config.get("onboarding_mode") == "brownfield":
-        return False, "Brownfield onboarding reviews must stay manual."
-
-    policy = project_operator_config.get("review_policy") or review_policy_from_row(None)
-    if card["priority"] > policy["max_priority_for_auto_approve"]:
-        return False, "Priority is above the low-risk batch-review threshold."
-    if card.get("failure_count"):
-        return False, "Issues with recorded failures must stay manual."
-    if policy.get("require_verification_pass", True) and card.get("latest_verification_status") != "passed":
-        return False, "A passing verification is required before batch review."
-    return True, "Eligible for low-risk batch review."
+    state = evaluate_review_decision_state(
+        None,
+        {
+            "status": card["status"],
+            "title": card["title"],
+            "priority": card["priority"],
+        },
+        project_operator_config.get("review_policy") or review_policy_from_row(None),
+        verification_runs=([{"status": "passed"}] if card.get("latest_verification_status") == "passed" else []),
+        failure_count=card.get("failure_count", 0),
+        onboarding_mode=project_operator_config.get("onboarding_mode"),
+    )
+    return state["batch_review_eligible"], state["detail"]
 
 
 def fetch_board(connection, filters=None, project_id=None):

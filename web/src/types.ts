@@ -1517,6 +1517,13 @@ export interface CodexIssueDetailResponse {
   artifacts: ArtifactItem[];
   artifact_summary: ArtifactsResponse["summary"];
   verification_runs: VerificationRun[];
+  review_decision?: {
+    status: string;
+    batch_review_eligible: boolean;
+    auto_approve_eligible: boolean;
+    summary: string;
+    detail: string;
+  };
   git_workspace?: {
     workspace_id: string;
     task_id: string;

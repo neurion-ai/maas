@@ -6,6 +6,7 @@ import os
 
 from maas.services.artifacts import fetch_artifacts
 from maas.services.git_workspaces import fetch_task_git_workspace
+from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
 
@@ -790,6 +791,23 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
     run_console = _issue_run_console(connection, project_paths, project_id, task_id, runs)
     history = fetch_incident_timeline(connection, project_id=project_id, task_id=task_id, limit=30, order="desc")["events"]
     verification_runs = fetch_verification_runs(connection, project_id=project_id, task_id=task_id, limit=10)
+    failure_count_row = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM failure_log
+        WHERE project_id = ?
+          AND task_id = ?
+        """,
+        (project_id, task_id),
+    ).fetchone()
+    project_policy = fetch_project_review_policy(connection, project_id)
+    review_decision = evaluate_review_decision_state(
+        connection,
+        dict(task_row),
+        project_policy,
+        verification_runs=verification_runs,
+        failure_count=(failure_count_row["count"] if failure_count_row else 0),
+    )
     git_workspace = fetch_task_git_workspace(connection, task_id)
     artifact_payload = fetch_artifacts(
         connection,
@@ -832,5 +850,6 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "artifacts": artifact_payload["items"],
         "artifact_summary": artifact_payload["summary"],
         "verification_runs": verification_runs,
+        "review_decision": review_decision,
         "git_workspace": git_workspace,
     }

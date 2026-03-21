@@ -99,12 +99,21 @@ class CodexMvpApiTest(unittest.TestCase):
             review_items = {item["task_id"]: item for item in payload["queue"]["review"]["items"]}
             self.assertTrue(review_items[review_task["task_id"]]["batch_review_eligible"])
             self.assertFalse(review_items[high_priority_review["task_id"]]["batch_review_eligible"])
-            self.assertEqual(review_items[high_priority_review["task_id"]]["batch_review_reason"], "Priority is above the low-risk batch-review threshold.")
+            self.assertEqual(
+                review_items[high_priority_review["task_id"]]["batch_review_reason"],
+                "Priority is above the low-risk review threshold for batch or automatic approval.",
+            )
 
             failure_task_ids = {item["task_id"] for item in payload["queue"]["blocked_failures"]["items"]}
             dependency_task_ids = {item["task_id"] for item in payload["queue"]["blocked_dependencies"]["items"]}
             self.assertIn(blocked_failure["task_id"], failure_task_ids)
             self.assertIn(blocked_dependency["task_id"], dependency_task_ids)
+
+            detail_response = client.get(f"/api/issues/{review_task['task_id']}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertEqual(detail_payload["review_decision"]["status"], "low_risk_review")
+            self.assertTrue(detail_payload["review_decision"]["batch_review_eligible"])
 
     def test_run_index_lists_recent_runs_with_state_details(self):
         with tempfile.TemporaryDirectory() as tmpdir:

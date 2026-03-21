@@ -29,6 +29,8 @@ For the current Codex MVP hardening sequence, see [13-codex-mvp-hardening-plan.m
 
 For the next operator-value and capability batch, see [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md).
 
+For the current autonomy-scale follow-up batch, see [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -76,6 +78,15 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#185` Agent execution truth and stuck-run diagnostics
 - [x] `#186` Verification-driven review policy and auto-advance
 - [x] `#187` Projects shell unification and clean-start flow
+- [x] `#188` First-class run page and replay foundation
+- [x] `#189` Safe interruption and drain/resume surface
+- [ ] `#190` Exception-first `Issues` v2
+- [ ] `#191` Memory and retrieval foundation
+- [ ] `#192` Policy-driven autonomy v2
+- [ ] `#193` Project lifecycle simplification
+- [ ] `#194` Stuck-run and stale-agent diagnostics
+- [ ] `#195` Multi-project supervision pass
+- [ ] `#196` Notifications and async operator loop
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

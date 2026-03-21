@@ -18,7 +18,7 @@ from maas.services.artifacts import (
     resolve_artifact_download,
 )
 from maas.services.board import fetch_board
-from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail
+from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail, fetch_runs
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -67,6 +67,7 @@ from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
     dismiss_quarantine_entry,
+    cancel_run,
     recover_and_requeue_task,
     finish_task_replan,
     halt_task,
@@ -918,6 +919,31 @@ def create_app(project_root="."):
             if payload is None:
                 raise HTTPException(status_code=404, detail="run not found")
             return payload
+        finally:
+            connection.close()
+
+    @app.get("/api/runs")
+    def run_index(project_id: str = None, limit: int = 200, status: str = "", search: str = ""):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_runs(
+                connection,
+                scoped_project_id,
+                limit=int(limit),
+                status=status or None,
+                search=search or None,
+            )
+        finally:
+            connection.close()
+
+    @app.post("/api/runs/{session_id}/actions/cancel")
+    def run_cancel_action(session_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return cancel_run(connection, session_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 

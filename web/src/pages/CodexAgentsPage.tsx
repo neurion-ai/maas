@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
+import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
 import { assignNextTask, fetchAgentRoster, fetchCodexAgentDetail, fetchCodexRunDetail, recoverAgent } from "../lib/controlRoomApi";
 import { formatTimestamp } from "../lib/codexMvp";
+import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { AgentRosterEntry, CodexAgentDetailResponse, CodexRunDetailResponse } from "../types";
 
-type ViewTarget = "work" | "issues" | "agents" | "system" | "projects" | "command";
+type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command";
 
 function formatHeartbeat(seconds?: number | null) {
   if (seconds == null) {
@@ -246,47 +248,35 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
                   <span>{selectedRunDetail ? selectedRunDetail.status.replaceAll("_", " ") : "none"}</span>
                 </div>
                 {selectedRunDetail ? (
-                <div className="codex-review-callout">
-                  <strong>{selectedRunDetail.status_message ?? "No runtime summary recorded."}</strong>
-                    <p>
-                      {selectedRunDetail.task_title ?? selectedRunDetail.task_id ?? "Unlinked issue"} ·{" "}
-                      {selectedRunDetail.provider_type.replaceAll("_", " ")} · {selectedRunDetail.execution_mode?.replaceAll("_", " ") ?? "unknown mode"} ·{" "}
-                      started {formatTimestamp(selectedRunDetail.started_at)}
-                    </p>
-                    <div className="codex-review-facts">
-                      <div className="codex-review-fact">
-                        <span>Status</span>
-                        <strong>{selectedRunDetail.status.replaceAll("_", " ")}</strong>
-                      </div>
-                      <div className="codex-review-fact">
-                        <span>Progress</span>
-                        <strong>{selectedRunDetail.progress_pct ?? 0}%</strong>
-                      </div>
-                      <div className="codex-review-fact">
-                        <span>Heartbeat</span>
-                        <strong>{selectedRunDetail.last_heartbeat_at ? formatTimestamp(selectedRunDetail.last_heartbeat_at) : "No heartbeat"}</strong>
-                      </div>
-                    </div>
-                    {selectedRunDetail.output_preview?.content ? (
-                      <pre className="codex-output-preview__content">{selectedRunDetail.output_preview.content}</pre>
-                    ) : (
-                      <div className="codex-empty-copy">No runtime output preview is available for this run yet.</div>
-                    )}
-                    {selectedRunDetail.task_id ? (
-                      <div className="codex-detail-actions">
+                  <CodexRunDetailCard
+                    run={selectedRunDetail}
+                    actions={
+                      <>
+                        {selectedRunDetail.task_id ? (
+                          <button
+                            type="button"
+                            className="codex-button codex-button--primary"
+                            onClick={() => {
+                              setPendingTaskFocus(selectedRunDetail.task_id!);
+                              onNavigate("work");
+                            }}
+                          >
+                            Open issue
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="codex-button"
                           onClick={() => {
-                            setPendingTaskFocus(selectedRunDetail.task_id!);
-                            onNavigate("work");
+                            setPendingRunFocus(selectedRunDetail.session_id);
+                            onNavigate("runs");
                           }}
                         >
-                          Open issue
+                          Open run page
                         </button>
-                      </div>
-                    ) : null}
-                  </div>
+                      </>
+                    }
+                  />
                 ) : (
                   <div className="codex-empty-copy">Select a run to inspect its runtime output and status.</div>
                 )}

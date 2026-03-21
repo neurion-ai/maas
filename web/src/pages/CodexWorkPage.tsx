@@ -11,6 +11,7 @@ import { useThrottledLivePulse } from "../lib/useLivePulse";
 import type { BoardTask, CodexIssueDetailResponse, PortfolioProject } from "../types";
 
 type WorkViewMode = "list" | "board";
+type ViewTarget = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects";
 
 const RUN_CONTROL_MIN_PENDING_MS = 900;
 
@@ -38,7 +39,7 @@ function nextVisibleTaskId(currentTaskId: string | null, openTasks: BoardTask[],
   return openTasks[0]?.task_id ?? doneTasks[0]?.task_id ?? null;
 }
 
-export function CodexWorkPage() {
+export function CodexWorkPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [viewMode, setViewMode] = useState<WorkViewMode>("board");
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [resolvedTasks, setResolvedTasks] = useState<BoardTask[]>([]);
@@ -577,6 +578,7 @@ export function CodexWorkPage() {
           issueKeyMap={keyMap}
           actions={detailActions}
           onSelectTask={setSelectedTaskId}
+          onNavigate={onNavigate}
         />
       </div>
     </section>

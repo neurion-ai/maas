@@ -1303,6 +1303,8 @@ export interface CodexRunDetailResponse {
   session_id: string;
   task_id?: string | null;
   task_title?: string | null;
+  task_status?: string | null;
+  task_review_state?: string | null;
   issue_key?: string | null;
   agent_id?: string | null;
   agent_name?: string | null;
@@ -1313,16 +1315,21 @@ export interface CodexRunDetailResponse {
   progress_pct?: number | null;
   status_message?: string | null;
   last_heartbeat_at?: string | null;
+  heartbeat_age_seconds?: number | null;
   started_at: string;
   ended_at?: string | null;
+  run_age_seconds?: number | null;
   is_live: boolean;
+  is_stale?: boolean;
+  diagnostic_summary?: string | null;
+  recommended_action?: string | null;
   timeout_seconds?: number | null;
   command?: string[] | null;
   runtime_root?: string | null;
   output_preview?: CodexRunConsolePreview | null;
   stdout_preview?: CodexRunConsolePreview | null;
   stderr_preview?: CodexRunConsolePreview | null;
-  activity: TimelineEvent[];
+  activity: CodexRunConsoleActivityItem[];
   artifacts: ArtifactItem[];
   artifact_summary?: {
     total_artifacts: number;
@@ -1332,6 +1339,49 @@ export interface CodexRunDetailResponse {
     external_artifacts: number;
     missing_files: number;
   };
+}
+
+export interface CodexRunListItem {
+  session_id: string;
+  task_id?: string | null;
+  task_title?: string | null;
+  task_status?: string | null;
+  task_review_state?: string | null;
+  issue_key?: string | null;
+  goal_id?: string | null;
+  goal_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  provider_type: string;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
+  status: string;
+  progress_pct?: number | null;
+  status_message?: string | null;
+  last_heartbeat_at?: string | null;
+  heartbeat_age_seconds?: number | null;
+  started_at: string;
+  ended_at?: string | null;
+  run_age_seconds?: number | null;
+  is_live: boolean;
+  is_stale: boolean;
+  diagnostic_summary?: string | null;
+  recommended_action?: string | null;
+  artifact_count: number;
+  failure_count: number;
+}
+
+export interface CodexRunIndexResponse {
+  summary: {
+    total_runs: number;
+    active_runs: number;
+    failed_runs: number;
+    timed_out_runs: number;
+    cancelled_runs: number;
+    completed_runs: number;
+    stale_runs: number;
+  };
+  items: CodexRunListItem[];
 }
 
 export interface CodexRunConsoleActivityItem {

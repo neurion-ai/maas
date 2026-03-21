@@ -9,6 +9,7 @@ import type {
   ArtifactsResponse,
   CodexAgentDetailResponse,
   CodexIssueDetailResponse,
+  CodexRunIndexResponse,
   CodexRunDetailResponse,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
@@ -39,6 +40,7 @@ import type {
 import { appendProjectScope, getSelectedProjectId } from "./projectScope";
 
 const lastSuccessfulResponses = new Map<string, unknown>();
+const DEFAULT_ACTOR_ID = "agent_allocator";
 
 const OVERVIEW_FALLBACK: OverviewResponse = {
   project: {
@@ -909,6 +911,47 @@ export function fetchCodexRunDetail(sessionId: string, signal?: AbortSignal, onF
     signal,
     onFallback
   );
+}
+
+export function fetchCodexRuns(
+  filters: { limit?: number; status?: string; search?: string } = {},
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const params = new URLSearchParams();
+  if (filters.limit != null) {
+    params.set("limit", String(filters.limit));
+  }
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+  if (filters.search) {
+    params.set("search", filters.search);
+  }
+  const path = params.toString() ? `/api/runs?${params.toString()}` : "/api/runs";
+  return fetchJson<CodexRunIndexResponse>(
+    path,
+    {
+      summary: {
+        total_runs: 0,
+        active_runs: 0,
+        failed_runs: 0,
+        timed_out_runs: 0,
+        cancelled_runs: 0,
+        completed_runs: 0,
+        stale_runs: 0,
+      },
+      items: [],
+    },
+    signal,
+    onFallback
+  );
+}
+
+export async function cancelCodexRun(sessionId: string) {
+  return postJson(`/api/runs/${sessionId}/actions/cancel`, {
+    actor_id: DEFAULT_ACTOR_ID,
+  });
 }
 
 export function fetchCodexAgentDetail(agentId: string, signal?: AbortSignal, onFallback?: () => void) {

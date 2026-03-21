@@ -3,6 +3,7 @@ import { fetchArtifactDetail, fetchCodexRunDetail } from "../lib/controlRoomApi"
 import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview, CodexRunDetailResponse } from "../types";
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
+import { setPendingRunFocus } from "../lib/runFocus";
 
 function formatExecutionModeLabel(value?: string | null) {
   if (!value) {
@@ -89,12 +90,14 @@ export function CodexIssueDetailPanel({
   issueKeyMap,
   actions,
   onSelectTask,
+  onNavigate,
 }: {
   task: BoardTask | null;
   detail: CodexIssueDetailResponse | null;
   issueKeyMap: Map<string, string>;
   actions?: ReactNode;
   onSelectTask?: (taskId: string) => void;
+  onNavigate?: (view: "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command") => void;
 }) {
   const latestArtifactSummary = useMemo(() => {
     if (!detail?.artifacts.length) {
@@ -404,6 +407,20 @@ export function CodexIssueDetailPanel({
             {renderConsolePreview("Stderr", runConsole.stderr_preview ?? null)}
             {renderConsolePreview("Stdout", runConsole.stdout_preview ?? null)}
           </div>
+          {onNavigate ? (
+            <div className="codex-detail-actions">
+              <button
+                type="button"
+                className="codex-button"
+                onClick={() => {
+                  setPendingRunFocus(runConsole.session_id);
+                  onNavigate("runs");
+                }}
+              >
+                Open run page
+              </button>
+            </div>
+          ) : null}
 
           <div className="codex-section-heading">
             <strong>Session activity</strong>
@@ -556,6 +573,20 @@ export function CodexIssueDetailPanel({
               {renderConsolePreview("Stderr", selectedRunRecord.stderr_preview ?? null)}
               {renderConsolePreview("Stdout", selectedRunRecord.stdout_preview ?? null)}
             </div>
+            {onNavigate ? (
+              <div className="codex-detail-actions">
+                <button
+                  type="button"
+                  className="codex-button"
+                  onClick={() => {
+                    setPendingRunFocus(selectedRunRecord.session_id);
+                    onNavigate("runs");
+                  }}
+                >
+                  Open run page
+                </button>
+              </div>
+            ) : null}
             <div className="codex-section-heading">
               <strong>Run-scoped artifacts</strong>
               <span>{selectedRunRecord.artifacts.length}</span>

@@ -59,6 +59,8 @@ The current hardening and truthfulness pass for the integrated Codex MVP is docu
 
 The next operator-value and capability batch is documented in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md).
 
+The current autonomy-scale follow-up batch is documented in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md).
+
 The current integration branch replaces the old shell with real `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects` surfaces in the React app, backed by stable issue identity, issue detail read models, agent detail read models, and Codex-oriented system views.
 
 The frontend reset document for rebuilding the product from scratch is in [docs/implementation/10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).

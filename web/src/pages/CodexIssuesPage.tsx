@@ -11,6 +11,7 @@ import { useLivePulse } from "../lib/useLivePulse";
 import type { BoardTask, CodexIssueDetailResponse, FailureItem } from "../types";
 
 type IssuesTab = "queue" | "resolved";
+type ViewTarget = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects";
 
 function issueLabel(task: BoardTask, fallbackKeys: Map<string, string>) {
   return task.issue_key ?? fallbackKeys.get(task.task_id) ?? task.task_id;
@@ -23,7 +24,7 @@ function nextVisibleTaskId(currentTaskId: string | null, openTasks: BoardTask[],
   return openTasks[0]?.task_id ?? resolvedTasks[0]?.task_id ?? null;
 }
 
-export function CodexIssuesPage() {
+export function CodexIssuesPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [issuesTab, setIssuesTab] = useState<IssuesTab>("queue");
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [resolved, setResolved] = useState<BoardTask[]>([]);
@@ -475,6 +476,7 @@ export function CodexIssuesPage() {
           issueKeyMap={keyMap}
           actions={detailActions}
           onSelectTask={setSelectedTaskId}
+          onNavigate={onNavigate}
         />
       </div>
     </section>

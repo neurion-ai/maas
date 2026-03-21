@@ -12,13 +12,14 @@ import { LivePulseProvider, useLiveStatus, useThrottledLivePulse } from "./lib/u
 import { CommandPage } from "./pages/CommandPage";
 import { CodexAgentsPage } from "./pages/CodexAgentsPage";
 import { CodexIssuesPage } from "./pages/CodexIssuesPage";
+import { CodexRunsPage } from "./pages/CodexRunsPage";
 import { CodexSystemPage } from "./pages/CodexSystemPage";
 import { CodexWorkPage } from "./pages/CodexWorkPage";
 import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import type { ProjectSummary } from "./types";
 
-type View = "command" | "work" | "issues" | "agents" | "system" | "projects" | "settings";
+type View = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
 type ThemeMode = "light" | "dark";
 
 const THEME_STORAGE_KEY = "maas:theme";
@@ -43,6 +44,11 @@ const PRIMARY_VIEWS: Array<{ id: Exclude<View, "settings">; label: string; summa
     id: "agents",
     label: "Agents",
     summary: "Which agent owns what, what is healthy, and what changed recently."
+  },
+  {
+    id: "runs",
+    label: "Runs",
+    summary: "Live Codex execution, run traces, stale-run diagnostics, and safe stop/replay actions."
   },
   {
     id: "system",
@@ -407,9 +413,10 @@ function AppShell() {
 
         <div className="codex-shell__content">
           {activeView === "command" ? <CommandPage key={`command:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
-          {activeView === "work" ? <CodexWorkPage key={`work:${activeProject?.project_id ?? "none"}`} /> : null}
-          {activeView === "issues" ? <CodexIssuesPage key={`issues:${activeProject?.project_id ?? "none"}`} /> : null}
+          {activeView === "work" ? <CodexWorkPage key={`work:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
+          {activeView === "issues" ? <CodexIssuesPage key={`issues:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
           {activeView === "agents" ? <CodexAgentsPage key={`agents:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
+          {activeView === "runs" ? <CodexRunsPage key={`runs:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
           {activeView === "system" ? <CodexSystemPage key={`system:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
           {activeView === "projects" ? (
             <ProjectsPage

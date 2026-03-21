@@ -38,6 +38,7 @@ See:
 - [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md)
 - [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md)
 - [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md)
+- [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend

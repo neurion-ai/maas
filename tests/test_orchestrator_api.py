@@ -97,6 +97,91 @@ class OrchestratorApiTest(unittest.TestCase):
             self.assertEqual(job_row["status"], "completed")
             self.assertIsNotNone(job_row["session_id"])
 
+    def test_orchestrator_does_not_auto_approve_review_items_with_failure_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(
+                tmpdir,
+                name="Orchestrator Review Failure Guard Test",
+                description="orchestrator review failure guard test",
+                project_type="custom",
+            )
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task = connection.execute(
+                    """
+                    SELECT task_id, assigned_agent_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_auto_approve.py', 'passed', 0, '1 passed',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), project_id, task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES (?, ?, ?, NULL, ?, 'session_failed', 'Prior run failed', '{}')
+                    """,
+                    (generate_id("fail"), project_id, task["task_id"], task["assigned_agent_id"]),
+                )
+                connection.execute(
+                    """
+                    UPDATE projects
+                    SET config_json = json_set(
+                        config_json,
+                        '$.review_policy.auto_approve_low_risk', json('true'),
+                        '$.review_policy.max_priority_for_auto_approve', 60,
+                        '$.review_policy.require_verification_pass', json('true')
+                    )
+                    WHERE project_id = ?
+                    """,
+                    (project_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/orchestrator/run",
+                json={"allocate_limit": 0, "provider_job_limit": 0, "auto_launch_assigned_work": False},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["auto_approved_reviews"], 0)
+
+            connection = connect(paths)
+            try:
+                task_row = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task_row["status"], "review")
+            self.assertEqual(task_row["review_state"], "review_requested")
+
     def test_orchestrator_run_processes_provider_jobs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             result = bootstrap_project(

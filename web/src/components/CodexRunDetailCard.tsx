@@ -73,6 +73,7 @@ export function CodexRunDetailCard({
 
       <div className="codex-review-callout">
         <strong>{run.status_message ?? "No runtime summary recorded."}</strong>
+        {run.current_step ? <p>Current step: {run.current_step}</p> : null}
         <p>
           {run.agent_name ?? run.agent_id ?? "Unknown agent"} via {run.provider_type.replaceAll("_", " ")} ·{" "}
           {formatExecutionModeLabel(run.execution_mode)} · started {formatTimestamp(run.started_at)}
@@ -108,6 +109,47 @@ export function CodexRunDetailCard({
       </div>
 
       {actions ? <div className="codex-detail-actions">{actions}</div> : null}
+
+      {run.phases?.length ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Run phases</strong>
+            <span>{run.phases.length}</span>
+          </div>
+          <div className="codex-history-list">
+            {run.phases.map((phase) => (
+              <div key={phase.key} className="codex-history-item">
+                <div className="codex-history-item__meta">
+                  <strong>{phase.label}</strong>
+                  <span>{phase.timestamp ? formatTimestamp(phase.timestamp) : phase.status}</span>
+                </div>
+                <span>{phase.description ?? "No event recorded for this phase yet."}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      {run.memory_context?.length ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Injected memory</strong>
+            <span>{run.memory_context.length}</span>
+          </div>
+          <div className="codex-relationship-list">
+            {run.memory_context.map((entry) => (
+              <div key={entry.artifact_id} className="codex-related-item">
+                <div className="codex-related-item__meta">
+                  <span>{entry.artifact_id}</span>
+                  <span>score {entry.score ?? 0}</span>
+                </div>
+                <strong>{entry.title ?? entry.artifact_id}</strong>
+                <span>{entry.summary ?? "No summary recorded."}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <div className="codex-detail-stack">
         {renderPreview("Runtime output", run.output_preview)}

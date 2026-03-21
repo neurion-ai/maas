@@ -118,6 +118,12 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
       </header>
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+      {runtimeDiagnostics?.execution_state ? (
+        <div className="codex-banner codex-banner--info">
+          <strong>{runtimeDiagnostics.execution_state.summary}</strong>
+          <span>{runtimeDiagnostics.execution_state.detail}</span>
+        </div>
+      ) : null}
 
       <div className="codex-metric-grid">
         <article className="codex-panel codex-stat">

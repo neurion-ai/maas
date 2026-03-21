@@ -39,6 +39,7 @@ See:
 - [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md)
 - [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md)
 - [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md)
+- [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend
@@ -162,6 +163,14 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#194` is implemented on `codex/codex-mvp-autonomy-scale`
 - [x] `#195` is implemented on `codex/codex-mvp-autonomy-scale`
 - [x] `#196` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#197` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#198` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#199` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#200` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#201` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#202` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#203` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#204` is implemented on `codex/codex-mvp-autopilot-memory`
 
 ## Extended Numbered Roadmap
 
@@ -251,7 +260,8 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] The current dense-control-room branch goes further by replacing the oversized hero/dashboard posture with a compact operator cockpit: top status strip, agent rail, dense kanban, incident rail, curated ticker, and selected-task evidence inspector.
 - [x] The current Codex-MVP integration branch now replaces that shell in the real app with `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects`, backed by stable issue identity plus issue-detail and agent-detail aggregates.
 - [x] The hardening batch on `main` now makes run posture, review detail, live-vs-simulated truth, project lifecycle, and agent layout materially more honest under real use.
-- [ ] The next highest-value gaps are deeper detached-worker lease safety, richer run replay/phase modeling, broader saved-scope ergonomics, higher-confidence batch review policy, and a truer project reset flow.
+- [x] The current autopilot-and-memory batch now adds always-on project loops, template-backed project creation, artifact-to-memory promotion, retrieval-backed Codex prompts, backend-owned batch review, and more truthful execution-state diagnostics.
+- [ ] The next highest-value gaps are deeper live Codex streaming, richer recovery playbooks, stronger memory governance, and broader low-touch autonomy under real long-running load.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`

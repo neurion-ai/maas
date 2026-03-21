@@ -26,6 +26,7 @@ from maas.services.provider_jobs import (
     start_provider_job,
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
+from maas.services.memory import build_task_prompt
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.queue_capacity import can_start_provider_jobs
 from maas.services.runtime_quotas import ensure_runtime_quotas_allow_provider_run
@@ -526,23 +527,6 @@ def _rollback_untracked_artifact(artifact_full_path, artifact_existed_before_run
         return
 
 
-def _task_prompt(connection, task_id):
-    row = connection.execute(
-        """
-        SELECT title, description
-        FROM tasks
-        WHERE task_id = ?
-        """,
-        (task_id,),
-    ).fetchone()
-    if row is None:
-        return "Complete task {0} and summarize the result.".format(task_id)
-    description = (row["description"] or "").strip()
-    if description:
-        return "Task: {0}\n\nContext:\n{1}\n\nReturn a concise completion summary.".format(row["title"], description)
-    return "Task: {0}\n\nReturn a concise completion summary.".format(row["title"])
-
-
 def _runtime_console_paths(runtime_envelope):
     return {
         "output_path": os.path.join(runtime_envelope["root"], "runtime-output.txt"),
@@ -891,7 +875,9 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     ensure_runtime_quotas_allow_provider_run(connection, project_id, task_id, effective_mode)
     claude_cli_enabled = effective_mode == "claude_cli"
     codex_cli_enabled = effective_mode == "codex_cli"
-    task_prompt = _task_prompt(connection, task_id) if (claude_cli_enabled or codex_cli_enabled) else None
+    prompt_payload = build_task_prompt(connection, task_id) if (claude_cli_enabled or codex_cli_enabled) else None
+    task_prompt = prompt_payload["prompt"] if prompt_payload else None
+    memory_context = prompt_payload["memory_context"] if prompt_payload else []
 
     artifact_full_path = _resolve_artifact_path(project_paths, provider_type, task_id, artifact_path)
     artifact_existed_before_run = os.path.exists(artifact_full_path)
@@ -972,6 +958,21 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_path=artifact_full_path,
             **extra_activity_details
         )
+        if memory_context:
+            log_activity(
+                connection,
+                project_id=project_id,
+                agent_id=agent_id,
+                task_id=task_id,
+                action="memory_context_loaded",
+                category="memory",
+                description="Loaded promoted project memory into the live provider prompt.",
+                details={
+                    "session_id": session_id,
+                    "memory_items": memory_context,
+                    "memory_count": len(memory_context),
+                },
+            )
         heartbeat(connection, session_id, 60, execution_summary_label)
         _log_provider_phase(
             connection,

@@ -35,6 +35,139 @@ DEFAULT_PROVIDER_SETTINGS = {
 }
 
 
+DEFAULT_AUTOPILOT_SETTINGS = {
+    "enabled": False,
+    "interval_seconds": 20,
+    "allocate_limit": 6,
+    "provider_job_limit": 4,
+    "auto_launch_assigned_work": True,
+    "process_notifications": True,
+    "notification_batch_limit": 5,
+}
+
+
+PROJECT_TEMPLATES = [
+    {
+        "id": "scratch-codex",
+        "name": "Scratch Codex workspace",
+        "description": "Fresh greenfield workspace with live-ready Codex defaults and low operator friction.",
+        "mode": "greenfield",
+        "project_type": "custom",
+        "create_source_root": True,
+        "overrides": {
+            "provider_capacity": {
+                "queue_mode": "running",
+                "max_running_jobs": 2,
+                "preferred_provider_id": "openai_codex",
+            },
+            "review_policy": {
+                "auto_approve_low_risk": True,
+                "max_priority_for_auto_approve": 69,
+                "require_verification_pass": True,
+            },
+            "autopilot": {
+                "enabled": False,
+                "interval_seconds": 20,
+                "allocate_limit": 6,
+                "provider_job_limit": 4,
+                "auto_launch_assigned_work": True,
+                "process_notifications": True,
+                "notification_batch_limit": 5,
+            },
+        },
+    },
+    {
+        "id": "import-codex",
+        "name": "Import existing repo",
+        "description": "Brownfield import tuned for repo discovery, manual onboarding review, and live Codex follow-up.",
+        "mode": "brownfield",
+        "project_type": "custom",
+        "create_source_root": False,
+        "overrides": {
+            "provider_capacity": {
+                "queue_mode": "running",
+                "max_running_jobs": 2,
+                "preferred_provider_id": "openai_codex",
+            },
+            "review_policy": {
+                "auto_approve_low_risk": False,
+                "max_priority_for_auto_approve": 0,
+                "require_verification_pass": True,
+            },
+            "autopilot": {
+                "enabled": False,
+                "interval_seconds": 20,
+                "allocate_limit": 6,
+                "provider_job_limit": 4,
+                "auto_launch_assigned_work": True,
+                "process_notifications": True,
+                "notification_batch_limit": 5,
+            },
+        },
+    },
+    {
+        "id": "research-loop",
+        "name": "Research loop",
+        "description": "Longer-running Codex project with conservative review and more queued parallelism.",
+        "mode": "greenfield",
+        "project_type": "research",
+        "create_source_root": True,
+        "overrides": {
+            "provider_capacity": {
+                "queue_mode": "running",
+                "max_running_jobs": 3,
+                "preferred_provider_id": "openai_codex",
+            },
+            "review_policy": {
+                "auto_approve_low_risk": True,
+                "max_priority_for_auto_approve": 55,
+                "require_verification_pass": True,
+            },
+            "autopilot": {
+                "enabled": False,
+                "interval_seconds": 30,
+                "allocate_limit": 8,
+                "provider_job_limit": 4,
+                "auto_launch_assigned_work": True,
+                "process_notifications": True,
+                "notification_batch_limit": 8,
+            },
+        },
+    },
+]
+
+
+def _deep_merge(base, overrides):
+    merged = deepcopy(base)
+    for key, value in (overrides or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
+def list_project_templates():
+    return [
+        {
+            "id": template["id"],
+            "name": template["name"],
+            "description": template["description"],
+            "mode": template["mode"],
+            "project_type": template["project_type"],
+            "create_source_root": template["create_source_root"],
+        }
+        for template in PROJECT_TEMPLATES
+    ]
+
+
+def resolve_project_template(template_id):
+    for template in PROJECT_TEMPLATES:
+        if template["id"] == template_id:
+            return deepcopy(template)
+    raise ValueError("project template not found")
+
+
 def build_default_project_config(
     name,
     description,
@@ -122,6 +255,7 @@ def build_default_project_config(
             "max_running_jobs": 2,
             "preferred_provider_id": "openai_codex",
         },
+        "autopilot": deepcopy(DEFAULT_AUTOPILOT_SETTINGS),
         "review_policy": {
             "auto_approve_low_risk": True,
             "max_priority_for_auto_approve": 69,
@@ -138,6 +272,35 @@ def build_default_project_config(
             "max_task_session_attempts": 0,
         },
     }
+
+
+def build_project_config_from_template(
+    template_id,
+    name,
+    description,
+    project_type,
+    onboarding_mode="greenfield",
+    discovery_summary=None,
+    source_root=None,
+):
+    template = resolve_project_template(template_id)
+    config = build_default_project_config(
+        name=name,
+        description=description,
+        project_type=project_type or template.get("project_type") or DEFAULT_PROJECT_TYPE,
+        onboarding_mode=onboarding_mode or template.get("mode") or "greenfield",
+        discovery_summary=discovery_summary,
+        source_root=source_root,
+    )
+    config = _deep_merge(config, template.get("overrides") or {})
+    project_block = dict(config.get("project") or {})
+    project_block["name"] = name
+    project_block["description"] = description
+    project_block["type"] = project_type or template.get("project_type") or DEFAULT_PROJECT_TYPE
+    project_block["source_root"] = source_root or ""
+    project_block["template_id"] = template["id"]
+    config["project"] = project_block
+    return config
 
 
 def load_project_config(path):

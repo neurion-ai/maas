@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchArtifactDetail, fetchCodexRunDetail } from "../lib/controlRoomApi";
+import { fetchArtifactDetail, fetchCodexRunDetail, promoteArtifactToMemory } from "../lib/controlRoomApi";
 import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview, CodexRunDetailResponse } from "../types";
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
@@ -127,6 +127,12 @@ export function CodexIssueDetailPanel({
   }, [detail]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [memoryNotice, setMemoryNotice] = useState<string | null>(null);
+  const [promotingMemory, setPromotingMemory] = useState(false);
+  const [artifactLoadFailed, setArtifactLoadFailed] = useState(false);
+  const [promotedMemoryItems, setPromotedMemoryItems] = useState<
+    NonNullable<CodexIssueDetailResponse["memory_context"]>
+  >([]);
   const selectedArtifactSummary = useMemo(() => {
     if (!detail?.artifacts.length) {
       return null;
@@ -143,22 +149,28 @@ export function CodexIssueDetailPanel({
   useEffect(() => {
     setSelectedArtifactId(latestArtifactSummary?.artifact_id ?? null);
     setSelectedRunId(latestRun?.session_id ?? null);
+    setMemoryNotice(null);
+    setArtifactLoadFailed(false);
+    setPromotedMemoryItems([]);
   }, [latestArtifactSummary?.artifact_id, latestRun?.session_id, task?.task_id]);
 
   useEffect(() => {
     if (!primaryArtifactId) {
       setPrimaryArtifact(null);
+      setArtifactLoadFailed(false);
       return;
     }
     setPrimaryArtifact(null);
+    setArtifactLoadFailed(false);
     const controller = new AbortController();
     void fetchArtifactDetail(primaryArtifactId, controller.signal)
       .then((payload) => setPrimaryArtifact(payload))
       .catch((error) => {
         if (!(error instanceof Error && error.name === "AbortError")) {
           setPrimaryArtifact(null);
+          setArtifactLoadFailed(true);
         }
-    });
+      });
     return () => controller.abort();
   }, [primaryArtifactId]);
 
@@ -218,6 +230,15 @@ export function CodexIssueDetailPanel({
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
   const selectedRunRecord = selectedRunDetail;
+  const recoveryPlaybook = detail?.recovery_playbook ?? null;
+  const memoryContext = useMemo(() => {
+    const base = detail?.memory_context ?? [];
+    if (!promotedMemoryItems.length) {
+      return base;
+    }
+    const seen = new Set(base.map((item) => item.artifact_id));
+    return [...promotedMemoryItems.filter((item) => !seen.has(item.artifact_id)), ...base];
+  }, [detail?.memory_context, promotedMemoryItems]);
   const reviewBundle = (
     <>
       <section className="codex-detail-section">
@@ -272,6 +293,10 @@ export function CodexIssueDetailPanel({
               )}
             </div>
           </>
+        ) : artifactLoadFailed ? (
+          <div className="codex-empty-copy">
+            Latest output metadata loaded, but the artifact preview could not be fetched. Try reselecting the output or downloading it directly.
+          </div>
         ) : (
           <div className="codex-empty-copy">No outputs have been attached to this issue yet.</div>
         )}
@@ -298,6 +323,71 @@ export function CodexIssueDetailPanel({
         ) : (
           <div className="codex-empty-copy">No automated checks have been recorded for this issue yet.</div>
         )}
+      </section>
+      <section className="codex-detail-section">
+        <div className="codex-section-heading">
+          <strong>Reusable memory</strong>
+          <span>{detailLoading ? "Loading…" : memoryContext.length}</span>
+        </div>
+        {memoryNotice ? <div className="codex-review-note">{memoryNotice}</div> : null}
+        {detailLoading ? (
+          <div className="codex-empty-copy">Loading related memory…</div>
+        ) : memoryContext.length ? (
+          <div className="codex-run-list">
+            {memoryContext.map((item) => (
+              <div key={`${item.artifact_id}:${item.task_id ?? "memory"}`} className="codex-output-item">
+                <strong>{item.title ?? item.path ?? item.artifact_id}</strong>
+                <span>{item.summary ?? "No memory summary recorded."}</span>
+                <span>
+                  {(item.tags?.length ?? 0) ? item.tags?.join(", ") : "No tags"}
+                  {item.score != null ? ` · score ${item.score}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="codex-empty-copy">
+            No promoted memory is influencing this issue yet. Promote a useful output when you want future runs to reuse it.
+          </div>
+        )}
+        {primaryArtifactId ? (
+          <div className="codex-detail-actions">
+            <button
+              type="button"
+              className="codex-button"
+              disabled={promotingMemory}
+              onClick={() => {
+                setPromotingMemory(true);
+                setMemoryNotice(null);
+                void promoteArtifactToMemory(primaryArtifactId)
+                  .then((payload) => {
+                    setPromotedMemoryItems((current) => {
+                      const nextItem = {
+                        artifact_id: payload.artifact_id,
+                        task_id: task.task_id,
+                        session_id: latestRun?.session_id ?? null,
+                        artifact_type: payload.memory.artifact_type ?? primaryArtifact?.artifact_type ?? "artifact",
+                        path: primaryArtifact?.path ?? selectedArtifactSummary?.file_name ?? payload.artifact_id,
+                        title: payload.memory.title,
+                        summary: payload.memory.summary,
+                        tags: payload.memory.tags ?? [],
+                        promoted_at: payload.memory.promoted_at,
+                        promoted_by: payload.memory.promoted_by,
+                        preview: payload.preview,
+                        score: undefined,
+                      };
+                      return current.some((item) => item.artifact_id === nextItem.artifact_id) ? current : [nextItem, ...current];
+                    });
+                    setMemoryNotice("Promoted the selected output into project memory. Future runs can now retrieve it.");
+                  })
+                  .catch((error) => setMemoryNotice(error instanceof Error ? error.message : "Could not promote artifact to memory."))
+                  .finally(() => setPromotingMemory(false));
+              }}
+            >
+              {promotingMemory ? "Promoting..." : "Promote selected output"}
+            </button>
+          </div>
+        ) : null}
       </section>
       {issueActions}
     </>
@@ -370,6 +460,30 @@ export function CodexIssueDetailPanel({
           ) : null}
         </div>
       </section>
+
+      {recoveryPlaybook ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Recovery playbook</strong>
+            <span>{recoveryPlaybook.confidence}</span>
+          </div>
+          <div className="codex-review-callout">
+            <strong>{recoveryPlaybook.title}</strong>
+            <p>{recoveryPlaybook.summary}</p>
+            <div className="codex-review-note">{recoveryPlaybook.detail}</div>
+            <div className="codex-review-facts">
+              <div className="codex-review-fact">
+                <span>Recommended</span>
+                <strong>{recoveryPlaybook.recommended_action.replaceAll("_", " ")}</strong>
+              </div>
+              <div className="codex-review-fact">
+                <span>Actions</span>
+                <strong>{recoveryPlaybook.actions.join(" · ")}</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {runConsole?.is_live ? (
         <section className="codex-detail-section">

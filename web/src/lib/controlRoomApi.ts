@@ -28,6 +28,8 @@ import type {
   ProjectActionResponse,
   ProjectCreateRequest,
   ProjectCreateResponse,
+  ProjectTemplatesResponse,
+  AutopilotStatusResponse,
   ProjectsResponse,
   ProvidersResponse,
   RecoveryPolicyResponse,
@@ -633,6 +635,10 @@ export function fetchProjects() {
   return fetchJson<ProjectsResponse>("/api/projects", { projects: [] });
 }
 
+export function fetchProjectTemplates(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<ProjectTemplatesResponse>("/api/projects/templates", { templates: [] }, signal, onFallback);
+}
+
 export function fetchPortfolio() {
   return fetchGlobalJson<PortfolioResponse>("/api/portfolio", PORTFOLIO_FALLBACK);
 }
@@ -640,6 +646,63 @@ export function fetchPortfolio() {
 export async function createProject(payload: ProjectCreateRequest) {
   const response = await postJson<ProjectCreateResponse>("/api/projects", payload);
   return response as ProjectCreateResponse;
+}
+
+export function fetchAutopilotStatus(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<AutopilotStatusResponse>(
+    appendProjectScope("/api/autopilot/status"),
+    {
+      project_id: "",
+      policy: {
+        enabled: false,
+        interval_seconds: 20,
+        allocate_limit: 6,
+        provider_job_limit: 4,
+        auto_launch_assigned_work: true,
+        process_notifications: true,
+        notification_batch_limit: 5,
+      },
+      runtime: {
+        project_id: "",
+        enabled: false,
+        running: false,
+        policy: {
+          enabled: false,
+          interval_seconds: 20,
+          allocate_limit: 6,
+          provider_job_limit: 4,
+          auto_launch_assigned_work: true,
+          process_notifications: true,
+          notification_batch_limit: 5,
+        },
+        last_heartbeat_at: null,
+        last_summary: null,
+        last_error: null,
+        loop_count: 0,
+      },
+      why_idle: "Autopilot status unavailable.",
+    },
+    signal,
+    onFallback
+  );
+}
+
+export async function updateProjectAutopilot(
+  projectId: string,
+  payload: {
+    enabled: boolean;
+    interval_seconds: number;
+    allocate_limit: number;
+    provider_job_limit: number;
+    auto_launch_assigned_work: boolean;
+    process_notifications: boolean;
+    notification_batch_limit: number;
+  }
+) {
+  return postJson(`/api/projects/${projectId}/actions/update-autopilot`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    ...payload,
+  });
 }
 
 export async function cloneProject(projectId: string, name?: string) {
@@ -886,7 +949,7 @@ export function fetchArtifacts(
 }
 
 export async function fetchArtifactDetail(artifactId: string, signal?: AbortSignal) {
-  const response = await fetch(`/api/artifacts/${artifactId}`, { signal });
+  const response = await fetch(appendProjectScope(`/api/artifacts/${artifactId}`), { signal });
   if (response.status === 404) {
     return null;
   }
@@ -898,7 +961,7 @@ export async function fetchArtifactDetail(artifactId: string, signal?: AbortSign
 
 export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFallback?: () => void) {
   return fetchJson<CodexIssueDetailResponse>(
-    `/api/issues/${taskId}`,
+    appendProjectScope(`/api/issues/${taskId}`),
     {
       task: {
         task_id: taskId,
@@ -927,6 +990,16 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
         summary: "Issue review policy is unavailable.",
         detail: "Review guidance could not be loaded from the backend.",
       },
+      recovery_playbook: {
+        kind: "idle",
+        title: "Issue detail unavailable",
+        summary: "Recovery guidance could not be loaded.",
+        detail: "Refresh the page and load the issue again.",
+        recommended_action: "Refresh the issue detail and retry the action.",
+        actions: [],
+        confidence: "low",
+      },
+      memory_context: [],
       git_workspace: null,
     },
     signal,
@@ -991,7 +1064,7 @@ export function fetchCodexIssueIndex(signal?: AbortSignal, onFallback?: () => vo
 
 export function fetchCodexRunDetail(sessionId: string, signal?: AbortSignal, onFallback?: () => void) {
   return fetchJson<CodexRunDetailResponse>(
-    `/api/runs/${sessionId}`,
+    appendProjectScope(`/api/runs/${sessionId}`),
     {
       session_id: sessionId,
       provider_type: "openai_codex",
@@ -1102,11 +1175,13 @@ export function fetchCodexRetrievalSearch(
         run_hits: 0,
         artifact_hits: 0,
         event_hits: 0,
+        memory_hits: 0,
       },
       issues: [],
       runs: [],
       artifacts: [],
       events: [],
+      memory: [],
     },
     signal,
     onFallback
@@ -1116,6 +1191,26 @@ export function fetchCodexRetrievalSearch(
 export async function cancelCodexRun(sessionId: string) {
   return postJson(`/api/runs/${sessionId}/actions/cancel`, {
     actor_id: DEFAULT_ACTOR_ID,
+  });
+}
+
+export async function batchReviewIssues(taskIds: string[], decision: "approve" | "reject") {
+  return postJson("/api/issues/actions/batch-review", {
+    actor_id: DEFAULT_ACTOR_ID,
+    decision,
+    task_ids: taskIds,
+  });
+}
+
+export async function promoteArtifactToMemory(
+  artifactId: string,
+  payload: { title?: string; summary?: string; tags?: string[] } = {}
+) {
+  return postJson(`/api/artifacts/${artifactId}/actions/promote-memory`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    title: payload.title ?? null,
+    summary: payload.summary ?? null,
+    tags: payload.tags ?? [],
   });
 }
 

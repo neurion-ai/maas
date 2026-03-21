@@ -31,6 +31,8 @@ For the next operator-value and capability batch, see [14-codex-mvp-next-batch-p
 
 For the current autonomy-scale follow-up batch, see [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md).
 
+For the current autopilot-and-memory batch, see [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -87,6 +89,14 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#194` Stuck-run and stale-agent diagnostics
 - [x] `#195` Multi-project supervision pass
 - [x] `#196` Notifications and async operator loop
+- [x] `#197` Autopilot execution mode and daemonized project loop
+- [x] `#198` Live Codex console and structured run timeline improvements
+- [x] `#199` Recovery playbooks and one-click intervention groundwork
+- [x] `#200` Memory promotion and retrieval-backed execution context
+- [x] `#201` Review burden reduction: grouped review and stronger auto-approval
+- [x] `#202` Fresh-start project templates and reset-adjacent lifecycle flows
+- [x] `#203` Better "why nothing is happening" diagnostics across Command/Issues/System
+- [x] `#204` Async operator notifications v2 and autopilot attention posture
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

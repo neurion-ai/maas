@@ -67,6 +67,9 @@ export interface BoardTask {
   git_workspace_change_summary?: string | null;
   git_workspace_last_diff_at?: string | null;
   git_workspace_diff_artifact_id?: string | null;
+  operator_bucket?: "review" | "blocked_failures" | "blocked_dependencies" | null;
+  batch_review_eligible?: boolean;
+  batch_review_reason?: string | null;
 }
 
 export interface BoardColumn {
@@ -1446,12 +1449,20 @@ export interface CodexAgentRunItem {
   task_id?: string | null;
   task_title?: string | null;
   provider_type: string;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
   status: string;
   progress_pct?: number | null;
   status_message?: string | null;
   last_heartbeat_at?: string | null;
+  heartbeat_age_seconds?: number | null;
   started_at: string;
   ended_at?: string | null;
+  run_age_seconds?: number | null;
+  is_live?: boolean;
+  is_stale?: boolean;
+  diagnostic_summary?: string | null;
+  recommended_action?: string | null;
 }
 
 export interface CodexAgentDetailResponse {
@@ -1519,4 +1530,35 @@ export interface CodexIssueDetailResponse {
     last_diff_artifact_id?: string | null;
     updated_at?: string | null;
   } | null;
+}
+
+export interface CodexIssueQueueBucket {
+  title: string;
+  description: string;
+  items: BoardTask[];
+  batch_review?: {
+    eligible_count: number;
+    eligible_task_ids: string[];
+    summary: string;
+  };
+}
+
+export interface CodexIssueIndexResponse {
+  generated_at: string;
+  summary: {
+    review: number;
+    blocked_failures: number;
+    blocked_dependencies: number;
+    resolved: number;
+    recent_failures: number;
+    batch_review_eligible: number;
+  };
+  queue: {
+    review: CodexIssueQueueBucket;
+    blocked_failures: CodexIssueQueueBucket;
+    blocked_dependencies: CodexIssueQueueBucket;
+  };
+  resolved: BoardTask[];
+  board_summary: BoardSummary;
+  filter_options?: BoardFilterOptions;
 }

@@ -17,7 +17,7 @@ from maas.services.artifacts import (
     fetch_artifacts,
     resolve_artifact_download,
 )
-from maas.services.board import fetch_board
+from maas.services.board import fetch_board, fetch_issue_index
 from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail, fetch_runs
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
@@ -895,6 +895,15 @@ def create_app(project_root="."):
             if workspace is None:
                 raise HTTPException(status_code=404, detail="git workspace not prepared")
             return workspace
+        finally:
+            connection.close()
+
+    @app.get("/api/issues/index")
+    def issue_index(project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_issue_index(connection, project_id=scoped_project_id)
         finally:
             connection.close()
 

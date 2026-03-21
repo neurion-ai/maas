@@ -10,6 +10,102 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 class CodexMvpApiTest(unittest.TestCase):
+    def test_issue_index_groups_review_and_blocked_work_with_batch_review_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Issue Index Test", description="codex issue index", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                tasks = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id, title
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 4
+                    """
+                ).fetchall()
+                review_task = tasks[0]
+                high_priority_review = tasks[1]
+                blocked_failure = tasks[2]
+                blocked_dependency = tasks[3]
+
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 60, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (review_task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 92, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (high_priority_review["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'timed_out'
+                    WHERE task_id = ?
+                    """,
+                    (blocked_failure["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'awaiting_dependency'
+                    WHERE task_id = ?
+                    """,
+                    (blocked_dependency["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_review.py', 'passed', 0, '1 passed',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), review_task["project_id"], review_task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES (?, ?, ?, NULL, ?, 'session_timed_out', 'Codex run timed out', '{}')
+                    """,
+                    (generate_id("fail"), blocked_failure["project_id"], blocked_failure["task_id"], blocked_failure["assigned_agent_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.get("/api/issues/index")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertGreaterEqual(payload["summary"]["review"], 2)
+            self.assertGreaterEqual(payload["summary"]["blocked_failures"], 1)
+            self.assertGreaterEqual(payload["summary"]["blocked_dependencies"], 1)
+            self.assertEqual(payload["summary"]["batch_review_eligible"], 1)
+            self.assertEqual(payload["queue"]["review"]["batch_review"]["eligible_task_ids"], [review_task["task_id"]])
+
+            review_items = {item["task_id"]: item for item in payload["queue"]["review"]["items"]}
+            self.assertTrue(review_items[review_task["task_id"]]["batch_review_eligible"])
+            self.assertFalse(review_items[high_priority_review["task_id"]]["batch_review_eligible"])
+            self.assertEqual(review_items[high_priority_review["task_id"]]["batch_review_reason"], "Priority is above the low-risk batch-review threshold.")
+
+            failure_task_ids = {item["task_id"] for item in payload["queue"]["blocked_failures"]["items"]}
+            dependency_task_ids = {item["task_id"] for item in payload["queue"]["blocked_dependencies"]["items"]}
+            self.assertIn(blocked_failure["task_id"], failure_task_ids)
+            self.assertIn(blocked_dependency["task_id"], dependency_task_ids)
+
     def test_run_index_lists_recent_runs_with_state_details(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex Run Index Test", description="codex runs", project_type="custom")
@@ -462,6 +558,27 @@ class CodexMvpApiTest(unittest.TestCase):
                     """,
                     (session_id, agent["project_id"], agent["agent_id"], task["task_id"]),
                 )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'provider_adapter_started', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        agent["project_id"],
+                        agent["agent_id"],
+                        task["task_id"],
+                        "Codex adapter started local execution.",
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "execution_mode": "codex_cli",
+                                "external_runtime": "codex_cli",
+                            }
+                        ),
+                    ),
+                )
                 connection.commit()
             finally:
                 connection.close()
@@ -475,4 +592,6 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertTrue(payload["owned_issues"])
             self.assertEqual(payload["owned_issues"][0]["task_id"], task["task_id"])
             self.assertEqual(payload["runs"][0]["session_id"], session_id)
+            self.assertEqual(payload["runs"][0]["execution_mode"], "codex_cli")
+            self.assertIn("heartbeating", payload["runs"][0]["diagnostic_summary"])
             self.assertGreaterEqual(len(payload["history"]), 1)

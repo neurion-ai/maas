@@ -8,6 +8,7 @@ import type {
   ArtifactPurgeResponse,
   ArtifactsResponse,
   CodexAgentDetailResponse,
+  CodexIssueIndexResponse,
   CodexIssueDetailResponse,
   CodexRunIndexResponse,
   CodexRunDetailResponse,
@@ -892,6 +893,61 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
   );
 }
 
+export function fetchCodexIssueIndex(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexIssueIndexResponse>(
+    appendProjectScope("/api/issues/index"),
+    {
+      generated_at: new Date().toISOString(),
+      summary: {
+        review: 0,
+        blocked_failures: 0,
+        blocked_dependencies: 0,
+        resolved: 0,
+        recent_failures: 0,
+        batch_review_eligible: 0,
+      },
+      queue: {
+        review: {
+          title: "Review queue",
+          description: "",
+          items: [],
+          batch_review: {
+            eligible_count: 0,
+            eligible_task_ids: [],
+            summary: "",
+          },
+        },
+        blocked_failures: {
+          title: "Blocked by failures",
+          description: "",
+          items: [],
+        },
+        blocked_dependencies: {
+          title: "Blocked by dependencies or operator state",
+          description: "",
+          items: [],
+        },
+      },
+      resolved: [],
+      board_summary: {
+        total_tasks: 0,
+        active_agents: 0,
+        assigned_tasks: 0,
+        active_tasks: 0,
+        blocked_tasks: 0,
+        review_tasks: 0,
+      },
+      filter_options: {
+        agents: [],
+        goals: [],
+        priority_min_values: [0, 50, 75, 90],
+      },
+    },
+    signal,
+    onFallback
+  );
+}
+
 export function fetchCodexRunDetail(sessionId: string, signal?: AbortSignal, onFallback?: () => void) {
   return fetchJson<CodexRunDetailResponse>(
     `/api/runs/${sessionId}`,
@@ -928,7 +984,7 @@ export function fetchCodexRuns(
   if (filters.search) {
     params.set("search", filters.search);
   }
-  const path = params.toString() ? `/api/runs?${params.toString()}` : "/api/runs";
+  const path = appendProjectScope(params.toString() ? `/api/runs?${params.toString()}` : "/api/runs");
   return fetchJson<CodexRunIndexResponse>(
     path,
     {

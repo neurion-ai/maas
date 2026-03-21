@@ -5,10 +5,20 @@ import json
 import os
 
 from maas.constants import BOARD_COLUMNS
+from maas.services.bootstrap import BROWNFIELD_REVIEW_TASK_TITLE
 from maas.services.codex_mvp import issue_key_lookup
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
+from maas.services.review_policy import review_policy_from_row
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
 from maas.services.verification import fetch_latest_verification_by_task
+
+
+BLOCKED_FAILURE_REVIEW_STATES = {
+    "session_failed",
+    "timed_out",
+    "circuit_breaker_open",
+    "retry_budget_exhausted",
+}
 
 
 def _parse_timestamp(value):
@@ -131,6 +141,58 @@ def _project_supports_git_workspaces(connection, project_id):
     return os.path.exists(os.path.join(source_root, ".git"))
 
 
+def _project_operator_config(connection, project_id):
+    row = connection.execute(
+        """
+        SELECT config_json
+        FROM projects
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return {"review_policy": review_policy_from_row(None), "onboarding_mode": None}
+    review_policy = review_policy_from_row(row)
+    try:
+        config = json.loads(row["config_json"] or "{}")
+    except (TypeError, ValueError):
+        config = {}
+    if not isinstance(config, dict):
+        config = {}
+    onboarding = config.get("onboarding") or {}
+    onboarding_mode = onboarding.get("mode") if isinstance(onboarding, dict) else None
+    return {
+        "review_policy": review_policy,
+        "onboarding_mode": onboarding_mode,
+    }
+
+
+def _operator_bucket_for_card(card):
+    if card["status"] == "review":
+        return "review"
+    if card["status"] != "blocked":
+        return None
+    if card.get("failure_count") or card.get("review_state") in BLOCKED_FAILURE_REVIEW_STATES:
+        return "blocked_failures"
+    return "blocked_dependencies"
+
+
+def _batch_review_eligibility(card, project_operator_config):
+    if card["status"] != "review":
+        return False, "Only review issues can be batch-decided."
+    if card["title"] == BROWNFIELD_REVIEW_TASK_TITLE and project_operator_config.get("onboarding_mode") == "brownfield":
+        return False, "Brownfield onboarding reviews must stay manual."
+
+    policy = project_operator_config.get("review_policy") or review_policy_from_row(None)
+    if card["priority"] > policy["max_priority_for_auto_approve"]:
+        return False, "Priority is above the low-risk batch-review threshold."
+    if card.get("failure_count"):
+        return False, "Issues with recorded failures must stay manual."
+    if policy.get("require_verification_pass", True) and card.get("latest_verification_status") != "passed":
+        return False, "A passing verification is required before batch review."
+    return True, "Eligible for low-risk batch review."
+
+
 def fetch_board(connection, filters=None, project_id=None):
     issue_keys = issue_key_lookup(connection, project_id)
     failure_query = """
@@ -238,6 +300,7 @@ def fetch_board(connection, filters=None, project_id=None):
     cards_by_status = {}
     filtered_rows = [row for row in scheduler_rows if _matches_filters(row, filters or {})]
     git_supported_by_project = {}
+    operator_config_by_project = {}
     for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
         column_key = _board_column_key(row["status"])
@@ -247,6 +310,8 @@ def fetch_board(connection, filters=None, project_id=None):
         git_workspace = git_workspaces_by_task.get(row["task_id"]) or {}
         if row["project_id"] not in git_supported_by_project:
             git_supported_by_project[row["project_id"]] = _project_supports_git_workspaces(connection, row["project_id"])
+        if row["project_id"] not in operator_config_by_project:
+            operator_config_by_project[row["project_id"]] = _project_operator_config(connection, row["project_id"])
         card = {
             "task_id": row["task_id"],
             "issue_key": issue_keys.get(row["task_id"]),
@@ -302,6 +367,14 @@ def fetch_board(connection, filters=None, project_id=None):
             "git_workspace_last_diff_at": git_workspace.get("updated_at"),
             "git_workspace_diff_artifact_id": git_workspace.get("last_diff_artifact_id"),
         }
+        bucket = _operator_bucket_for_card(card)
+        batch_review_eligible, batch_review_reason = _batch_review_eligibility(
+            card,
+            operator_config_by_project[row["project_id"]],
+        )
+        card["operator_bucket"] = bucket
+        card["batch_review_eligible"] = batch_review_eligible
+        card["batch_review_reason"] = batch_review_reason
         cards_by_status.setdefault(column_key, []).append(card)
 
     active_agents_query = "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
@@ -366,4 +439,56 @@ def fetch_board(connection, filters=None, project_id=None):
             "priority_min_values": [0, 50, 75, 90],
         },
         "selected_filters": selected_filters,
+    }
+
+
+def fetch_issue_index(connection, filters=None, project_id=None):
+    board = fetch_board(connection, filters=filters, project_id=project_id)
+    open_tasks = [task for column in board["columns"] for task in column["tasks"] if task["status"] not in {"done", "cancelled"}]
+    resolved_tasks = [task for column in board["columns"] for task in column["tasks"] if task["status"] in {"done", "cancelled"}]
+
+    review_items = [task for task in open_tasks if task.get("operator_bucket") == "review"]
+    blocked_failure_items = [task for task in open_tasks if task.get("operator_bucket") == "blocked_failures"]
+    blocked_dependency_items = [task for task in open_tasks if task.get("operator_bucket") == "blocked_dependencies"]
+    batch_review_items = [task for task in review_items if task.get("batch_review_eligible")]
+
+    return {
+        "generated_at": board["generated_at"],
+        "summary": {
+            "review": len(review_items),
+            "blocked_failures": len(blocked_failure_items),
+            "blocked_dependencies": len(blocked_dependency_items),
+            "resolved": len(resolved_tasks),
+            "recent_failures": len([task for task in open_tasks if task.get("failure_count")]),
+            "batch_review_eligible": len(batch_review_items),
+        },
+        "queue": {
+            "review": {
+                "title": "Review queue",
+                "description": "Issues waiting on an operator decision after Codex completed work.",
+                "items": review_items,
+                "batch_review": {
+                    "eligible_count": len(batch_review_items),
+                    "eligible_task_ids": [task["task_id"] for task in batch_review_items],
+                    "summary": (
+                        "Low-risk review items with passing checks can be approved together."
+                        if batch_review_items
+                        else "No current review items meet the low-risk batch-review rules."
+                    ),
+                },
+            },
+            "blocked_failures": {
+                "title": "Blocked by failures",
+                "description": "These issues are blocked by failed runs, timeouts, or recovery limits.",
+                "items": blocked_failure_items,
+            },
+            "blocked_dependencies": {
+                "title": "Blocked by dependencies or operator state",
+                "description": "These issues are waiting on upstream work or an explicit operator decision.",
+                "items": blocked_dependency_items,
+            },
+        },
+        "resolved": resolved_tasks,
+        "board_summary": board["summary"],
+        "filter_options": board.get("filter_options"),
     }

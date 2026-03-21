@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchAlerts, fetchAgentRoster, fetchFailures, fetchIncidentTimeline, fetchOverview, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
-import { fetchBoard } from "../lib/boardApi";
-import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap, openBoardTasks, operatorQueueTasks, resolvedBoardTasks } from "../lib/codexMvp";
+import { fetchAlerts, fetchAgentRoster, fetchCodexIssueIndex, fetchIncidentTimeline, fetchOverview, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
+import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap } from "../lib/codexMvp";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { AlertItem, BoardTask, FailureItem, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
+import type { AlertItem, BoardTask, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
 
 type ViewTarget = "work" | "issues" | "agents" | "system" | "projects";
 
@@ -20,29 +19,32 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [resolved, setResolved] = useState<BoardTask[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
-  const [failures, setFailures] = useState<FailureItem[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [project, setProject] = useState<PortfolioProject | null>(null);
   const [runningAgents, setRunningAgents] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [recentFailureCount, setRecentFailureCount] = useState(0);
   const livePulse = useLivePulse();
 
   async function loadCommand(signal?: AbortSignal) {
-    const [boardPayload, overviewPayload, alertsPayload, failuresPayload, timelinePayload, rosterPayload, portfolioPayload] = await Promise.all([
-      fetchBoard({}, signal),
+    const [issueIndexPayload, overviewPayload, alertsPayload, timelinePayload, rosterPayload, portfolioPayload] = await Promise.all([
+      fetchCodexIssueIndex(signal),
       fetchOverview(),
       fetchAlerts(),
-      fetchFailures(),
       fetchIncidentTimeline({ limit: 18 }, signal),
       fetchAgentRoster(),
       fetchPortfolio(),
     ]);
     setOverview(overviewPayload);
-    setTasks(openBoardTasks(boardPayload.columns));
-    setResolved(resolvedBoardTasks(boardPayload.columns));
+    setTasks([
+      ...issueIndexPayload.queue.review.items,
+      ...issueIndexPayload.queue.blocked_failures.items,
+      ...issueIndexPayload.queue.blocked_dependencies.items,
+    ]);
+    setResolved(issueIndexPayload.resolved);
     setAlerts(alertsPayload.alerts);
-    setFailures(failuresPayload.recent);
+    setRecentFailureCount(issueIndexPayload.summary.recent_failures);
     setTimeline(timelinePayload.events);
     setRunningAgents(rosterPayload.agents.filter((agent) => agent.status === "running").length);
     const selectedProjectId = getSelectedProjectId();
@@ -62,7 +64,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const keyMap = useMemo(() => issueKeyMap([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
 
-  const queue = useMemo(() => operatorQueueTasks(tasks).slice(0, 6), [tasks]);
+  const queue = useMemo(() => [...tasks].sort((left, right) => right.priority - left.priority).slice(0, 6), [tasks]);
   const launchPosture = useMemo(() => describeLaunchPosture(project), [project]);
 
   async function holdPendingState(startedAt: number) {
@@ -238,7 +240,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
         <article className="codex-panel codex-stat">
           <strong>{queue.length}</strong>
           <span>Needs judgment</span>
-          <p>{alerts.filter((alert) => alert.status === "open").length} open alerts · {failures.length} recent failures</p>
+          <p>{alerts.filter((alert) => alert.status === "open").length} open alerts · {recentFailureCount} recent failures</p>
         </article>
       </div>
 

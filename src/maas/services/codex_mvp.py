@@ -661,6 +661,8 @@ def _agent_runs(connection, project_id, agent_id):
         SELECT
             sessions.session_id,
             sessions.task_id,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
             sessions.provider_type,
             sessions.status,
             sessions.progress_pct,
@@ -668,9 +670,16 @@ def _agent_runs(connection, project_id, agent_id):
             sessions.last_heartbeat_at,
             sessions.started_at,
             sessions.ended_at,
-            tasks.title AS task_title
+            tasks.title AS task_title,
+            json_extract(start_log.details_json, '$.execution_mode') AS execution_mode,
+            json_extract(start_log.details_json, '$.external_runtime') AS external_runtime
         FROM sessions
         LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN activity_log AS start_log
+            ON start_log.project_id = sessions.project_id
+           AND start_log.task_id = sessions.task_id
+           AND start_log.action = 'provider_adapter_started'
+           AND json_extract(start_log.details_json, '$.session_id') = sessions.session_id
         WHERE sessions.project_id = ?
           AND sessions.agent_id = ?
         ORDER BY sessions.started_at DESC, sessions.rowid DESC
@@ -678,7 +687,22 @@ def _agent_runs(connection, project_id, agent_id):
         """,
         (project_id, agent_id),
     ).fetchall()
-    return [dict(row) for row in rows]
+    issue_keys = issue_key_lookup(connection, project_id)
+    return [
+        _run_row_to_dict(
+            {
+                **dict(row),
+                "goal_id": None,
+                "goal_title": None,
+                "agent_id": agent_id,
+                "agent_name": None,
+                "artifact_count": 0,
+                "failure_count": 0,
+            },
+            issue_keys,
+        )
+        for row in rows
+    ]
 
 
 def fetch_agent_detail(connection, project_id, agent_id):

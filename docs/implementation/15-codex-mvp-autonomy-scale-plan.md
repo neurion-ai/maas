@@ -65,6 +65,19 @@ That includes:
 - backend-derived stale-run diagnostics and recommended next action
 - direct navigation into runs from `Work`, `Agents`, and `System`
 
+The next landed slice reduces frontend guesswork in the operator queue:
+
+- canonical `/api/issues/index` read model for review and blocked work
+- backend-derived operator buckets on issue cards
+- backend-derived low-risk batch-review eligibility and reasons
+- `Issues` page rendered from backend queue buckets instead of browser heuristics
+- `Command` page reusing the same issue queue truth
+
+The current branch also extends agent execution truth:
+
+- agent-detail runs now expose execution mode, stale/live state, diagnostics, and recommended next action
+- `Agents` surfaces that execution diagnosis directly instead of only showing raw heartbeat age
+
 ## Why This Order
 
 The run object is the strongest source of truth for what MAAS is actually doing.

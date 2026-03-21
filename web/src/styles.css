@@ -5106,6 +5106,23 @@ body {
   padding: 14px 18px 0;
 }
 
+.codex-detail-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel-strong) 94%, transparent 6%);
+}
+
+.codex-detail-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .codex-decision-summary {
   padding-top: 18px;
 }

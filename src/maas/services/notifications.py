@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import sqlite3
 from urllib import error, request
 
 from maas.ids import generate_id
@@ -402,53 +403,10 @@ def queue_notification_event(
             resource_id,
             payload_json,
         )
-        existing = connection.execute(
-            """
-            SELECT notification_id, status
-            FROM notification_outbox
-            WHERE dedupe_key = ?
-              AND status IN ('queued', 'failed')
-            LIMIT 1
-            """,
-            (dedupe_key,),
-        ).fetchone()
-        if existing is not None:
-            connection.execute(
-                """
-                UPDATE notification_outbox
-                SET status = CASE
-                        WHEN status = 'failed' AND attempts < ? THEN 'queued'
-                        ELSE status
-                    END,
-                    next_attempt_at = CASE
-                        WHEN status = 'failed' AND attempts < ? THEN CURRENT_TIMESTAMP
-                        ELSE next_attempt_at
-                    END,
-                    last_error = CASE
-                        WHEN status = 'failed' AND attempts < ? THEN NULL
-                        ELSE last_error
-                    END,
-                    last_response_code = CASE
-                        WHEN status = 'failed' AND attempts < ? THEN NULL
-                        ELSE last_response_code
-                    END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE notification_id = ?
-                """,
-                (
-                    NOTIFICATION_MAX_ATTEMPTS,
-                    NOTIFICATION_MAX_ATTEMPTS,
-                    NOTIFICATION_MAX_ATTEMPTS,
-                    NOTIFICATION_MAX_ATTEMPTS,
-                    existing["notification_id"],
-                ),
-            )
-            queued_ids.append(existing["notification_id"])
-            continue
         notification_id = generate_id("notif")
         connection.execute(
             """
-            INSERT INTO notification_outbox (
+            INSERT OR IGNORE INTO notification_outbox (
                 notification_id, project_id, target_url, event_type, severity, title, body,
                 payload_json, resource_type, resource_id, dedupe_key
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -467,7 +425,58 @@ def queue_notification_event(
                 dedupe_key,
             ),
         )
-        queued_ids.append(notification_id)
+        inserted = connection.execute(
+            "SELECT notification_id FROM notification_outbox WHERE notification_id = ?",
+            (notification_id,),
+        ).fetchone()
+        if inserted is not None:
+            queued_ids.append(notification_id)
+            continue
+        existing = connection.execute(
+            """
+            SELECT notification_id
+            FROM notification_outbox
+            WHERE dedupe_key = ?
+              AND status IN ('queued', 'failed')
+            LIMIT 1
+            """,
+            (dedupe_key,),
+        ).fetchone()
+        if existing is None:
+            raise sqlite3.IntegrityError(
+                "notification_outbox dedupe conflict without reusable active row for key {0}".format(dedupe_key)
+            )
+        connection.execute(
+            """
+            UPDATE notification_outbox
+            SET status = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN 'queued'
+                    ELSE status
+                END,
+                next_attempt_at = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN CURRENT_TIMESTAMP
+                    ELSE next_attempt_at
+                END,
+                last_error = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN NULL
+                    ELSE last_error
+                END,
+                last_response_code = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN NULL
+                    ELSE last_response_code
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = ?
+            """,
+            (
+                NOTIFICATION_MAX_ATTEMPTS,
+                NOTIFICATION_MAX_ATTEMPTS,
+                NOTIFICATION_MAX_ATTEMPTS,
+                NOTIFICATION_MAX_ATTEMPTS,
+                existing["notification_id"],
+            ),
+        )
+        queued_ids.append(existing["notification_id"])
     return queued_ids
 
 

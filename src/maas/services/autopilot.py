@@ -310,6 +310,73 @@ def _execution_explanation(connection, project_id):
     return "No ready, assigned, or active work exists for this project right now."
 
 
+def _load_cycle_policy(connection, project_id, fallback_policy):
+    try:
+        return fetch_project_autopilot_policy(connection, project_id)
+    except Exception:
+        return normalize_autopilot_policy(fallback_policy)
+
+
+def _run_orchestrator_with_lease_refresh(project_root, project_id, lease_token, policy):
+    paths = ProjectPaths(project_root)
+    result_holder = {}
+    error_holder = {}
+    finished = threading.Event()
+    lease_lost = threading.Event()
+    heartbeat_interval = max(1.0, min(5.0, _lease_duration_seconds(policy) / 3.0))
+
+    def _worker():
+        worker_connection = connect(paths)
+        try:
+            result_holder["result"] = run_orchestrator_once(
+                worker_connection,
+                paths,
+                allocate_limit=policy["allocate_limit"],
+                provider_job_limit=policy["provider_job_limit"],
+                project_id=project_id,
+                auto_launch_assigned_work=policy["auto_launch_assigned_work"],
+            )
+        except Exception as exc:  # pragma: no cover - surfaced to caller
+            error_holder["error"] = exc
+        finally:
+            worker_connection.close()
+            finished.set()
+
+    worker = threading.Thread(
+        target=_worker,
+        name="maas-autopilot-cycle-{0}".format(project_id),
+        daemon=True,
+    )
+    worker.start()
+
+    try:
+        while not finished.wait(heartbeat_interval):
+            lease_connection = connect(paths)
+            try:
+                runtime_row = refresh_autopilot_runtime_lease(
+                    lease_connection,
+                    project_id,
+                    lease_token,
+                    policy,
+                    status="running",
+                )
+            finally:
+                lease_connection.close()
+            if runtime_row is None:
+                lease_lost.set()
+                break
+    finally:
+        worker.join()
+
+    if "error" in error_holder:
+        raise error_holder["error"]
+    if lease_lost.is_set():
+        raise RuntimeError(
+            "Autopilot lost its lease during an active orchestrator cycle for project {0}.".format(project_id)
+        )
+    return result_holder.get("result", {})
+
+
 @dataclass
 class AutopilotLoop:
     project_root: str
@@ -385,11 +452,17 @@ class AutopilotLoop:
     def run_forever(self):
         paths = ProjectPaths(self.project_root)
         while not self.stop_event.is_set():
-            with self.lock:
-                policy = dict(self.policy)
             try:
                 connection = connect(paths)
                 try:
+                    with self.lock:
+                        fallback_policy = dict(self.policy)
+                    policy = _load_cycle_policy(connection, self.project_id, fallback_policy)
+                    self.update_policy(policy)
+                    if not policy.get("enabled"):
+                        release_autopilot_runtime_lease(connection, self.project_id, lease_token=self.loop_token, status="idle")
+                        self.mark_waiting()
+                        continue
                     runtime_row = claim_autopilot_runtime_lease(
                         connection,
                         self.project_id,
@@ -408,13 +481,11 @@ class AutopilotLoop:
                                 policy,
                                 status="running",
                             )
-                            result = run_orchestrator_once(
-                                connection,
-                                paths,
-                                allocate_limit=policy["allocate_limit"],
-                                provider_job_limit=policy["provider_job_limit"],
-                                project_id=self.project_id,
-                                auto_launch_assigned_work=policy["auto_launch_assigned_work"],
+                            result = _run_orchestrator_with_lease_refresh(
+                                self.project_root,
+                                self.project_id,
+                                self.loop_token,
+                                policy,
                             )
                             notifications_processed = 0
                             if policy.get("process_notifications"):

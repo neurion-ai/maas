@@ -83,9 +83,18 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       await loadCommand();
       const queued = result.provider_jobs_queued ?? 0;
       const started = (result.provider_jobs_processed ?? 0) + (result.provider_jobs_dispatched ?? 0);
-      setNotice(
-        `Cycle complete: ${result.assigned_count} assignments, ${started} Codex run${started === 1 ? "" : "s"} started, ${queued} queued${launchPosture.mode !== "running" ? " while launches stayed paused" : ""}.`
-      );
+      const launchProvider = result.project_runs.find((item) => item.launch_provider_id)?.launch_provider_id ?? null;
+      if (started === 0 && queued === 0 && launchPosture.mode === "running" && tasks.some((task) => task.status === "assigned")) {
+        setNotice(
+          launchProvider
+            ? `Cycle complete: assigned work is waiting on ${launchProvider.replaceAll("_", " ")} capacity or readiness, so no new run started yet.`
+            : "Cycle complete: no launch-ready provider is available for the assigned work."
+        );
+      } else {
+        setNotice(
+          `Cycle complete: ${result.assigned_count} assignments, ${started} run${started === 1 ? "" : "s"} started, ${queued} queued${launchPosture.mode !== "running" ? " while launches were not fully open" : ""}.`
+        );
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Run failed.");
     } finally {
@@ -104,6 +113,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       await updateProjectProviderCapacity(project.project_id, {
         queue_mode: "paused",
         max_running_jobs: project.provider_capacity.max_running_jobs,
+        preferred_provider_id: project.provider_capacity.preferred_provider_id ?? null,
       });
       await loadCommand();
       await holdPendingState(startedAt);
@@ -127,15 +137,40 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       await updateProjectProviderCapacity(project.project_id, {
         queue_mode: "running",
         max_running_jobs: project.provider_capacity.max_running_jobs,
+        preferred_provider_id: project.provider_capacity.preferred_provider_id ?? null,
       });
       const result = await runOrchestratorPass(6, 4, true);
       await loadCommand();
       await holdPendingState(startedAt);
       await loadCommand();
       const started = (result.provider_jobs_processed ?? 0) + (result.provider_jobs_dispatched ?? 0);
-      setNotice(`Resumed execution. ${started} Codex run${started === 1 ? "" : "s"} started.`);
+      setNotice(`Resumed execution. ${started} run${started === 1 ? "" : "s"} started.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Resume failed.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleDrain() {
+    if (!project) {
+      return;
+    }
+    const startedAt = Date.now();
+    setPendingKey("drain");
+    setNotice(null);
+    try {
+      await updateProjectProviderCapacity(project.project_id, {
+        queue_mode: "draining",
+        max_running_jobs: project.provider_capacity.max_running_jobs,
+        preferred_provider_id: project.provider_capacity.preferred_provider_id ?? null,
+      });
+      await loadCommand();
+      await holdPendingState(startedAt);
+      await loadCommand();
+      setNotice("Queue is draining. Running and queued work can finish, but new assigned issues will not launch.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Drain failed.");
     } finally {
       setPendingKey(null);
     }
@@ -153,24 +188,29 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
           <button type="button" className="codex-button codex-button--primary" disabled={pendingKey !== null} onClick={() => void handleRun()}>
             {pendingKey === "run" ? "Running..." : "Run next cycle"}
           </button>
-          <button
-            type="button"
-            className="codex-button"
-            disabled={pendingKey !== null || !project}
-            onClick={() => {
-              if (launchPosture.mode === "running") {
-                void handlePause();
-                return;
-              }
-              void handleResume();
-            }}
-          >
-            {pendingKey === "pause"
-              ? "Pausing..."
-              : pendingKey === "resume"
-                ? "Resuming..."
-                : launchPosture.actionLabel}
-          </button>
+          {launchPosture.mode === "running" ? (
+            <>
+              <button type="button" className="codex-button" disabled={pendingKey !== null || !project} onClick={() => void handleDrain()}>
+                {pendingKey === "drain" ? "Draining..." : "Drain queue"}
+              </button>
+              <button type="button" className="codex-button" disabled={pendingKey !== null || !project} onClick={() => void handlePause()}>
+                {pendingKey === "pause" ? "Pausing..." : "Pause launches"}
+              </button>
+            </>
+          ) : launchPosture.mode === "draining" ? (
+            <>
+              <button type="button" className="codex-button" disabled={pendingKey !== null || !project} onClick={() => void handleResume()}>
+                {pendingKey === "resume" ? "Resuming..." : "Resume launches"}
+              </button>
+              <button type="button" className="codex-button" disabled={pendingKey !== null || !project} onClick={() => void handlePause()}>
+                {pendingKey === "pause" ? "Pausing..." : "Pause launches"}
+              </button>
+            </>
+          ) : (
+            <button type="button" className="codex-button" disabled={pendingKey !== null || !project} onClick={() => void handleResume()}>
+              {pendingKey === "resume" ? "Resuming..." : "Resume launches"}
+            </button>
+          )}
         </div>
       </header>
 

@@ -170,9 +170,11 @@ export function PortfolioPage() {
     setPendingActionKey(actionKey);
     setNotice(null);
     try {
+      const project = portfolio?.projects.find((item) => item.project_id === projectId) ?? null;
       await updateProjectProviderCapacity(projectId, {
         queue_mode: queueMode,
-        max_running_jobs: maxRunningJobs
+        max_running_jobs: maxRunningJobs,
+        preferred_provider_id: project?.provider_capacity.preferred_provider_id ?? null,
       });
       setPortfolio(await fetchPortfolio());
       setNotice(`Updated provider capacity for ${projectId}.`);

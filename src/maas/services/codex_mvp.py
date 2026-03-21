@@ -315,6 +315,82 @@ def _issue_run_console(connection, project_paths, project_id, task_id, runs):
     }
 
 
+def _session_artifacts(connection, project_paths, project_id, session_id):
+    return fetch_artifacts(
+        connection,
+        project_paths,
+        limit=12,
+        offset=0,
+        filters={"session_id": session_id},
+        project_id=project_id,
+    )
+
+
+def fetch_run_detail(connection, project_paths, project_id, session_id):
+    row = connection.execute(
+        """
+        SELECT
+            sessions.session_id,
+            sessions.project_id,
+            sessions.agent_id,
+            sessions.task_id,
+            sessions.status,
+            sessions.provider_type,
+            sessions.progress_pct,
+            sessions.status_message,
+            sessions.last_heartbeat_at,
+            sessions.started_at,
+            sessions.ended_at,
+            tasks.title AS task_title,
+            agents.display_name AS agent_name
+        FROM sessions
+        LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+        WHERE sessions.project_id = ?
+          AND sessions.session_id = ?
+        """,
+        (project_id, session_id),
+    ).fetchone()
+    if row is None:
+        return None
+
+    issue_keys = issue_key_lookup(connection, project_id)
+    envelope_root = project_paths.runtime_envelope_root(project_id, session_id)
+    output_preview = _tail_console_preview(os.path.join(envelope_root, "runtime-output.txt"))
+    stdout_preview = _tail_console_preview(os.path.join(envelope_root, "stdout.log"))
+    stderr_preview = _tail_console_preview(os.path.join(envelope_root, "stderr.log"))
+    activity = _session_activity(connection, project_id, row["task_id"], session_id, limit=24)
+    start_details = _session_start_details(connection, project_id, row["task_id"], session_id)
+    artifacts = _session_artifacts(connection, project_paths, project_id, session_id)
+    return {
+        "session_id": row["session_id"],
+        "task_id": row["task_id"],
+        "task_title": row["task_title"],
+        "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+        "agent_id": row["agent_id"],
+        "agent_name": row["agent_name"],
+        "provider_type": row["provider_type"],
+        "execution_mode": start_details.get("execution_mode"),
+        "external_runtime": start_details.get("external_runtime"),
+        "status": row["status"],
+        "progress_pct": row["progress_pct"],
+        "status_message": row["status_message"],
+        "last_heartbeat_at": row["last_heartbeat_at"],
+        "started_at": row["started_at"],
+        "ended_at": row["ended_at"],
+        "is_live": row["status"] == "active",
+        "timeout_seconds": start_details.get("timeout_seconds"),
+        "command": start_details.get("command"),
+        "runtime_root": start_details.get("runtime_root") or envelope_root,
+        "output_preview": output_preview,
+        "stdout_preview": stdout_preview,
+        "stderr_preview": stderr_preview,
+        "activity": activity,
+        "artifacts": artifacts["items"],
+        "artifact_summary": artifacts["summary"],
+    }
+
+
 def _agent_owned_issues(connection, project_id, agent_id, issue_keys):
     rows = connection.execute(
         """

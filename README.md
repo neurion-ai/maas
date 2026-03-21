@@ -57,6 +57,8 @@ The integration sequence for moving the standalone mockup into the real backend/
 
 The current hardening and truthfulness pass for the integrated Codex MVP is documented in [docs/implementation/13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md).
 
+The next operator-value and capability batch is documented in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md).
+
 The current integration branch replaces the old shell with real `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects` surfaces in the React app, backed by stable issue identity, issue detail read models, agent detail read models, and Codex-oriented system views.
 
 The frontend reset document for rebuilding the product from scratch is in [docs/implementation/10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
@@ -162,6 +164,8 @@ Current stacked development chain above `main`:
 - `#176` exists on `codex/codex-mvp-hardening`
 - `#177` exists on `codex/codex-mvp-hardening`
 - `#178` exists on `codex/codex-mvp-hardening`
+
+The current operator-value and capability sequence in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md) is now implemented on `codex/codex-mvp-operator-scale`. It adds truthful queue posture, readiness-aware launch strategy, shared `Work`/`Issues` scopes, first-class run detail reads, stronger agent/system execution diagnostics, verification-driven auto-approval, and cleaner fresh-project lifecycle controls.
 
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 

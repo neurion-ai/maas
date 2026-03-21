@@ -11,6 +11,7 @@ from maas.services.notifications import (
 )
 from maas.services.projects import list_projects
 from maas.services.queue_capacity import queue_capacity_snapshot
+from maas.services.review_policy import review_policy_from_row
 from maas.services.risk_policy import risk_policy_from_row
 from maas.services.runtime_quotas import runtime_quota_snapshot, runtime_quotas_from_row
 from maas.services.scheduler_policy import scheduler_policy_from_row
@@ -298,6 +299,7 @@ def fetch_portfolio(connection):
         ).fetchone()
         scheduler_policy = scheduler_policy_from_row(project_row)
         provider_capacity = queue_capacity_snapshot(connection, project_id)
+        review_policy = review_policy_from_row(project_row)
         risk_policy = risk_policy_from_row(project_row)
         runtime_quota_view = runtime_quota_snapshot(connection, project_id)
         notification_policy = notification_policy_from_row(project_row)
@@ -315,6 +317,7 @@ def fetch_portfolio(connection):
             "provider_readiness": provider_readiness,
             "scheduler_policy": scheduler_policy,
             "provider_capacity": provider_capacity,
+            "review_policy": review_policy,
             "risk_policy": risk_policy,
             "runtime_quotas": {
                 **runtime_quotas_from_row(project_row),

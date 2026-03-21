@@ -27,6 +27,8 @@ For the concrete backend/frontend integration sequence, see [12-codex-mvp-integr
 
 For the current Codex MVP hardening sequence, see [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md).
 
+For the next operator-value and capability batch, see [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -65,6 +67,15 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#176` Project lifecycle and clean-start UX
 - [x] `#177` Simulation/live boundary hardening
 - [x] `#178` End-to-end reliability and regression suite
+- [x] `#179` Queue posture and detached-execution correctness
+- [x] `#180` Live run liveness and safe cancellation
+- [x] `#181` Provider strategy and readiness-aware auto-launch
+- [x] `#182` Retrieval, search, filters, and saved scopes for `Work` and `Issues`
+- [x] `#183` Exception-first `Issues` workflow and batch review
+- [x] `#184` First-class run record and replay surface
+- [x] `#185` Agent execution truth and stuck-run diagnostics
+- [x] `#186` Verification-driven review policy and auto-advance
+- [x] `#187` Projects shell unification and clean-start flow
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

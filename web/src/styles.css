@@ -1553,6 +1553,11 @@ textarea {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.single-column-grid {
+  display: grid;
+  gap: 18px;
+}
+
 .surface-card,
 .mini-card,
 .project-tile,
@@ -4876,6 +4881,11 @@ body {
   background: color-mix(in srgb, var(--panel-strong) 94%, var(--accent-soft) 6%);
 }
 
+.codex-run-item--interactive.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--panel-strong) 88%, var(--accent-soft) 12%);
+}
+
 .codex-history-item--interactive:disabled {
   cursor: default;
 }
@@ -4958,6 +4968,66 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+
+.codex-scope-toolbar {
+  display: grid;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.codex-scope-toolbar__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.codex-scope-toolbar__leading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.codex-scope-toolbar__filters {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.codex-scope-toolbar__saved {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.codex-field span {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.codex-field input,
+.codex-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent 6%);
+  color: var(--text);
+  padding: 10px 12px;
+}
+
+.codex-chip--active {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .codex-toggle-group {

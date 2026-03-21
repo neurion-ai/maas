@@ -18,7 +18,7 @@ from maas.services.artifacts import (
     resolve_artifact_download,
 )
 from maas.services.board import fetch_board
-from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail
+from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -56,6 +56,7 @@ from maas.services.projects import (
     update_brownfield_onboarding_review,
 )
 from maas.services.queue_capacity import update_project_queue_capacity_policy
+from maas.services.review_policy import update_project_review_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
 from maas.services.repo_plan import refresh_repo_grounded_plan
@@ -284,6 +285,14 @@ class ProjectQueueCapacityRequest(BaseModel):
     actor_id: str = "agent_allocator"
     queue_mode: str
     max_running_jobs: int
+    preferred_provider_id: Optional[str] = None
+
+
+class ProjectReviewPolicyRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    auto_approve_low_risk: bool
+    max_priority_for_auto_approve: int
+    require_verification_pass: bool
 
 
 class ProjectRiskPolicyRequest(BaseModel):
@@ -479,6 +488,7 @@ def create_app(project_root="."):
                 policy={
                     "queue_mode": payload.queue_mode,
                     "max_running_jobs": payload.max_running_jobs,
+                    "preferred_provider_id": payload.preferred_provider_id,
                 },
             )
         except PermissionError as exc:
@@ -501,6 +511,27 @@ def create_app(project_root="."):
                     "sensitive_path_prefixes": payload.sensitive_path_prefixes,
                 },
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-review-policy")
+    def projects_update_review_policy(project_id: str, payload: ProjectReviewPolicyRequest):
+        connection = connect(paths)
+        try:
+            return update_project_review_policy(
+                connection,
+                actor_id=payload.actor_id,
+                project_id=project_id,
+                updates={
+                    "auto_approve_low_risk": payload.auto_approve_low_risk,
+                    "max_priority_for_auto_approve": payload.max_priority_for_auto_approve,
+                    "require_verification_pass": payload.require_verification_pass,
+                },
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -874,6 +905,18 @@ def create_app(project_root="."):
             payload = fetch_issue_detail(connection, paths, scoped_project_id, task_id)
             if payload is None:
                 raise HTTPException(status_code=404, detail="issue not found")
+            return payload
+        finally:
+            connection.close()
+
+    @app.get("/api/runs/{session_id}")
+    def run_detail(session_id: str, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            payload = fetch_run_detail(connection, paths, scoped_project_id, session_id)
+            if payload is None:
+                raise HTTPException(status_code=404, detail="run not found")
             return payload
         finally:
             connection.close()

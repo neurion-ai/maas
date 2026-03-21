@@ -37,6 +37,7 @@ See:
 - [11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md)
 - [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md)
 - [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md)
+- [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend
@@ -142,6 +143,15 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#176` is implemented on `codex/codex-mvp-hardening`
 - [x] `#177` is implemented on `codex/codex-mvp-hardening`
 - [x] `#178` is implemented on `codex/codex-mvp-hardening`
+- [x] `#179` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#180` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#181` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#182` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#183` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#184` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#185` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#186` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#187` is implemented on `codex/codex-mvp-operator-scale`
 
 ## Extended Numbered Roadmap
 
@@ -230,6 +240,8 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] The stacked UX redesign now provides a simpler mental model, dual-theme shell, guided home surface, unified Work/Runs/Incidents pages, and command-palette navigation on top of the existing backend stack.
 - [x] The current dense-control-room branch goes further by replacing the oversized hero/dashboard posture with a compact operator cockpit: top status strip, agent rail, dense kanban, incident rail, curated ticker, and selected-task evidence inspector.
 - [x] The current Codex-MVP integration branch now replaces that shell in the real app with `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects`, backed by stable issue identity plus issue-detail and agent-detail aggregates.
+- [x] The hardening batch on `main` now makes run posture, review detail, live-vs-simulated truth, project lifecycle, and agent layout materially more honest under real use.
+- [ ] The next highest-value gaps are deeper detached-worker lease safety, richer run replay/phase modeling, broader saved-scope ergonomics, higher-confidence batch review policy, and a truer project reset flow.
 - [ ] The broader roadmap still depends on deeper brownfield import, multi-project expansion, stronger isolation, better planning, broader providers, and stronger automation.
 
 ## Shipped On `main`

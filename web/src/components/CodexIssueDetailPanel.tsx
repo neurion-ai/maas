@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchArtifactDetail } from "../lib/controlRoomApi";
-import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview } from "../types";
+import { fetchArtifactDetail, fetchCodexRunDetail } from "../lib/controlRoomApi";
+import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview, CodexRunDetailResponse } from "../types";
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
 
@@ -9,6 +9,24 @@ function formatExecutionModeLabel(value?: string | null) {
     return "unknown";
   }
   return value.replaceAll("_", " ");
+}
+
+function ageLabel(value?: string | null) {
+  if (!value) {
+    return "Not recorded";
+  }
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return formatTimestamp(value);
+  }
+  const deltaSeconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (deltaSeconds < 60) {
+    return `${deltaSeconds}s ago`;
+  }
+  if (deltaSeconds < 3600) {
+    return `${Math.round(deltaSeconds / 60)}m ago`;
+  }
+  return `${Math.round(deltaSeconds / 3600)}h ago`;
 }
 
 function renderRelationshipList(
@@ -105,6 +123,7 @@ export function CodexIssueDetailPanel({
     );
   }, [detail]);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const selectedArtifactSummary = useMemo(() => {
     if (!detail?.artifacts.length) {
       return null;
@@ -116,10 +135,12 @@ export function CodexIssueDetailPanel({
   }, [detail?.artifacts, latestArtifactSummary, selectedArtifactId]);
   const primaryArtifactId = selectedArtifactSummary?.artifact_id ?? null;
   const [primaryArtifact, setPrimaryArtifact] = useState<ArtifactDetail | null>(null);
+  const [selectedRunDetail, setSelectedRunDetail] = useState<CodexRunDetailResponse | null>(null);
 
   useEffect(() => {
     setSelectedArtifactId(latestArtifactSummary?.artifact_id ?? null);
-  }, [latestArtifactSummary?.artifact_id, task?.task_id]);
+    setSelectedRunId(latestRun?.session_id ?? null);
+  }, [latestArtifactSummary?.artifact_id, latestRun?.session_id, task?.task_id]);
 
   useEffect(() => {
     if (!primaryArtifactId) {
@@ -134,9 +155,26 @@ export function CodexIssueDetailPanel({
         if (!(error instanceof Error && error.name === "AbortError")) {
           setPrimaryArtifact(null);
         }
-      });
+    });
     return () => controller.abort();
   }, [primaryArtifactId]);
+
+  useEffect(() => {
+    if (!selectedRunId) {
+      setSelectedRunDetail(null);
+      return;
+    }
+    setSelectedRunDetail(null);
+    const controller = new AbortController();
+    void fetchCodexRunDetail(selectedRunId, controller.signal)
+      .then((payload) => setSelectedRunDetail(payload))
+      .catch((error) => {
+        if (!(error instanceof Error && error.name === "AbortError")) {
+          setSelectedRunDetail(null);
+        }
+      });
+    return () => controller.abort();
+  }, [selectedRunId]);
 
   if (!task) {
     return (
@@ -175,6 +213,7 @@ export function CodexIssueDetailPanel({
   const isSimulationRun = executionMode === "local_simulation";
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
+  const selectedRunRecord = selectedRunDetail;
   const reviewBundle = (
     <>
       <section className="codex-detail-section">
@@ -347,8 +386,12 @@ export function CodexIssueDetailPanel({
                 <strong>{runConsole.progress_pct ?? 0}%</strong>
               </div>
               <div className="codex-review-fact">
+                <span>Active for</span>
+                <strong>{ageLabel(runConsole.started_at)}</strong>
+              </div>
+              <div className="codex-review-fact">
                 <span>Heartbeat</span>
-                <strong>{formatTimestamp(runConsole.last_heartbeat_at ?? runConsole.started_at)}</strong>
+                <strong>{ageLabel(runConsole.last_heartbeat_at ?? runConsole.started_at)}</strong>
               </div>
             </div>
             {runConsole.command?.length ? (
@@ -474,20 +517,64 @@ export function CodexIssueDetailPanel({
           <div className="codex-run-list">
             {(detail?.runs ?? []).length ? (
               detail?.runs.map((run) => (
-                <div key={run.session_id} className="codex-run-item">
+                <button
+                  key={run.session_id}
+                  type="button"
+                  className="codex-run-item codex-run-item--interactive"
+                  onClick={() => setSelectedRunId(run.session_id)}
+                >
                   <div className="codex-run-item__meta">
                     <strong>{run.agent_name ?? run.agent_id ?? "Unknown agent"}</strong>
                     <span>{run.status.replaceAll("_", " ")}</span>
                   </div>
                   <span>{run.status_message || "No run summary recorded."}</span>
-                  <span>{formatTimestamp(run.started_at)}</span>
-                </div>
+                  <span>{formatTimestamp(run.started_at)} · {formatExecutionModeLabel(run.execution_mode)}</span>
+                </button>
               ))
             ) : (
               <div className="codex-empty-copy">No runs recorded for this issue yet.</div>
             )}
           </div>
         </section>
+
+        {selectedRunRecord ? (
+          <section className="codex-detail-section">
+            <div className="codex-section-heading">
+              <strong>Selected run record</strong>
+              <span>{selectedRunRecord.status.replaceAll("_", " ")}</span>
+            </div>
+            <div className="codex-review-callout">
+              <strong>{selectedRunRecord.status_message ?? "No runtime summary recorded."}</strong>
+              <p>
+                {selectedRunRecord.agent_name ?? selectedRunRecord.agent_id ?? "Unknown agent"} via{" "}
+                {selectedRunRecord.provider_type.replaceAll("_", " ")} · {formatExecutionModeLabel(selectedRunRecord.execution_mode)} · started{" "}
+                {formatTimestamp(selectedRunRecord.started_at)}
+              </p>
+            </div>
+            <div className="codex-detail-stack">
+              {renderConsolePreview("Runtime output", selectedRunRecord.output_preview ?? null)}
+              {renderConsolePreview("Stderr", selectedRunRecord.stderr_preview ?? null)}
+              {renderConsolePreview("Stdout", selectedRunRecord.stdout_preview ?? null)}
+            </div>
+            <div className="codex-section-heading">
+              <strong>Run-scoped artifacts</strong>
+              <span>{selectedRunRecord.artifacts.length}</span>
+            </div>
+            <div className="codex-run-list">
+              {selectedRunRecord.artifacts.length ? (
+                selectedRunRecord.artifacts.map((artifact) => (
+                  <div key={artifact.artifact_id} className="codex-output-item">
+                    <strong>{artifact.file_name}</strong>
+                    <span>{artifact.artifact_type.replaceAll("_", " ")}</span>
+                    <span>{formatTimestamp(artifact.created_at)}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="codex-empty-copy">No artifacts were attached directly to this run.</div>
+              )}
+            </div>
+          </section>
+        ) : null}
 
         <section className="codex-detail-section">
           <div className="codex-section-heading">

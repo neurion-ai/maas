@@ -6,7 +6,9 @@ import subprocess
 
 from maas.ids import generate_id
 from maas.services.projects import resolve_project_id
+from maas.services.review_policy import fetch_project_review_policy, should_auto_approve_after_verification
 from maas.services.security import ensure_board_action_allowed
+from maas.services.steering import apply_review_decision
 
 
 def _parse_acceptance_criteria(raw_value):
@@ -236,6 +238,35 @@ def run_task_verification(connection, project_paths, task_id, actor_id, commit=T
             }
         )
 
+    auto_review = None
+    refreshed_task = connection.execute(
+        """
+        SELECT task_id, project_id, title, status, priority, review_state
+        FROM tasks
+        WHERE task_id = ?
+        """,
+        (task_id,),
+    ).fetchone()
+    if overall_passed and refreshed_task is not None:
+        project_policy = fetch_project_review_policy(connection, refreshed_task["project_id"])
+        should_auto_approve, auto_reason = should_auto_approve_after_verification(
+            connection,
+            refreshed_task,
+            run_results,
+            project_policy,
+        )
+        if should_auto_approve:
+            auto_review = apply_review_decision(
+                connection,
+                task_id,
+                actor_id="system_supervisor",
+                decision="approve",
+                commit=False,
+                automated=True,
+            )
+        else:
+            auto_review = {"decision": "manual_review", "reason": auto_reason}
+
     connection.execute(
         """
         INSERT INTO audit_trail (
@@ -247,7 +278,7 @@ def run_task_verification(connection, project_paths, task_id, actor_id, commit=T
             task_row["project_id"],
             actor_id,
             task_id,
-            json.dumps({"overall_passed": overall_passed, "runs": run_results}),
+            json.dumps({"overall_passed": overall_passed, "runs": run_results, "auto_review": auto_review}),
         ),
     )
     connection.execute(
@@ -261,7 +292,7 @@ def run_task_verification(connection, project_paths, task_id, actor_id, commit=T
             task_row["project_id"],
             task_id,
             "Verification commands executed for task acceptance evidence.",
-            json.dumps({"overall_passed": overall_passed, "runs": run_results}),
+            json.dumps({"overall_passed": overall_passed, "runs": run_results, "auto_review": auto_review}),
             "info" if overall_passed else "warning",
         ),
     )
@@ -272,4 +303,5 @@ def run_task_verification(connection, project_paths, task_id, actor_id, commit=T
         "project_id": task_row["project_id"],
         "overall_passed": overall_passed,
         "runs": run_results,
+        "auto_review": auto_review,
     }

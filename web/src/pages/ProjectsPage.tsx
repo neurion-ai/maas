@@ -1109,7 +1109,12 @@ export function ProjectsPage({
                   className="hero-button hero-button--ghost hero-button--compact"
                   onClick={() => {
                     setSetupMode(null);
-                    onProjectFormChange({ ...projectForm, templateId: "" });
+                    onProjectFormChange({
+                      ...projectForm,
+                      mode: "greenfield",
+                      sourceRoot: "",
+                      templateId: "",
+                    });
                   }}
                 >
                   Hide setup

@@ -205,7 +205,13 @@ def retrieve_relevant_memory(connection, project_id, task_title, task_descriptio
         candidate_copy = dict(candidate)
         candidate_copy["score"] = score
         scored.append(candidate_copy)
-    scored.sort(key=lambda item: (-item["score"], item.get("promoted_at") or item["created_at"] or ""))
+    scored.sort(
+        key=lambda item: (
+            item["score"],
+            item.get("promoted_at") or item["created_at"] or "",
+        ),
+        reverse=True,
+    )
     return scored[:limit]
 
 

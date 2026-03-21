@@ -9,6 +9,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.memory import retrieve_relevant_memory
 class CodexMvpApiTest(unittest.TestCase):
     def test_issue_index_groups_review_and_blocked_work_with_batch_review_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -294,6 +295,106 @@ class CodexMvpApiTest(unittest.TestCase):
             detail_payload = detail_response.json()
             self.assertGreaterEqual(len(detail_payload["memory_context"]), 1)
             self.assertEqual(detail_payload["memory_context"][0]["artifact_id"], artifact_id)
+
+    def test_memory_retrieval_prefers_newer_promoted_items_on_score_ties(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Recency Test", description="codex memory recency", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Quant rollout runbook', description = 'Apply the latest quant rollout runbook.'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+
+                older_path = os.path.join(paths.artifacts_dir, "quant-runbook-old.txt")
+                with open(older_path, "w", encoding="utf-8") as handle:
+                    handle.write("quant rollout runbook\nold guidance\n")
+                newer_path = os.path.join(paths.artifacts_dir, "quant-runbook-new.txt")
+                with open(newer_path, "w", encoding="utf-8") as handle:
+                    handle.write("quant rollout runbook\nnew guidance\n")
+
+                older_artifact_id = generate_id("art")
+                newer_artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json, created_at
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?, ?)
+                    """,
+                    (
+                        older_artifact_id,
+                        task["project_id"],
+                        task["task_id"],
+                        older_path,
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Quant rollout runbook",
+                                    "summary": "Old guidance",
+                                    "tags": ["quant", "runbook"],
+                                    "promoted_at": "2026-03-20T10:00:00+00:00",
+                                    "promoted_by": "agent_allocator",
+                                }
+                            }
+                        ),
+                        "2026-03-20T10:00:00+00:00",
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json, created_at
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?, ?)
+                    """,
+                    (
+                        newer_artifact_id,
+                        task["project_id"],
+                        task["task_id"],
+                        newer_path,
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Quant rollout runbook",
+                                    "summary": "New guidance",
+                                    "tags": ["quant", "runbook"],
+                                    "promoted_at": "2026-03-21T10:00:00+00:00",
+                                    "promoted_by": "agent_allocator",
+                                }
+                            }
+                        ),
+                        "2026-03-21T10:00:00+00:00",
+                    ),
+                )
+                connection.commit()
+
+                memory_entries = retrieve_relevant_memory(
+                    connection,
+                    task["project_id"],
+                    "Quant rollout runbook",
+                    task_description="Apply the latest quant rollout runbook.",
+                    goal_title=None,
+                    limit=1,
+                )
+            finally:
+                connection.close()
+
+            self.assertEqual(len(memory_entries), 1)
+            self.assertEqual(memory_entries[0]["artifact_id"], newer_artifact_id)
 
     def test_memory_promotion_requires_authorized_actor(self):
         with tempfile.TemporaryDirectory() as tmpdir:

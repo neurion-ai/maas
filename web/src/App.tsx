@@ -114,7 +114,8 @@ const DEFAULT_PROJECT_FORM: ProjectFormState = {
   description: "",
   projectType: "custom",
   mode: "auto",
-  sourceRoot: ""
+  sourceRoot: "",
+  templateId: ""
 };
 
 function getInitialView(): View {
@@ -358,6 +359,7 @@ function AppShell() {
         mode: projectForm.mode,
         source_root: projectForm.sourceRoot.trim() || undefined,
         create_source_root: projectForm.mode === "greenfield" && !projectForm.sourceRoot.trim(),
+        template_id: projectForm.templateId || undefined,
       });
       await loadProjects(payload.project.project_id);
       setProjectForm(DEFAULT_PROJECT_FORM);

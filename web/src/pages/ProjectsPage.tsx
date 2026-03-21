@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchOverview,
   fetchPortfolio,
+  fetchProjectTemplates,
   pickLocalDirectory,
   runOrchestratorPass,
   runSupervisorPass,
@@ -11,7 +12,7 @@ import {
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { OverviewResponse, PortfolioProject, PortfolioResponse, ProjectSummary } from "../types";
+import type { OverviewResponse, PortfolioProject, PortfolioResponse, ProjectSummary, ProjectTemplate } from "../types";
 
 export interface ProjectFormState {
   name: string;
@@ -19,6 +20,7 @@ export interface ProjectFormState {
   projectType: string;
   mode: "auto" | "greenfield" | "brownfield";
   sourceRoot: string;
+  templateId: string;
 }
 
 interface ProjectsPageProps {
@@ -282,6 +284,7 @@ export function ProjectsPage({
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [pickingSourceRoot, setPickingSourceRoot] = useState(false);
   const [setupMode, setSetupMode] = useState<"new" | "import" | null>(null);
+  const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const livePulse = useLivePulse();
 
   const activeProjects = projects.filter((project) => project.state !== "archived");
@@ -302,13 +305,22 @@ export function ProjectsPage({
     let mounted = true;
 
     async function loadPageState() {
-      const portfolioPayload = await fetchPortfolio();
-      const overviewPayload = selectedProject ? await fetchOverview() : null;
-      if (!mounted) {
-        return;
+      try {
+        const [portfolioPayload, templatePayload] = await Promise.all([fetchPortfolio(), fetchProjectTemplates()]);
+        const overviewPayload = selectedProject ? await fetchOverview() : null;
+        if (!mounted) {
+          return;
+        }
+        setPortfolio(portfolioPayload);
+        setTemplates(templatePayload.templates);
+        setSelectedOverview(overviewPayload);
+        setNotice(null);
+      } catch {
+        if (!mounted) {
+          return;
+        }
+        setNotice("Projects refresh failed; showing the latest available project state.");
       }
-      setPortfolio(portfolioPayload);
-      setSelectedOverview(overviewPayload);
     }
 
     void loadPageState();
@@ -322,6 +334,21 @@ export function ProjectsPage({
       setSetupMode(null);
     }
   }, [projectForm, projectSubmitting]);
+
+  const visibleTemplates = useMemo(() => {
+    if (setupMode === "import") {
+      return templates.filter((template) => template.mode === "brownfield");
+    }
+    if (setupMode === "new") {
+      return templates.filter((template) => template.mode !== "brownfield");
+    }
+    return templates;
+  }, [setupMode, templates]);
+
+  const selectedTemplate = useMemo(
+    () => visibleTemplates.find((template) => template.id === projectForm.templateId) ?? null,
+    [projectForm.templateId, visibleTemplates]
+  );
 
   async function handleOrchestratorPass() {
     setPendingActionKey("orchestrator");
@@ -1056,7 +1083,7 @@ export function ProjectsPage({
                   className="hero-button hero-button--primary hero-button--compact"
                   onClick={() => {
                     setSetupMode("import");
-                    onProjectFormChange({ ...projectForm, mode: "brownfield" });
+                    onProjectFormChange({ ...projectForm, mode: "brownfield", templateId: "import-codex" });
                   }}
                 >
                   Import repo
@@ -1066,7 +1093,7 @@ export function ProjectsPage({
                   className="hero-button hero-button--ghost hero-button--compact"
                   onClick={() => {
                     setSetupMode("new");
-                    onProjectFormChange({ ...projectForm, mode: "greenfield", sourceRoot: "" });
+                    onProjectFormChange({ ...projectForm, mode: "greenfield", sourceRoot: "", templateId: "scratch-codex" });
                   }}
                 >
                   Fresh test workspace
@@ -1080,11 +1107,44 @@ export function ProjectsPage({
                 <button
                   type="button"
                   className="hero-button hero-button--ghost hero-button--compact"
-                  onClick={() => setSetupMode(null)}
+                  onClick={() => {
+                    setSetupMode(null);
+                    onProjectFormChange({
+                      ...projectForm,
+                      mode: "greenfield",
+                      sourceRoot: "",
+                      templateId: "",
+                    });
+                  }}
                 >
                   Hide setup
                 </button>
               </div>
+              {visibleTemplates.length ? (
+                <label className="field-control">
+                  <span>Template</span>
+                  <select
+                    value={projectForm.templateId}
+                    onChange={(event) => {
+                      const nextTemplate = visibleTemplates.find((template) => template.id === event.target.value) ?? null;
+                      onProjectFormChange({
+                        ...projectForm,
+                        templateId: event.target.value,
+                        mode: nextTemplate?.mode ?? projectForm.mode,
+                        projectType: nextTemplate?.project_type ?? projectForm.projectType,
+                      });
+                    }}
+                  >
+                    <option value="">No template</option>
+                    {visibleTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedTemplate ? <span className="field-hint">{selectedTemplate.description}</span> : null}
+                </label>
+              ) : null}
               <label className="field-control">
                 <span>Name</span>
                 <input
@@ -1120,8 +1180,14 @@ export function ProjectsPage({
                 </label>
               ) : (
                 <p className="project-form__hint">
-                  Leave the source root blank and MAAS will create a fresh workspace folder under{" "}
-                  <code>workspaces/&lt;project-name&gt;</code> in this repo root.
+                  {(selectedTemplate?.create_source_root ?? true)
+                    ? (
+                      <>
+                        Leave the source root blank and MAAS will create a fresh workspace folder under{" "}
+                        <code>workspaces/&lt;project-name&gt;</code> in this repo root.
+                      </>
+                    )
+                    : "This template expects an existing repo path instead of provisioning a fresh workspace."}
                 </p>
               )}
               <details className="advanced-pane">

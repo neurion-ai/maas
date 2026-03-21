@@ -5,7 +5,12 @@ import os
 import re
 import shutil
 
-from maas.config import DEFAULT_PROJECT_TYPE, build_default_project_config
+from maas.config import (
+    DEFAULT_PROJECT_TYPE,
+    build_default_project_config,
+    build_project_config_from_template,
+    resolve_project_template,
+)
 from maas.ids import generate_id
 from maas.services.bootstrap import (
     BROWNFIELD_REVIEW_TASK_TITLE,
@@ -371,15 +376,22 @@ def create_project(
     mode="auto",
     source_root=None,
     create_source_root=False,
+    template_id=None,
 ):
     cleaned_name = (name or "").strip()
     if not cleaned_name:
         raise ValueError("project name is required")
+    template = resolve_project_template(template_id) if template_id else None
+    auto_created_source_root = False
+    if template and create_source_root is False:
+        create_source_root = bool(template.get("create_source_root"))
+    if template and (not project_type):
+        project_type = template.get("project_type") or project_type
+    if template and mode == "auto":
+        mode = template.get("mode") or mode
     resolved_mode = mode or "auto"
     if resolved_mode not in ("auto", "greenfield", "brownfield"):
         raise ValueError("unsupported project mode")
-
-    auto_created_source_root = False
     if resolved_mode == "greenfield" and create_source_root and not source_root:
         resolved_source_root = _provision_greenfield_source_root(project_paths, cleaned_name)
         auto_created_source_root = True
@@ -387,14 +399,25 @@ def create_project(
         resolved_source_root = _normalize_source_root(project_paths, source_root)
     detected_mode = detect_bootstrap_mode(resolved_source_root) if resolved_mode == "auto" else resolved_mode
     discovery = discover_brownfield_project(resolved_source_root) if detected_mode == "brownfield" else None
-    config = build_default_project_config(
-        name=cleaned_name,
-        description=(description or "").strip(),
-        project_type=project_type or DEFAULT_PROJECT_TYPE,
-        onboarding_mode=detected_mode,
-        discovery_summary=build_discovery_summary(discovery),
-        source_root=resolved_source_root,
-    )
+    if template:
+        config = build_project_config_from_template(
+            template["id"],
+            name=cleaned_name,
+            description=(description or "").strip(),
+            project_type=project_type or DEFAULT_PROJECT_TYPE,
+            onboarding_mode=detected_mode,
+            discovery_summary=build_discovery_summary(discovery),
+            source_root=resolved_source_root,
+        )
+    else:
+        config = build_default_project_config(
+            name=cleaned_name,
+            description=(description or "").strip(),
+            project_type=project_type or DEFAULT_PROJECT_TYPE,
+            onboarding_mode=detected_mode,
+            discovery_summary=build_discovery_summary(discovery),
+            source_root=resolved_source_root,
+        )
     if detected_mode == "brownfield":
         onboarding = dict(config.get("onboarding") or {})
         onboarding["review_overrides"] = default_onboarding_review_overrides(onboarding.get("discovery_summary") or {})
@@ -431,6 +454,7 @@ def create_project(
             "source_root": resolved_source_root,
             "generated_source_root": auto_created_source_root,
             "name": cleaned_name,
+            "template_id": template["id"] if template else None,
         },
     )
     connection.commit()
@@ -479,6 +503,7 @@ def create_project(
             "discovery_path": project_paths.project_discovery_path(project_id) if discovery is not None else None,
             "source_root": resolved_source_root,
             "generated_source_root": auto_created_source_root,
+            "template_id": template["id"] if template else None,
         },
     }
 

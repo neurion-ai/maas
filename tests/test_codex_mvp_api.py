@@ -9,6 +9,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.memory import retrieve_relevant_memory
 class CodexMvpApiTest(unittest.TestCase):
     def test_issue_index_groups_review_and_blocked_work_with_batch_review_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -114,6 +115,406 @@ class CodexMvpApiTest(unittest.TestCase):
             detail_payload = detail_response.json()
             self.assertEqual(detail_payload["review_decision"]["status"], "low_risk_review")
             self.assertTrue(detail_payload["review_decision"]["batch_review_eligible"])
+
+    def test_batch_review_endpoint_approves_low_risk_items(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Batch Review Test", description="codex batch review", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_batch.py', 'passed', 0, '1 passed',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/issues/actions/batch-review",
+                json={
+                    "actor_id": "agent_allocator",
+                    "decision": "approve",
+                    "task_ids": [task["task_id"]],
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["decision"], "approve")
+
+            connection = connect(paths)
+            try:
+                task_row = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task_row["status"], "done")
+            self.assertEqual(task_row["review_state"], "approved")
+
+    def test_batch_review_endpoint_rejects_manual_only_items(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Manual Review Test", description="codex manual review", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 95, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                "/api/issues/actions/batch-review",
+                json={
+                    "actor_id": "agent_allocator",
+                    "decision": "approve",
+                    "task_ids": [task["task_id"]],
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("low-risk review threshold", response.json()["detail"])
+
+            connection = connect(paths)
+            try:
+                task_row = connection.execute(
+                    "SELECT status, review_state FROM tasks WHERE task_id = ?",
+                    (task["task_id"],),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(task_row["status"], "review")
+            self.assertEqual(task_row["review_state"], "review_requested")
+
+    def test_memory_promotion_feeds_memory_index_retrieval_and_issue_detail(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Test", description="codex memory", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Prepare quant packet', description = 'Use prior packet memory for review.'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "quant-packet.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("quant packet summary\nrisk notes and replay data\n")
+                artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, '{}')
+                    """,
+                    (artifact_id, task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            promote_response = client.post(
+                f"/api/artifacts/{artifact_id}/actions/promote-memory",
+                json={
+                    "actor_id": "agent_allocator",
+                    "title": "Quant packet memory",
+                    "summary": "Reusable packet summary for quant review.",
+                    "tags": ["quant", "packet"],
+                },
+            )
+            self.assertEqual(promote_response.status_code, 200)
+
+            memory_response = client.get("/api/memory")
+            self.assertEqual(memory_response.status_code, 200)
+            memory_payload = memory_response.json()
+            self.assertEqual(memory_payload["items"][0]["artifact_id"], artifact_id)
+            self.assertEqual(memory_payload["items"][0]["title"], "Quant packet memory")
+
+            retrieval_response = client.get("/api/retrieval/search", params={"search": "quant packet"})
+            self.assertEqual(retrieval_response.status_code, 200)
+            retrieval_payload = retrieval_response.json()
+            self.assertGreaterEqual(retrieval_payload["summary"]["memory_hits"], 1)
+            self.assertEqual(retrieval_payload["memory"][0]["artifact_id"], artifact_id)
+
+            detail_response = client.get(f"/api/issues/{task['task_id']}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertGreaterEqual(len(detail_payload["memory_context"]), 1)
+            self.assertEqual(detail_payload["memory_context"][0]["artifact_id"], artifact_id)
+
+    def test_memory_retrieval_prefers_newer_promoted_items_on_score_ties(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Recency Test", description="codex memory recency", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Quant rollout runbook', description = 'Apply the latest quant rollout runbook.'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+
+                older_path = os.path.join(paths.artifacts_dir, "quant-runbook-old.txt")
+                with open(older_path, "w", encoding="utf-8") as handle:
+                    handle.write("quant rollout runbook\nold guidance\n")
+                newer_path = os.path.join(paths.artifacts_dir, "quant-runbook-new.txt")
+                with open(newer_path, "w", encoding="utf-8") as handle:
+                    handle.write("quant rollout runbook\nnew guidance\n")
+
+                older_artifact_id = generate_id("art")
+                newer_artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json, created_at
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?, ?)
+                    """,
+                    (
+                        older_artifact_id,
+                        task["project_id"],
+                        task["task_id"],
+                        older_path,
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Quant rollout runbook",
+                                    "summary": "Old guidance",
+                                    "tags": ["quant", "runbook"],
+                                    "promoted_at": "2026-03-20T10:00:00+00:00",
+                                    "promoted_by": "agent_allocator",
+                                }
+                            }
+                        ),
+                        "2026-03-20T10:00:00+00:00",
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json, created_at
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?, ?)
+                    """,
+                    (
+                        newer_artifact_id,
+                        task["project_id"],
+                        task["task_id"],
+                        newer_path,
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Quant rollout runbook",
+                                    "summary": "New guidance",
+                                    "tags": ["quant", "runbook"],
+                                    "promoted_at": "2026-03-21T10:00:00+00:00",
+                                    "promoted_by": "agent_allocator",
+                                }
+                            }
+                        ),
+                        "2026-03-21T10:00:00+00:00",
+                    ),
+                )
+                connection.commit()
+
+                memory_entries = retrieve_relevant_memory(
+                    connection,
+                    task["project_id"],
+                    "Quant rollout runbook",
+                    task_description="Apply the latest quant rollout runbook.",
+                    goal_title=None,
+                    limit=1,
+                )
+            finally:
+                connection.close()
+
+            self.assertEqual(len(memory_entries), 1)
+            self.assertEqual(memory_entries[0]["artifact_id"], newer_artifact_id)
+
+    def test_memory_promotion_requires_authorized_actor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Permission Test", description="codex memory permission", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                artifact_path = os.path.join(paths.artifacts_dir, "memory-denied.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("secret memory\n")
+                artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, '{}')
+                    """,
+                    (artifact_id, task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.post(
+                f"/api/artifacts/{artifact_id}/actions/promote-memory",
+                json={"actor_id": "not_a_real_actor"},
+            )
+            self.assertEqual(response.status_code, 403)
+
+    def test_run_detail_exposes_memory_context_and_system_execution_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Run Memory Test", description="codex run memory", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    WHERE assigned_agent_id IS NOT NULL
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'active', 'openai_codex', 40,
+                        'Codex is using prior packet memory', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (session_id, task["project_id"], task["assigned_agent_id"], task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'memory_context_loaded', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        task["project_id"],
+                        task["assigned_agent_id"],
+                        task["task_id"],
+                        "Injected project memory into the Codex prompt.",
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "memory_items": [
+                                    {
+                                        "artifact_id": "art_mem_1",
+                                        "title": "Quant packet memory",
+                                        "summary": "Reusable packet context",
+                                        "tags": ["quant", "packet"],
+                                        "score": 3,
+                                    }
+                                ],
+                            }
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            run_response = client.get(f"/api/runs/{session_id}")
+            self.assertEqual(run_response.status_code, 200)
+            run_payload = run_response.json()
+            self.assertEqual(run_payload["session_id"], session_id)
+            self.assertGreaterEqual(len(run_payload["memory_context"]), 1)
+            self.assertEqual(run_payload["memory_context"][0]["artifact_id"], "art_mem_1")
+            self.assertGreaterEqual(len(run_payload["phases"]), 1)
+
+            diagnostics_response = client.get("/api/system/diagnostics")
+            self.assertEqual(diagnostics_response.status_code, 200)
+            diagnostics_payload = diagnostics_response.json()
+            self.assertIsNotNone(diagnostics_payload["execution_state"])
+            self.assertIn("state", diagnostics_payload["execution_state"])
 
     def test_retrieval_search_returns_issue_run_artifact_and_event_hits(self):
         with tempfile.TemporaryDirectory() as tmpdir:

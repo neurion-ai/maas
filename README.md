@@ -61,6 +61,8 @@ The next operator-value and capability batch is documented in [docs/implementati
 
 The current autonomy-scale follow-up batch is documented in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md).
 
+The current autopilot-and-memory batch is documented in [docs/implementation/16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md).
+
 The current integration branch replaces the old shell with real `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects` surfaces in the React app, backed by stable issue identity, issue detail read models, agent detail read models, and Codex-oriented system views.
 
 The frontend reset document for rebuilding the product from scratch is in [docs/implementation/10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
@@ -170,6 +172,8 @@ Current stacked development chain above `main`:
 The current operator-value and capability sequence in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md) is now implemented on `codex/codex-mvp-operator-scale`. It adds truthful queue posture, readiness-aware launch strategy, shared `Work`/`Issues` scopes, first-class run detail reads, stronger agent/system execution diagnostics, verification-driven auto-approval, and cleaner fresh-project lifecycle controls.
 
 The current autonomy-scale sequence in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md) is now implemented on `codex/codex-mvp-autonomy-scale`. It adds first-class `Runs`, backend-owned exception grouping, retrieval across issues/runs/artifacts/events, clone-for-fresh-run project lifecycle, stronger stale-run diagnostics, cross-project supervision in `Projects`, and an async attention loop with optional desktop notifications.
+
+The current autopilot-and-memory sequence in [docs/implementation/16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md) is now implemented on `codex/codex-mvp-autopilot-memory`. It adds project templates, project-level autopilot, memory promotion and retrieval-backed Codex prompts, backend-owned batch review, and stronger execution-state truth across `Command`, `Issues`, `System`, and issue detail.
 
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 

@@ -17,6 +17,7 @@ from maas.services.recovery_policy import (
     retry_deadline,
 )
 from maas.services.repo_plan import refresh_repo_grounded_plan
+from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.risk_policy import (
     evaluate_agent_action_risk,
     evaluate_task_action_risk,
@@ -516,6 +517,50 @@ def review_task(connection, task_id, actor_id, decision):
         raise ValueError("Task not found")
     ensure_board_action_allowed(connection, actor_id, task["project_id"], "review_task", "task", task_id)
     return apply_review_decision(connection, task_id, actor_id, decision, commit=True, automated=False)
+
+
+def batch_review_tasks(connection, task_ids, actor_id, decision):
+    resolved_ids = [task_id for task_id in (task_ids or []) if task_id]
+    if not resolved_ids:
+        raise ValueError("No review tasks selected")
+    results = []
+    for task_id in resolved_ids:
+        task = connection.execute(
+            """
+            SELECT task_id, project_id, title, status, priority, review_state
+            FROM tasks
+            WHERE task_id = ?
+            """,
+            (task_id,),
+        ).fetchone()
+        if task is None:
+            raise ValueError("Task not found")
+        ensure_board_action_allowed(connection, actor_id, task["project_id"], "review_task", "task", task_id)
+        project_policy = fetch_project_review_policy(connection, task["project_id"])
+        verification_runs = [
+            {"status": row["status"], "finished_at": row["finished_at"]}
+            for row in connection.execute(
+                """
+                SELECT status, finished_at
+                FROM verification_runs
+                WHERE task_id = ?
+                ORDER BY finished_at DESC, verification_run_id DESC
+                """,
+                (task_id,),
+            ).fetchall()
+        ]
+        review_state = evaluate_review_decision_state(
+            connection,
+            task,
+            project_policy,
+            verification_runs=verification_runs,
+            failure_count=failure_attempt_count(connection, task_id),
+        )
+        if not review_state.get("batch_review_eligible"):
+            raise ValueError(review_state.get("detail") or "Task is not eligible for batch review.")
+        results.append(apply_review_decision(connection, task_id, actor_id, decision, commit=False, automated=False))
+    connection.commit()
+    return {"task_ids": resolved_ids, "decision": decision, "results": results}
 
 
 def halt_task(connection, task_id, actor_id):

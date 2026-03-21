@@ -2,12 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchAlerts,
   fetchAgentRoster,
+  fetchAutopilotStatus,
   fetchCodexIssueIndex,
   fetchCodexRetrievalSearch,
   fetchIncidentTimeline,
   fetchOverview,
   fetchPortfolio,
   runOrchestratorPass,
+  updateProjectAutopilot,
   updateProjectProviderCapacity,
 } from "../lib/controlRoomApi";
 import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap } from "../lib/codexMvp";
@@ -15,7 +17,7 @@ import { getSelectedProjectId } from "../lib/projectScope";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { AlertItem, BoardTask, CodexRetrievalSearchResponse, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
+import type { AlertItem, AutopilotStatusResponse, BoardTask, CodexRetrievalSearchResponse, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
 
 type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects";
 
@@ -32,6 +34,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [project, setProject] = useState<PortfolioProject | null>(null);
+  const [autopilot, setAutopilot] = useState<AutopilotStatusResponse | null>(null);
   const [runningAgents, setRunningAgents] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -42,13 +45,14 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const livePulse = useLivePulse();
 
   async function loadCommand(signal?: AbortSignal) {
-    const [issueIndexPayload, overviewPayload, alertsPayload, timelinePayload, rosterPayload, portfolioPayload] = await Promise.all([
+    const [issueIndexPayload, overviewPayload, alertsPayload, timelinePayload, rosterPayload, portfolioPayload, autopilotPayload] = await Promise.all([
       fetchCodexIssueIndex(signal),
       fetchOverview(),
       fetchAlerts(),
       fetchIncidentTimeline({ limit: 18 }, signal),
       fetchAgentRoster(),
       fetchPortfolio(),
+      fetchAutopilotStatus(signal),
     ]);
     setOverview(overviewPayload);
     setTasks([
@@ -61,6 +65,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     setRecentFailureCount(issueIndexPayload.summary.recent_failures);
     setTimeline(timelinePayload.events);
     setRunningAgents(rosterPayload.agents.filter((agent) => agent.status === "running").length);
+    setAutopilot(autopilotPayload);
     const selectedProjectId = getSelectedProjectId();
     setProject(
       portfolioPayload.projects.find((item) => item.project_id === selectedProjectId) ??
@@ -219,6 +224,34 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     }
   }
 
+  async function handleAutopilotToggle(enabled: boolean) {
+    if (!project || !autopilot) {
+      return;
+    }
+    const startedAt = Date.now();
+    setPendingKey(enabled ? "autopilot-enable" : "autopilot-disable");
+    setNotice(null);
+    try {
+      await updateProjectAutopilot(project.project_id, {
+        enabled,
+        interval_seconds: autopilot.policy.interval_seconds,
+        allocate_limit: autopilot.policy.allocate_limit,
+        provider_job_limit: autopilot.policy.provider_job_limit,
+        auto_launch_assigned_work: autopilot.policy.auto_launch_assigned_work,
+        process_notifications: autopilot.policy.process_notifications,
+        notification_batch_limit: autopilot.policy.notification_batch_limit,
+      });
+      await loadCommand();
+      await holdPendingState(startedAt);
+      await loadCommand();
+      setNotice(enabled ? "Autopilot enabled for this project." : "Autopilot disabled for this project.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Could not update autopilot.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
   return (
     <section className="codex-page">
       <header className="codex-page__header">
@@ -284,6 +317,80 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
           <p>{alerts.filter((alert) => alert.status === "open").length} open alerts · {recentFailureCount} recent failures</p>
         </article>
       </div>
+
+      {autopilot ? (
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Autopilot</span>
+              <h2>Project execution loop</h2>
+            </div>
+            <div className="codex-detail-actions">
+              {autopilot.policy.enabled ? (
+                <button
+                  type="button"
+                  className="codex-button"
+                  disabled={pendingKey !== null || !project}
+                  onClick={() => void handleAutopilotToggle(false)}
+                >
+                  {pendingKey === "autopilot-disable" ? "Disabling..." : "Disable autopilot"}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="codex-button codex-button--primary"
+                  disabled={pendingKey !== null || !project}
+                  onClick={() => void handleAutopilotToggle(true)}
+                >
+                  {pendingKey === "autopilot-enable" ? "Enabling..." : "Enable autopilot"}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="codex-review-callout">
+            <strong>
+              {autopilot.runtime.running
+                ? "Autopilot loop is running."
+                : autopilot.policy.enabled
+                  ? "Autopilot is enabled and waiting for the next cycle."
+                  : "Autopilot is off for this project."}
+            </strong>
+            <p>{autopilot.why_idle}</p>
+            <div className="codex-review-facts">
+              <div className="codex-review-fact">
+                <span>Interval</span>
+                <strong>{autopilot.policy.interval_seconds}s</strong>
+              </div>
+              <div className="codex-review-fact">
+                <span>Loop count</span>
+                <strong>{autopilot.runtime.loop_count}</strong>
+              </div>
+              <div className="codex-review-fact">
+                <span>Heartbeat</span>
+                <strong>{formatTimestamp(autopilot.runtime.last_heartbeat_at ?? null)}</strong>
+              </div>
+              <div className="codex-review-fact">
+                <span>Notifications</span>
+                <strong>{autopilot.policy.process_notifications ? "on" : "off"}</strong>
+              </div>
+            </div>
+            {autopilot.runtime.last_summary ? (
+              <div className="codex-review-note">
+                Last cycle: {autopilot.runtime.last_summary.assigned_count} assigned ·{" "}
+                {(autopilot.runtime.last_summary.provider_jobs_processed ?? 0) +
+                  (autopilot.runtime.last_summary.provider_jobs_dispatched ?? 0)}{" "}
+                started · {autopilot.runtime.last_summary.provider_jobs_queued} queued ·{" "}
+                {autopilot.runtime.last_summary.notifications_processed} notifications processed.
+              </div>
+            ) : null}
+            {autopilot.runtime.last_error ? (
+              <div className="codex-review-note">
+                Last error: {autopilot.runtime.last_error}
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
 

@@ -3,7 +3,7 @@ import { CodexIssueScopeToolbar } from "../components/CodexIssueScopeToolbar";
 import { CodexIssueDetailPanel } from "../components/CodexIssueDetailPanel";
 import { boardCounts, formatTimestamp, issueKeyMap, priorityLabel, statusLabel } from "../lib/codexMvp";
 import { filterCodexTasks, useCodexIssueScope, useCodexScopeOptions } from "../lib/codexIssueScopes";
-import { fetchCodexIssueDetail, fetchCodexIssueIndex } from "../lib/controlRoomApi";
+import { batchReviewIssues, fetchCodexIssueDetail, fetchCodexIssueIndex } from "../lib/controlRoomApi";
 import { haltTask, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
@@ -148,9 +148,10 @@ export function CodexIssuesPage({ onNavigate }: { onNavigate: (view: ViewTarget)
     setPendingKey(`batch-review:${decision}`);
     setNotice(null);
     try {
-      for (const task of batchReviewItems) {
-        await reviewTask(task.task_id, decision);
-      }
+      await batchReviewIssues(
+        batchReviewItems.map((task) => task.task_id),
+        decision
+      );
       const refresh = await loadIssues();
       if (refresh.nextTaskId) {
         setDetail(await fetchCodexIssueDetail(refresh.nextTaskId));

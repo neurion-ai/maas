@@ -6,6 +6,7 @@ import os
 
 from maas.services.artifacts import fetch_artifacts
 from maas.services.git_workspaces import fetch_task_git_workspace
+from maas.services.memory import fetch_project_memory, retrieve_relevant_memory
 from maas.services.provider_jobs import fetch_provider_jobs
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.timeline import fetch_incident_timeline
@@ -14,6 +15,14 @@ from maas.services.verification import fetch_verification_runs
 
 RUN_CONSOLE_PREVIEW_MAX_CHARS = 6000
 STALE_RUN_HEARTBEAT_SECONDS = 90
+RUN_PHASE_LABELS = {
+    "session_started": "Session started",
+    "workspace_prepared": "Workspace prepared",
+    "execution_running": "Execution running",
+    "artifact_recorded": "Artifact recorded",
+    "session_completed": "Completed",
+    "session_failed": "Failed",
+}
 
 
 def _tail_console_preview(path):
@@ -72,6 +81,218 @@ def _age_seconds(value):
     if parsed is None:
         return None
     return max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
+
+
+def _execution_explanation(connection, project_id):
+    task_summary = connection.execute(
+        """
+        SELECT
+            SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready_tasks,
+            SUM(CASE WHEN status = 'assigned' THEN 1 ELSE 0 END) AS assigned_tasks,
+            SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) AS active_tasks,
+            SUM(CASE WHEN status = 'review' THEN 1 ELSE 0 END) AS review_tasks,
+            SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END) AS blocked_tasks
+        FROM tasks
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    project_row = connection.execute(
+        "SELECT config_json FROM projects WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    config = _load_json(project_row["config_json"] if project_row else "{}")
+    provider_capacity = config.get("provider_capacity") or {}
+    queue_mode = provider_capacity.get("queue_mode") or "running"
+    ready_tasks = task_summary["ready_tasks"] or 0
+    assigned_tasks = task_summary["assigned_tasks"] or 0
+    active_tasks = task_summary["active_tasks"] or 0
+    review_tasks = task_summary["review_tasks"] or 0
+    blocked_tasks = task_summary["blocked_tasks"] or 0
+    if active_tasks:
+        return {
+            "state": "running",
+            "summary": "MAAS is actively executing work.",
+            "detail": "Live Codex runs are in progress and the queue is moving.",
+        }
+    if queue_mode == "paused":
+        return {
+            "state": "paused",
+            "summary": "Launches are paused.",
+            "detail": "Assigned work will not start until launch posture is resumed.",
+        }
+    if queue_mode == "draining":
+        return {
+            "state": "draining",
+            "summary": "Queue is draining.",
+            "detail": "Queued and running jobs can finish, but newly assigned work will not launch.",
+        }
+    if review_tasks and not ready_tasks and not assigned_tasks:
+        return {
+            "state": "waiting_for_review",
+            "summary": "Work is waiting on review decisions.",
+            "detail": "Operator review or auto-approval policy is the current gate on forward progress.",
+        }
+    if assigned_tasks:
+        return {
+            "state": "waiting_for_launch",
+            "summary": "Assigned work is waiting to launch.",
+            "detail": "The next cycle or provider readiness is the only thing stopping new Codex runs.",
+        }
+    if ready_tasks:
+        return {
+            "state": "waiting_for_assignment",
+            "summary": "Ready work exists but has not been assigned yet.",
+            "detail": "The next cycle should allocate ready issues to an agent.",
+        }
+    if blocked_tasks:
+        return {
+            "state": "blocked",
+            "summary": "The remaining work is blocked.",
+            "detail": "Recovery, dependency clearing, or replanning is required before the project can continue.",
+        }
+    return {
+        "state": "idle",
+        "summary": "No runnable work exists right now.",
+        "detail": "There are no ready, assigned, or active issues in this project.",
+    }
+
+
+def _derive_run_phases(activity, status):
+    discovered = {}
+    for event in activity:
+        details = event.get("details") or {}
+        phase = details.get("phase")
+        if phase and phase not in discovered:
+            discovered[phase] = {
+                "key": phase,
+                "label": RUN_PHASE_LABELS.get(phase, phase.replace("_", " ")),
+                "timestamp": event.get("created_at"),
+                "description": event.get("description"),
+                "status": "completed",
+            }
+    ordered_keys = ["session_started", "workspace_prepared", "execution_running", "artifact_recorded", "session_completed"]
+    phases = []
+    seen_terminal = False
+    for key in ordered_keys:
+        phase = discovered.get(key)
+        if phase:
+            phases.append(phase)
+            if key == "session_completed":
+                seen_terminal = True
+            continue
+        inferred_status = "pending"
+        if status == "active" and key == "execution_running":
+            inferred_status = "active"
+        phases.append({"key": key, "label": RUN_PHASE_LABELS.get(key, key.replace("_", " ")), "timestamp": None, "description": None, "status": inferred_status})
+    failure_phase = discovered.get("session_failed")
+    if failure_phase:
+        failure_phase["status"] = "failed"
+        phases.append(failure_phase)
+        seen_terminal = True
+    if status == "cancelled" and not seen_terminal:
+        phases.append(
+            {
+                "key": "session_cancelled",
+                "label": "Cancelled",
+                "timestamp": None,
+                "description": "Operator cancelled the run before completion.",
+                "status": "failed",
+            }
+        )
+    return phases
+
+
+def _run_memory_context(activity):
+    for event in activity:
+        if event.get("action") != "memory_context_loaded":
+            continue
+        details = event.get("details") or {}
+        return details.get("memory_items") or []
+    return []
+
+
+def _issue_recovery_playbook(task_row, review_decision, failure_count, latest_run, verification_runs):
+    if task_row["status"] == "review":
+        return {
+            "kind": "review",
+            "title": "Review the latest output",
+            "summary": review_decision["summary"],
+            "detail": review_decision["detail"],
+            "recommended_action": "Approve it if the output and checks look correct; request changes otherwise.",
+            "actions": ["approve", "reject"],
+            "confidence": "high" if review_decision.get("batch_review_eligible") else "medium",
+        }
+    if task_row["status"] == "blocked":
+        reason = task_row["review_state"] or "blocked"
+        if failure_count or reason in {"session_failed", "timed_out", "retry_budget_exhausted", "circuit_breaker_open"}:
+            return {
+                "kind": "recovery",
+                "title": "Recover the issue before running it again",
+                "summary": "The issue is blocked by a failed or exhausted execution path.",
+                "detail": "Inspect the latest run trace, then recover, requeue, or replan depending on whether the failure was transient.",
+                "recommended_action": "Recover + requeue if the run failed transiently, or mark for replan if the output path was wrong.",
+                "actions": ["recover", "requeue", "replan"],
+                "confidence": "high",
+            }
+        return {
+            "kind": "dependency",
+            "title": "Unblock the dependency chain",
+            "summary": "The issue is blocked by upstream work or a pending operator decision.",
+            "detail": "Open the linked issues and clear the dependency or review gate before expecting this issue to move again.",
+            "recommended_action": "Inspect dependencies first; only recover this issue if the upstream cause is already resolved.",
+            "actions": ["open_dependencies", "replan"],
+            "confidence": "medium",
+        }
+    if task_row["status"] == "in_progress":
+        return {
+            "kind": "running",
+            "title": "Let Codex continue unless the run looks stale",
+            "summary": "A live run is actively working on this issue.",
+            "detail": (latest_run.get("diagnostic_summary") or latest_run.get("status_message")) if latest_run else "The issue currently has an active execution session.",
+            "recommended_action": "Watch the run trace and only stop it if the output tail or heartbeat suggests it is stuck.",
+            "actions": ["open_run", "stop"],
+            "confidence": "medium",
+        }
+    if task_row["status"] == "assigned":
+        return {
+            "kind": "launch",
+            "title": "Assigned work is waiting to launch",
+            "summary": "The issue already has an owner but no active run yet.",
+            "detail": "Launch posture, provider readiness, or the next cycle is the current gate.",
+            "recommended_action": "Run the next cycle or resume launches if the queue is paused.",
+            "actions": ["run_cycle"],
+            "confidence": "medium",
+        }
+    if task_row["status"] == "ready":
+        return {
+            "kind": "ready",
+            "title": "Ready for assignment",
+            "summary": "This issue is ready but has not been allocated yet.",
+            "detail": "A scheduler cycle will pick an owner and move it forward.",
+            "recommended_action": "Run the next cycle and let MAAS allocate it.",
+            "actions": ["run_cycle"],
+            "confidence": "high",
+        }
+    if task_row["status"] in {"done", "cancelled"}:
+        return {
+            "kind": "resolved",
+            "title": "Resolved history",
+            "summary": "This issue no longer needs operator intervention.",
+            "detail": "Use the run and artifact history for audit, reuse, or memory promotion.",
+            "recommended_action": "Promote a useful output to memory if this result should influence future runs.",
+            "actions": ["promote_memory"],
+            "confidence": "high",
+        }
+    return {
+        "kind": "idle",
+        "title": "No immediate intervention required",
+        "summary": "This issue is not currently in a state that needs operator action.",
+        "detail": "Inspect the latest output and relationships if you need more context.",
+        "recommended_action": "Let the system continue unless a related alert or run suggests otherwise.",
+        "actions": [],
+        "confidence": "low",
+    }
 
 
 def _run_row_to_dict(row, issue_keys):
@@ -553,6 +774,7 @@ def fetch_system_diagnostics(connection, project_id):
             "oldest_queued_at": oldest_queued_at,
             "oldest_running_at": oldest_running_at,
         },
+        "execution_state": _execution_explanation(connection, project_id),
         "suspect_runs": suspect_runs,
         "stale_agents": stale_agents,
         "queue_pressure": {
@@ -581,11 +803,13 @@ def fetch_retrieval_search(connection, project_id=None, search="", goal_id=None,
                 "run_hits": 0,
                 "artifact_hits": 0,
                 "event_hits": 0,
+                "memory_hits": 0,
             },
             "issues": [],
             "runs": [],
             "artifacts": [],
             "events": [],
+            "memory": [],
         }
 
     issue_keys = issue_key_lookup(connection, project_id)
@@ -872,6 +1096,10 @@ def fetch_retrieval_search(connection, project_id=None, search="", goal_id=None,
         for row in event_rows
     ]
 
+    memory = fetch_project_memory(connection, project_id, limit=safe_limit, search=search_value) if project_id is not None else []
+    if goal_id or agent_id or priority_min is not None:
+        memory = [item for item in memory if not goal_id and not agent_id and priority_min is None]
+
     return {
         "query": {
             "search": search_value,
@@ -880,16 +1108,18 @@ def fetch_retrieval_search(connection, project_id=None, search="", goal_id=None,
             "priority_min": priority_min,
         },
         "summary": {
-            "total_hits": len(issues) + len(runs) + len(artifacts) + len(events),
+            "total_hits": len(issues) + len(runs) + len(artifacts) + len(events) + len(memory),
             "issue_hits": len(issues),
             "run_hits": len(runs),
             "artifact_hits": len(artifacts),
             "event_hits": len(events),
+            "memory_hits": len(memory),
         },
         "issues": issues,
         "runs": runs,
         "artifacts": artifacts,
         "events": events,
+        "memory": memory,
     }
 
 
@@ -978,6 +1208,15 @@ def fetch_run_detail(connection, project_paths, project_id, session_id):
     activity = _session_activity(connection, project_id, row["task_id"], session_id, limit=24)
     start_details = _session_start_details(connection, project_id, row["task_id"], session_id)
     artifacts = _session_artifacts(connection, project_paths, project_id, session_id)
+    phases = _derive_run_phases(activity, row["status"])
+    current_step = next(
+        (
+            event["description"]
+            for event in activity
+            if event.get("description")
+        ),
+        row["status_message"],
+    )
     return {
         **_run_row_to_dict(
             {
@@ -1007,6 +1246,9 @@ def fetch_run_detail(connection, project_paths, project_id, session_id):
         "timeout_seconds": start_details.get("timeout_seconds"),
         "command": start_details.get("command"),
         "runtime_root": start_details.get("runtime_root") or envelope_root,
+        "current_step": current_step,
+        "phases": phases,
+        "memory_context": _run_memory_context(activity),
         "output_preview": output_preview,
         "stdout_preview": stdout_preview,
         "stderr_preview": stderr_preview,
@@ -1228,6 +1470,22 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         filters={"task_id": task_id},
         project_id=project_id,
     )
+    related_memory = retrieve_relevant_memory(
+        connection,
+        project_id,
+        task_row["title"],
+        task_description=task_row["description"],
+        goal_title=task_row["goal_title"],
+        limit=4,
+    )
+    latest_run = runs[0] if runs else None
+    recovery_playbook = _issue_recovery_playbook(
+        dict(task_row),
+        review_decision,
+        (failure_count_row["count"] if failure_count_row else 0),
+        latest_run,
+        verification_runs,
+    )
 
     return {
         "task": {
@@ -1262,5 +1520,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "artifact_summary": artifact_payload["summary"],
         "verification_runs": verification_runs,
         "review_decision": review_decision,
+        "recovery_playbook": recovery_playbook,
+        "memory_context": related_memory,
         "git_workspace": git_workspace,
     }

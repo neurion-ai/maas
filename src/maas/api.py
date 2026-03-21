@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from maas.config import list_project_templates
 from maas.db import connect, project_paths
 from maas.paths import ProjectPaths
 from maas.services.alerts import fetch_alerts, update_alert_status
@@ -17,6 +18,12 @@ from maas.services.artifacts import (
     fetch_artifacts,
     resolve_artifact_download,
 )
+from maas.services.autopilot import (
+    fetch_autopilot_status,
+    sync_enabled_autopilots,
+    stop_all_autopilots,
+    update_project_autopilot_policy,
+)
 from maas.services.board import fetch_board, fetch_issue_index
 from maas.services.codex_mvp import (
     fetch_agent_detail,
@@ -26,6 +33,7 @@ from maas.services.codex_mvp import (
     fetch_runs,
     fetch_system_diagnostics,
 )
+from maas.services.memory import fetch_project_memory, promote_artifact_to_memory
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -75,6 +83,7 @@ from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
     dismiss_quarantine_entry,
+    batch_review_tasks,
     cancel_run,
     recover_and_requeue_task,
     finish_task_replan,
@@ -146,6 +155,12 @@ class EndSessionRequest(BaseModel):
 class ReviewTaskRequest(BaseModel):
     actor_id: str
     decision: str
+
+
+class BatchReviewTasksRequest(BaseModel):
+    actor_id: str
+    decision: str
+    task_ids: List[str]
 
 
 class ReprioritizeTaskRequest(BaseModel):
@@ -275,11 +290,30 @@ class ProjectCreateRequest(BaseModel):
     mode: str = "auto"
     source_root: Optional[str] = None
     create_source_root: bool = False
+    template_id: Optional[str] = None
 
 
 class ProjectCloneRequest(BaseModel):
     actor_id: str = "agent_allocator"
     name: Optional[str] = None
+
+
+class ProjectAutopilotRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    enabled: bool
+    interval_seconds: int = 20
+    allocate_limit: int = 6
+    provider_job_limit: int = 4
+    auto_launch_assigned_work: bool = True
+    process_notifications: bool = True
+    notification_batch_limit: int = 5
+
+
+class MemoryPromotionRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    title: Optional[str] = None
+    summary: Optional[str] = None
+    tags: List[str] = []
 
 
 class ProjectOnboardingReviewUpdateRequest(BaseModel):
@@ -374,6 +408,14 @@ def create_app(project_root="."):
         allow_headers=["*"],
     )
 
+    @app.on_event("startup")
+    def _startup_autopilot():
+        sync_enabled_autopilots(paths)
+
+    @app.on_event("shutdown")
+    def _shutdown_autopilot():
+        stop_all_autopilots(paths)
+
     @app.get("/api/health")
     def health():
         return {"status": "ok", "project_root": paths.root}
@@ -386,11 +428,15 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/projects/templates")
+    def project_templates():
+        return {"templates": list_project_templates()}
+
     @app.post("/api/projects")
     def projects_create(payload: ProjectCreateRequest):
         connection = connect(paths)
         try:
-            return create_project(
+            result = create_project(
                 connection,
                 paths,
                 actor_id=payload.actor_id,
@@ -400,7 +446,10 @@ def create_app(project_root="."):
                 mode=payload.mode,
                 source_root=payload.source_root,
                 create_source_root=payload.create_source_root,
+                template_id=payload.template_id,
             )
+            sync_enabled_autopilots(paths)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -410,7 +459,9 @@ def create_app(project_root="."):
     def projects_clone(project_id: str, payload: ProjectCloneRequest):
         connection = connect(paths)
         try:
-            return clone_project(connection, paths, project_id, payload.actor_id, name=payload.name)
+            result = clone_project(connection, paths, project_id, payload.actor_id, name=payload.name)
+            sync_enabled_autopilots(paths)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -427,7 +478,9 @@ def create_app(project_root="."):
     def projects_archive(project_id: str, payload: AgentActionRequest):
         connection = connect(paths)
         try:
-            return archive_project(connection, project_id, payload.actor_id)
+            result = archive_project(connection, project_id, payload.actor_id)
+            sync_enabled_autopilots(paths)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -437,7 +490,9 @@ def create_app(project_root="."):
     def projects_restore(project_id: str, payload: AgentActionRequest):
         connection = connect(paths)
         try:
-            return restore_project(connection, project_id, payload.actor_id)
+            result = restore_project(connection, project_id, payload.actor_id)
+            sync_enabled_autopilots(paths)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -447,7 +502,9 @@ def create_app(project_root="."):
     def projects_delete(project_id: str, payload: AgentActionRequest):
         connection = connect(paths)
         try:
-            return delete_project(connection, paths, project_id, payload.actor_id)
+            result = delete_project(connection, paths, project_id, payload.actor_id)
+            sync_enabled_autopilots(paths)
+            return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -552,6 +609,32 @@ def create_app(project_root="."):
                     "auto_approve_low_risk": payload.auto_approve_low_risk,
                     "max_priority_for_auto_approve": payload.max_priority_for_auto_approve,
                     "require_verification_pass": payload.require_verification_pass,
+                },
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-autopilot")
+    def projects_update_autopilot(project_id: str, payload: ProjectAutopilotRequest):
+        connection = connect(paths)
+        try:
+            return update_project_autopilot_policy(
+                connection,
+                paths,
+                project_id,
+                payload.actor_id,
+                {
+                    "enabled": payload.enabled,
+                    "interval_seconds": payload.interval_seconds,
+                    "allocate_limit": payload.allocate_limit,
+                    "provider_job_limit": payload.provider_job_limit,
+                    "auto_launch_assigned_work": payload.auto_launch_assigned_work,
+                    "process_notifications": payload.process_notifications,
+                    "notification_batch_limit": payload.notification_batch_limit,
                 },
             )
         except PermissionError as exc:
@@ -930,6 +1013,31 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/memory")
+    def memory_index(project_id: str = None, search: str = "", limit: int = 20):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return {
+                "items": fetch_project_memory(
+                    connection,
+                    scoped_project_id,
+                    limit=int(limit),
+                    search=search or None,
+                )
+            }
+        finally:
+            connection.close()
+
+    @app.get("/api/autopilot/status")
+    def autopilot_status(project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_autopilot_status(connection, paths, scoped_project_id)
+        finally:
+            connection.close()
+
     @app.get("/api/retrieval/search")
     def retrieval_search(
         search: str,
@@ -963,6 +1071,18 @@ def create_app(project_root="."):
             if payload is None:
                 raise HTTPException(status_code=404, detail="issue not found")
             return payload
+        finally:
+            connection.close()
+
+    @app.post("/api/issues/actions/batch-review")
+    def issue_batch_review(payload: BatchReviewTasksRequest):
+        connection = connect(paths)
+        try:
+            return batch_review_tasks(connection, payload.task_ids, payload.actor_id, payload.decision)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 
@@ -1007,6 +1127,25 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return cancel_run(connection, session_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/artifacts/{artifact_id}/actions/promote-memory")
+    def artifact_promote_memory(artifact_id: str, payload: MemoryPromotionRequest):
+        connection = connect(paths)
+        try:
+            return promote_artifact_to_memory(
+                connection,
+                artifact_id,
+                payload.actor_id,
+                title=payload.title,
+                summary=payload.summary,
+                tags=payload.tags,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

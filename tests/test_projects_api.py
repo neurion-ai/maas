@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
+from maas.services.autopilot import _AUTOPILOT_THREADS
 from maas.services.bootstrap import bootstrap_project
 from maas.services.provider_runtime import queue_provider_task
 from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
@@ -79,6 +80,130 @@ lint = "imported:lint"
             self.assertEqual(payload["projects"][1]["name"], "Second Project")
             self.assertEqual(payload["projects"][1]["state"], "active")
             self.assertEqual(payload["projects"][1]["onboarding_mode"], "greenfield")
+
+    def test_project_templates_are_listed_and_can_seed_project_defaults(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            templates_response = client.get("/api/projects/templates")
+            self.assertEqual(templates_response.status_code, 200)
+            templates_payload = templates_response.json()
+            template_ids = {item["id"] for item in templates_payload["templates"]}
+            self.assertIn("scratch-codex", template_ids)
+            self.assertIn("import-codex", template_ids)
+            self.assertIn("research-loop", template_ids)
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Research Loop",
+                    "description": "research template",
+                    "project_type": "research",
+                    "mode": "greenfield",
+                    "template_id": "research-loop",
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            create_payload = create_response.json()
+            self.assertEqual(create_payload["metadata"]["template_id"], "research-loop")
+            self.assertTrue(create_payload["metadata"]["generated_source_root"])
+
+            project_id = create_payload["project"]["project_id"]
+            portfolio_payload = client.get("/api/portfolio").json()
+            project_row = next(item for item in portfolio_payload["projects"] if item["project_id"] == project_id)
+            self.assertEqual(project_row["provider_capacity"]["preferred_provider_id"], "openai_codex")
+            self.assertEqual(project_row["provider_capacity"]["max_running_jobs"], 3)
+            self.assertEqual(project_row["review_policy"]["max_priority_for_auto_approve"], 55)
+
+    def test_update_autopilot_persists_and_status_endpoint_reflects_it(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-autopilot",
+                json={
+                    "actor_id": "agent_allocator",
+                    "enabled": True,
+                    "interval_seconds": 9,
+                    "allocate_limit": 3,
+                    "provider_job_limit": 2,
+                    "auto_launch_assigned_work": True,
+                    "process_notifications": False,
+                    "notification_batch_limit": 1,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertTrue(payload["policy"]["enabled"])
+            self.assertEqual(payload["policy"]["interval_seconds"], 9)
+            self.assertEqual(payload["policy"]["allocate_limit"], 3)
+            self.assertFalse(payload["policy"]["process_notifications"])
+
+            status_response = client.get("/api/autopilot/status", params={"project_id": project_id})
+            self.assertEqual(status_response.status_code, 200)
+            status_payload = status_response.json()
+            self.assertEqual(status_payload["project_id"], project_id)
+            self.assertTrue(status_payload["policy"]["enabled"])
+            self.assertEqual(status_payload["policy"]["interval_seconds"], 9)
+            self.assertEqual(status_payload["policy"]["provider_job_limit"], 2)
+            self.assertFalse(status_payload["policy"]["process_notifications"])
+            self.assertTrue(status_payload["runtime"]["enabled"])
+
+    def test_archiving_project_stops_autopilot_loop(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            projects_payload = client.get("/api/projects").json()["projects"]
+            project_id = projects_payload[0]["project_id"]
+            connection = connect(project_paths(tmpdir))
+            try:
+                connection.execute("UPDATE tasks SET status = 'done', review_state = 'approved' WHERE project_id = ?", (project_id,))
+                connection.execute(
+                    "UPDATE sessions SET status = 'completed', ended_at = CURRENT_TIMESTAMP WHERE project_id = ? AND status = 'active'",
+                    (project_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Second Project",
+                    "description": "secondary",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-autopilot",
+                json={
+                    "actor_id": "agent_allocator",
+                    "enabled": True,
+                    "interval_seconds": 9,
+                    "allocate_limit": 2,
+                    "provider_job_limit": 1,
+                    "auto_launch_assigned_work": True,
+                    "process_notifications": False,
+                    "notification_batch_limit": 1,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertIn((tmpdir, project_id), _AUTOPILOT_THREADS)
+
+            archive_response = client.post(
+                f"/api/projects/{project_id}/actions/archive",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(archive_response.status_code, 200)
+            self.assertNotIn((tmpdir, project_id), _AUTOPILOT_THREADS)
 
     def test_greenfield_create_can_provision_a_fresh_workspace_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:

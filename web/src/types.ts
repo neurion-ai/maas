@@ -299,6 +299,7 @@ export interface ProjectCreateRequest {
   mode: "auto" | "greenfield" | "brownfield";
   source_root?: string;
   create_source_root?: boolean;
+  template_id?: string;
 }
 
 export interface ProjectCreateResponse {
@@ -310,7 +311,52 @@ export interface ProjectCreateResponse {
     source_root: string;
     generated_source_root?: boolean;
     cloned_from_project_id?: string;
+    template_id?: string | null;
   };
+}
+
+export interface ProjectTemplate {
+  id: string;
+  name: string;
+  description: string;
+  mode: "auto" | "greenfield" | "brownfield";
+  project_type: string;
+  create_source_root: boolean;
+}
+
+export interface ProjectTemplatesResponse {
+  templates: ProjectTemplate[];
+}
+
+export interface AutopilotStatusResponse {
+  project_id: string;
+  policy: {
+    enabled: boolean;
+    interval_seconds: number;
+    allocate_limit: number;
+    provider_job_limit: number;
+    auto_launch_assigned_work: boolean;
+    process_notifications: boolean;
+    notification_batch_limit: number;
+  };
+  runtime: {
+    project_id: string;
+    enabled: boolean;
+    running: boolean;
+    policy: AutopilotStatusResponse["policy"];
+    last_heartbeat_at?: string | null;
+    last_summary?: {
+      assigned_count: number;
+      provider_jobs_queued: number;
+      provider_jobs_processed: number;
+      provider_jobs_dispatched: number;
+      notifications_processed: number;
+      why_idle?: string | null;
+    } | null;
+    last_error?: string | null;
+    loop_count: number;
+  };
+  why_idle: string;
 }
 
 export interface ProjectActionResponse {
@@ -1374,9 +1420,25 @@ export interface CodexRunDetailResponse {
   is_stale?: boolean;
   diagnostic_summary?: string | null;
   recommended_action?: string | null;
+  current_step?: string | null;
   timeout_seconds?: number | null;
   command?: string[] | null;
   runtime_root?: string | null;
+  phases?: Array<{
+    key: string;
+    label: string;
+    timestamp?: string | null;
+    description?: string | null;
+    status: string;
+  }>;
+  memory_context?: Array<{
+    artifact_id: string;
+    task_id?: string | null;
+    title?: string | null;
+    summary?: string | null;
+    tags?: string[];
+    score?: number;
+  }>;
   output_preview?: CodexRunConsolePreview | null;
   stdout_preview?: CodexRunConsolePreview | null;
   stderr_preview?: CodexRunConsolePreview | null;
@@ -1445,6 +1507,11 @@ export interface CodexSystemDiagnosticsResponse {
     running_jobs: number;
     oldest_queued_at?: string | null;
     oldest_running_at?: string | null;
+  };
+  execution_state?: {
+    state: string;
+    summary: string;
+    detail: string;
   };
   suspect_runs: CodexRunListItem[];
   stale_agents: Array<{
@@ -1604,6 +1671,33 @@ export interface CodexIssueDetailResponse {
     summary: string;
     detail: string;
   };
+  recovery_playbook?: {
+    kind: string;
+    title: string;
+    summary: string;
+    detail: string;
+    recommended_action: string;
+    actions: string[];
+    confidence: string;
+  };
+  memory_context?: Array<{
+    artifact_id: string;
+    task_id?: string | null;
+    session_id?: string | null;
+    artifact_type?: string | null;
+    path?: string | null;
+    created_at?: string | null;
+    title?: string | null;
+    summary?: string | null;
+    tags?: string[];
+    promoted_at?: string | null;
+    promoted_by?: string | null;
+    preview?: {
+      content?: string;
+      truncated?: boolean;
+    } | null;
+    score?: number;
+  }>;
   git_workspace?: {
     workspace_id: string;
     task_id: string;
@@ -1722,9 +1816,28 @@ export interface CodexRetrievalSearchResponse {
     run_hits: number;
     artifact_hits: number;
     event_hits: number;
+    memory_hits: number;
   };
   issues: CodexRetrievalIssueHit[];
   runs: CodexRetrievalRunHit[];
   artifacts: CodexRetrievalArtifactHit[];
   events: CodexRetrievalEventHit[];
+  memory: Array<{
+    artifact_id: string;
+    task_id?: string | null;
+    session_id?: string | null;
+    artifact_type?: string | null;
+    path?: string | null;
+    created_at?: string | null;
+    title?: string | null;
+    summary?: string | null;
+    tags?: string[];
+    promoted_at?: string | null;
+    promoted_by?: string | null;
+    preview?: {
+      content?: string;
+      truncated?: boolean;
+    } | null;
+    score?: number;
+  }>;
 }

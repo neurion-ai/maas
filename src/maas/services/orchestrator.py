@@ -4,9 +4,12 @@ import json
 
 from maas.ids import generate_id
 from maas.providers import get_provider_runtime_settings, list_provider_status, provider_run_targets
+from maas.services.failure_memory import failure_attempt_count
 from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.provider_runtime import process_next_provider_job, queue_provider_task
 from maas.services.provider_workers import launch_detached_provider_workers
+from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
+from maas.services.steering import apply_review_decision
 from maas.supervisor import run_supervisor_once
 
 
@@ -148,6 +151,54 @@ def _queued_provider_job_count(connection, project_id, provider_id):
     return int(row["queued_jobs"]) if row is not None else 0
 
 
+def _latest_verification_by_task(connection, project_id):
+    rows = connection.execute(
+        """
+        SELECT task_id, status, finished_at
+        FROM verification_runs
+        WHERE project_id = ?
+        ORDER BY finished_at DESC, verification_run_id DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    latest = {}
+    for row in rows:
+        latest.setdefault(row["task_id"], []).append({"status": row["status"], "finished_at": row["finished_at"]})
+    return latest
+
+
+def _auto_approve_low_risk_reviews(connection, project_id):
+    project_policy = fetch_project_review_policy(connection, project_id)
+    if not project_policy.get("auto_approve_low_risk", False):
+        return []
+    verification_by_task = _latest_verification_by_task(connection, project_id)
+    rows = connection.execute(
+        """
+        SELECT task_id, project_id, title, status, priority, review_state
+        FROM tasks
+        WHERE project_id = ?
+          AND status = 'review'
+        ORDER BY priority DESC, created_at ASC
+        LIMIT 25
+        """,
+        (project_id,),
+    ).fetchall()
+    approved = []
+    for row in rows:
+        state = evaluate_review_decision_state(
+            connection,
+            dict(row),
+            project_policy,
+            verification_runs=verification_by_task.get(row["task_id"], []),
+            failure_count=failure_attempt_count(connection, row["task_id"]),
+        )
+        if not state.get("auto_approve_eligible"):
+            continue
+        apply_review_decision(connection, row["task_id"], "agent_allocator", "approve", commit=False, automated=True)
+        approved.append(row["task_id"])
+    return approved
+
+
 def run_orchestrator_once(
     connection,
     project_paths,
@@ -167,8 +218,11 @@ def run_orchestrator_once(
     total_jobs_queued = 0
     total_jobs_processed = 0
     total_jobs_dispatched = 0
+    total_auto_approved_reviews = 0
     for project_run in supervisor_result["project_runs"]:
         scoped_project_id = project_run["project_id"]
+        auto_approved_reviews = _auto_approve_low_risk_reviews(connection, scoped_project_id)
+        total_auto_approved_reviews += len(auto_approved_reviews)
         queued_jobs = []
         processed_jobs = []
         dispatched_worker_ids = []
@@ -188,6 +242,7 @@ def run_orchestrator_once(
                 "provider_jobs_queued": 0,
                 "provider_jobs_processed": 0,
                 "provider_jobs_dispatched": 0,
+                "auto_approved_reviews": len(auto_approved_reviews),
                 "launch_provider_id": None,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
@@ -202,6 +257,7 @@ def run_orchestrator_once(
                     "processed_jobs": [],
                     "provider_jobs_dispatched": 0,
                     "dispatched_worker_ids": [],
+                    "auto_approved_reviews": len(auto_approved_reviews),
                     "launch_provider_id": None,
                     "queue_controls": queue_controls,
                     "project_capacity": project_capacity,
@@ -267,6 +323,7 @@ def run_orchestrator_once(
             "provider_jobs_queued": len(queued_jobs),
             "provider_jobs_processed": len(processed_jobs),
             "provider_jobs_dispatched": len(dispatched_worker_ids),
+            "auto_approved_reviews": len(auto_approved_reviews),
             "launch_provider_id": launch_provider_id,
             "queue_controls": queue_controls,
             "project_capacity": project_capacity,
@@ -281,6 +338,7 @@ def run_orchestrator_once(
                 "processed_jobs": processed_jobs,
                 "provider_jobs_dispatched": len(dispatched_worker_ids),
                 "dispatched_worker_ids": dispatched_worker_ids,
+                "auto_approved_reviews": len(auto_approved_reviews),
                 "launch_provider_id": launch_provider_id,
                 "queue_controls": queue_controls,
                 "project_capacity": project_capacity,
@@ -298,5 +356,6 @@ def run_orchestrator_once(
         "provider_jobs_queued": total_jobs_queued,
         "provider_jobs_processed": total_jobs_processed,
         "provider_jobs_dispatched": total_jobs_dispatched,
+        "auto_approved_reviews": total_auto_approved_reviews,
         "project_runs": project_runs,
     }

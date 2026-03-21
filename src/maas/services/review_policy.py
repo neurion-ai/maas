@@ -167,7 +167,7 @@ def evaluate_review_decision_state(connection, task_row, project_policy, verific
     is_brownfield_onboarding_review = False
     if onboarding_mode == "brownfield" and task_row["title"] == BROWNFIELD_REVIEW_TASK_TITLE:
         is_brownfield_onboarding_review = True
-    elif connection is not None and task_row.get("project_id"):
+    elif connection is not None and "project_id" in task_row.keys() and task_row["project_id"]:
         is_brownfield_onboarding_review = _is_brownfield_onboarding_review_task(connection, task_row)
     if is_brownfield_onboarding_review:
         return {

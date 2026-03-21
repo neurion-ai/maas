@@ -8,7 +8,11 @@ import type {
   ArtifactPurgeResponse,
   ArtifactsResponse,
   CodexAgentDetailResponse,
+  CodexIssueIndexResponse,
+  CodexRetrievalSearchResponse,
   CodexIssueDetailResponse,
+  CodexRunIndexResponse,
+  CodexSystemDiagnosticsResponse,
   CodexRunDetailResponse,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
@@ -17,6 +21,7 @@ import type {
   FailuresResponse,
   GoalTreeResponse,
   LiveSnapshot,
+  NotificationItem,
   OverviewResponse,
   OrchestratorRunResponse,
   PortfolioResponse,
@@ -39,6 +44,7 @@ import type {
 import { appendProjectScope, getSelectedProjectId } from "./projectScope";
 
 const lastSuccessfulResponses = new Map<string, unknown>();
+const DEFAULT_ACTOR_ID = "agent_allocator";
 
 const OVERVIEW_FALLBACK: OverviewResponse = {
   project: {
@@ -167,7 +173,11 @@ const PORTFOLIO_FALLBACK: PortfolioResponse = {
     open_escalations: 0,
     queued_provider_jobs: 0,
     queued_notifications: 0,
-    failed_notifications: 0
+    failed_notifications: 0,
+    review_queue: 0,
+    blocked_failures: 0,
+    suspect_runs: 0,
+    stale_agents: 0,
   },
   projects: [],
   command_center: {
@@ -175,6 +185,9 @@ const PORTFOLIO_FALLBACK: PortfolioResponse = {
     urgent_alerts: [],
     open_dead_letter_entries: [],
     queued_provider_jobs: [],
+    review_queue: [],
+    blocked_failures: [],
+    suspect_runs: [],
     notification_deliveries: []
   }
 };
@@ -629,6 +642,14 @@ export async function createProject(payload: ProjectCreateRequest) {
   return response as ProjectCreateResponse;
 }
 
+export async function cloneProject(projectId: string, name?: string) {
+  const response = await postJson<ProjectCreateResponse>(`/api/projects/${projectId}/actions/clone`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    name: name?.trim() || undefined,
+  });
+  return response as ProjectCreateResponse;
+}
+
 export async function pickLocalDirectory() {
   const response = await postJson<DirectoryPickerResponse>("/api/system/actions/pick-directory", {});
   return response as DirectoryPickerResponse;
@@ -761,6 +782,22 @@ export async function processNextNotification(projectId?: string) {
   });
 }
 
+export function fetchNotifications(
+  filters: { status?: string; limit?: number } = {},
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const params = new URLSearchParams();
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+  if (filters.limit != null) {
+    params.set("limit", String(filters.limit));
+  }
+  const path = appendProjectScope(params.toString() ? `/api/notifications?${params.toString()}` : "/api/notifications");
+  return fetchJson<{ notifications: NotificationItem[] }>(path, { notifications: [] }, signal, onFallback);
+}
+
 export async function refreshRepoPlan(projectId: string) {
   return postJson(`/api/projects/${projectId}/actions/refresh-repo-plan`, {
     actor_id: "agent_allocator"
@@ -883,7 +920,69 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
       artifacts: [],
       artifact_summary: ARTIFACTS_FALLBACK.summary,
       verification_runs: [],
+      review_decision: {
+        status: "unavailable",
+        batch_review_eligible: false,
+        auto_approve_eligible: false,
+        summary: "Issue review policy is unavailable.",
+        detail: "Review guidance could not be loaded from the backend.",
+      },
       git_workspace: null,
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexIssueIndex(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexIssueIndexResponse>(
+    appendProjectScope("/api/issues/index"),
+    {
+      generated_at: new Date().toISOString(),
+      summary: {
+        review: 0,
+        blocked_failures: 0,
+        blocked_dependencies: 0,
+        resolved: 0,
+        recent_failures: 0,
+        batch_review_eligible: 0,
+      },
+      queue: {
+        review: {
+          title: "Review queue",
+          description: "",
+          items: [],
+          batch_review: {
+            eligible_count: 0,
+            eligible_task_ids: [],
+            summary: "",
+          },
+        },
+        blocked_failures: {
+          title: "Blocked by failures",
+          description: "",
+          items: [],
+        },
+        blocked_dependencies: {
+          title: "Blocked by dependencies or operator state",
+          description: "",
+          items: [],
+        },
+      },
+      resolved: [],
+      board_summary: {
+        total_tasks: 0,
+        active_agents: 0,
+        assigned_tasks: 0,
+        active_tasks: 0,
+        blocked_tasks: 0,
+        review_tasks: 0,
+      },
+      filter_options: {
+        agents: [],
+        goals: [],
+        priority_min_values: [0, 50, 75, 90],
+      },
     },
     signal,
     onFallback
@@ -909,6 +1008,115 @@ export function fetchCodexRunDetail(sessionId: string, signal?: AbortSignal, onF
     signal,
     onFallback
   );
+}
+
+export function fetchCodexRuns(
+  filters: { limit?: number; status?: string; search?: string } = {},
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const params = new URLSearchParams();
+  if (filters.limit != null) {
+    params.set("limit", String(filters.limit));
+  }
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+  if (filters.search) {
+    params.set("search", filters.search);
+  }
+  const path = appendProjectScope(params.toString() ? `/api/runs?${params.toString()}` : "/api/runs");
+  return fetchJson<CodexRunIndexResponse>(
+    path,
+    {
+      summary: {
+        total_runs: 0,
+        active_runs: 0,
+        failed_runs: 0,
+        timed_out_runs: 0,
+        cancelled_runs: 0,
+        completed_runs: 0,
+        stale_runs: 0,
+      },
+      items: [],
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexSystemDiagnosticsResponse>(
+    appendProjectScope("/api/system/diagnostics"),
+    {
+      summary: {
+        suspect_runs: 0,
+        stale_agents: 0,
+        queued_jobs: 0,
+        running_jobs: 0,
+        oldest_queued_at: null,
+        oldest_running_at: null,
+      },
+      suspect_runs: [],
+      stale_agents: [],
+      queue_pressure: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        oldest_queued_at: null,
+        oldest_running_at: null,
+      },
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexRetrievalSearch(
+  filters: { search: string; goalId?: string | null; agentId?: string | null; priorityMin?: number | null },
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const params = new URLSearchParams();
+  params.set("search", filters.search);
+  if (filters.goalId) {
+    params.set("goal_id", filters.goalId);
+  }
+  if (filters.agentId) {
+    params.set("agent_id", filters.agentId);
+  }
+  if (filters.priorityMin != null) {
+    params.set("priority_min", String(filters.priorityMin));
+  }
+  return fetchJson<CodexRetrievalSearchResponse>(
+    appendProjectScope(`/api/retrieval/search?${params.toString()}`),
+    {
+      query: {
+        search: filters.search,
+        goal_id: filters.goalId ?? null,
+        agent_id: filters.agentId ?? null,
+        priority_min: filters.priorityMin ?? null,
+      },
+      summary: {
+        total_hits: 0,
+        issue_hits: 0,
+        run_hits: 0,
+        artifact_hits: 0,
+        event_hits: 0,
+      },
+      issues: [],
+      runs: [],
+      artifacts: [],
+      events: [],
+    },
+    signal,
+    onFallback
+  );
+}
+
+export async function cancelCodexRun(sessionId: string) {
+  return postJson(`/api/runs/${sessionId}/actions/cancel`, {
+    actor_id: DEFAULT_ACTOR_ID,
+  });
 }
 
 export function fetchCodexAgentDetail(agentId: string, signal?: AbortSignal, onFallback?: () => void) {

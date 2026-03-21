@@ -1,15 +1,19 @@
 """Codex MVP read models."""
 
+from datetime import datetime, timezone
 import json
 import os
 
 from maas.services.artifacts import fetch_artifacts
 from maas.services.git_workspaces import fetch_task_git_workspace
+from maas.services.provider_jobs import fetch_provider_jobs
+from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
 
 
 RUN_CONSOLE_PREVIEW_MAX_CHARS = 6000
+STALE_RUN_HEARTBEAT_SECONDS = 90
 
 
 def _tail_console_preview(path):
@@ -41,6 +45,115 @@ def _load_json(value):
     except (TypeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _parse_timestamp(value):
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                parsed = datetime.strptime(value, fmt)
+                break
+            except ValueError:
+                parsed = None
+        if parsed is None:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _age_seconds(value):
+    parsed = _parse_timestamp(value)
+    if parsed is None:
+        return None
+    return max(0, int((datetime.now(timezone.utc) - parsed).total_seconds()))
+
+
+def _run_row_to_dict(row, issue_keys):
+    started_at = row["started_at"]
+    last_heartbeat_at = row["last_heartbeat_at"]
+    heartbeat_age_seconds = _age_seconds(last_heartbeat_at)
+    run_age_seconds = _age_seconds(started_at)
+    is_live = row["status"] == "active"
+    is_stale = bool(is_live and heartbeat_age_seconds is not None and heartbeat_age_seconds >= STALE_RUN_HEARTBEAT_SECONDS)
+    diagnostic_summary, recommended_action = _run_diagnostics(
+        row["status"],
+        row["task_status"],
+        row["task_review_state"],
+        heartbeat_age_seconds,
+        is_stale,
+    )
+    return {
+        "session_id": row["session_id"],
+        "task_id": row["task_id"],
+        "task_title": row["task_title"],
+        "task_status": row["task_status"],
+        "task_review_state": row["task_review_state"],
+        "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+        "goal_id": row["goal_id"],
+        "goal_title": row["goal_title"],
+        "agent_id": row["agent_id"],
+        "agent_name": row["agent_name"],
+        "provider_type": row["provider_type"],
+        "execution_mode": row["execution_mode"],
+        "external_runtime": row["external_runtime"],
+        "status": row["status"],
+        "progress_pct": row["progress_pct"],
+        "status_message": row["status_message"],
+        "last_heartbeat_at": last_heartbeat_at,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+        "started_at": started_at,
+        "ended_at": row["ended_at"],
+        "run_age_seconds": run_age_seconds,
+        "is_live": is_live,
+        "is_stale": is_stale,
+        "diagnostic_summary": diagnostic_summary,
+        "recommended_action": recommended_action,
+        "artifact_count": row["artifact_count"] or 0,
+        "failure_count": row["failure_count"] or 0,
+    }
+
+
+def _run_diagnostics(status, task_status, task_review_state, heartbeat_age_seconds, is_stale):
+    if status == "active" and is_stale:
+        return (
+            "The session is still marked active, but the heartbeat has gone quiet long enough to treat it as suspect.",
+            "Inspect the run trace and stop the issue if Codex is no longer making progress.",
+        )
+    if status == "active":
+        return (
+            "Codex is actively working on this issue and is still heartbeating normally.",
+            "Let the run continue unless the output tail or logs show it is stuck.",
+        )
+    if status in {"failed", "timed_out"}:
+        return (
+            "The last execution ended unsuccessfully and the linked issue likely needs recovery or replanning.",
+            "Open the issue and recover or requeue it after inspecting the trace and output.",
+        )
+    if status == "cancelled":
+        return (
+            "This run was cancelled before completion. The linked issue may be halted or waiting for operator intervention.",
+            "Open the issue to decide whether to recover, requeue, or leave it cancelled.",
+        )
+    if task_status == "review" or task_review_state == "review_requested":
+        return (
+            "Execution completed and the linked issue is waiting on a review decision.",
+            "Open the issue and review the output before approving or requesting changes.",
+        )
+    if task_status == "done":
+        return (
+            "Execution completed and the linked issue has already been resolved.",
+            "Use the run trace for audit or debugging; no operator action is required now.",
+        )
+    return (
+        "Execution finished and the linked issue moved on to its next state.",
+        "Open the issue if you need to inspect what changed or what this run unlocked.",
+    )
 
 
 def issue_key_lookup(connection, project_id=None):
@@ -279,6 +392,507 @@ def _session_start_details(connection, project_id, task_id, session_id):
     return _load_json(row["details_json"])
 
 
+def fetch_runs(connection, project_id, limit=200, status=None, search=None):
+    issue_keys = issue_key_lookup(connection, project_id)
+    params = [project_id]
+    filters = ["sessions.project_id = ?"]
+    if status:
+        filters.append("sessions.status = ?")
+        params.append(status)
+    search_value = (search or "").strip()
+    if search_value:
+        filters.append(
+            """
+            (
+                sessions.session_id LIKE ?
+                OR COALESCE(tasks.title, '') LIKE ?
+                OR COALESCE(tasks.task_id, '') LIKE ?
+                OR COALESCE(agents.display_name, '') LIKE ?
+                OR COALESCE(sessions.status_message, '') LIKE ?
+            )
+            """
+        )
+        pattern = f"%{search_value}%"
+        params.extend([pattern, pattern, pattern, pattern, pattern])
+
+    rows = connection.execute(
+        """
+        SELECT
+            sessions.session_id,
+            sessions.task_id,
+            tasks.title AS task_title,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
+            tasks.goal_id AS goal_id,
+            goals.title AS goal_title,
+            sessions.agent_id,
+            agents.display_name AS agent_name,
+            sessions.provider_type,
+            sessions.status,
+            sessions.progress_pct,
+            sessions.status_message,
+            sessions.last_heartbeat_at,
+            sessions.started_at,
+            sessions.ended_at,
+            json_extract(start_log.details_json, '$.execution_mode') AS execution_mode,
+            json_extract(start_log.details_json, '$.external_runtime') AS external_runtime,
+            COUNT(DISTINCT artifacts.artifact_id) AS artifact_count,
+            COUNT(DISTINCT failure_log.failure_id) AS failure_count
+        FROM sessions
+        LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+        LEFT JOIN activity_log AS start_log
+            ON start_log.project_id = sessions.project_id
+           AND start_log.task_id = sessions.task_id
+           AND start_log.action = 'provider_adapter_started'
+           AND json_extract(start_log.details_json, '$.session_id') = sessions.session_id
+        LEFT JOIN artifacts
+            ON artifacts.project_id = sessions.project_id
+           AND artifacts.session_id = sessions.session_id
+        LEFT JOIN failure_log
+            ON failure_log.project_id = sessions.project_id
+           AND failure_log.session_id = sessions.session_id
+        WHERE {where_clause}
+        GROUP BY sessions.session_id
+        ORDER BY
+            CASE sessions.status
+                WHEN 'active' THEN 0
+                WHEN 'failed' THEN 1
+                WHEN 'timed_out' THEN 2
+                WHEN 'cancelled' THEN 3
+                ELSE 4
+            END,
+            COALESCE(sessions.ended_at, sessions.started_at) DESC,
+            sessions.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(filters)),
+        tuple(params + [max(int(limit), 1)]),
+    ).fetchall()
+
+    items = [_run_row_to_dict(row, issue_keys) for row in rows]
+    summary = {
+        "total_runs": len(items),
+        "active_runs": len([item for item in items if item["status"] == "active"]),
+        "failed_runs": len([item for item in items if item["status"] == "failed"]),
+        "timed_out_runs": len([item for item in items if item["status"] == "timed_out"]),
+        "cancelled_runs": len([item for item in items if item["status"] == "cancelled"]),
+        "completed_runs": len([item for item in items if item["status"] == "completed"]),
+        "stale_runs": len([item for item in items if item["is_stale"]]),
+    }
+    return {"summary": summary, "items": items}
+
+
+def fetch_system_diagnostics(connection, project_id):
+    run_payload = fetch_runs(connection, project_id, limit=100)
+    suspect_runs = [
+        item
+        for item in run_payload["items"]
+        if item["is_stale"] or item["status"] in {"failed", "timed_out", "cancelled"}
+    ][:10]
+
+    issue_keys = issue_key_lookup(connection, project_id)
+    stale_agent_rows = connection.execute(
+        """
+        SELECT
+            agents.agent_id,
+            agents.display_name,
+            agents.status,
+            agents.current_task_id,
+            tasks.title AS current_task_title,
+            agents.last_heartbeat_at,
+            active_sessions.session_id AS focus_run_session_id
+        FROM agents
+        LEFT JOIN tasks ON tasks.task_id = agents.current_task_id
+        LEFT JOIN sessions AS active_sessions
+            ON active_sessions.project_id = agents.project_id
+           AND active_sessions.agent_id = agents.agent_id
+           AND active_sessions.status = 'active'
+        WHERE agents.project_id = ?
+        ORDER BY agents.display_name ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    stale_agents = []
+    for row in stale_agent_rows:
+        heartbeat_age_seconds = _age_seconds(row["last_heartbeat_at"])
+        if heartbeat_age_seconds is None or heartbeat_age_seconds < STALE_RUN_HEARTBEAT_SECONDS:
+            continue
+        stale_agents.append(
+            {
+                "agent_id": row["agent_id"],
+                "display_name": row["display_name"],
+                "status": row["status"],
+                "heartbeat_age_seconds": heartbeat_age_seconds,
+                "current_task_id": row["current_task_id"],
+                "current_issue_key": issue_keys.get(row["current_task_id"]) if row["current_task_id"] else None,
+                "current_task_title": row["current_task_title"],
+                "focus_run_session_id": row["focus_run_session_id"],
+                "diagnostic_summary": "The agent heartbeat is stale enough to inspect for a stuck Codex thread or crashed worker.",
+                "recommended_action": (
+                    "Open the live run if one exists, otherwise inspect the agent history and recover the agent if it is no longer progressing."
+                ),
+            }
+        )
+
+    provider_jobs = fetch_provider_jobs(connection, project_id=project_id, limit=200)
+    queued_jobs = [job for job in provider_jobs if job["status"] == "queued"]
+    running_jobs = [job for job in provider_jobs if job["status"] == "running"]
+    oldest_queued_at = min((job["created_at"] for job in queued_jobs), default=None)
+    oldest_running_at = min(
+        ((job["started_at"] or job["created_at"]) for job in running_jobs),
+        default=None,
+    )
+
+    return {
+        "summary": {
+            "suspect_runs": len(suspect_runs),
+            "stale_agents": len(stale_agents),
+            "queued_jobs": len(queued_jobs),
+            "running_jobs": len(running_jobs),
+            "oldest_queued_at": oldest_queued_at,
+            "oldest_running_at": oldest_running_at,
+        },
+        "suspect_runs": suspect_runs,
+        "stale_agents": stale_agents,
+        "queue_pressure": {
+            "queued_jobs": len(queued_jobs),
+            "running_jobs": len(running_jobs),
+            "oldest_queued_at": oldest_queued_at,
+            "oldest_running_at": oldest_running_at,
+        },
+    }
+
+
+def fetch_retrieval_search(connection, project_id=None, search="", goal_id=None, agent_id=None, priority_min=None, limit=8):
+    search_value = (search or "").strip()
+    safe_limit = max(1, min(int(limit or 8), 25))
+    if not search_value:
+        return {
+            "query": {
+                "search": "",
+                "goal_id": goal_id,
+                "agent_id": agent_id,
+                "priority_min": priority_min,
+            },
+            "summary": {
+                "total_hits": 0,
+                "issue_hits": 0,
+                "run_hits": 0,
+                "artifact_hits": 0,
+                "event_hits": 0,
+            },
+            "issues": [],
+            "runs": [],
+            "artifacts": [],
+            "events": [],
+        }
+
+    issue_keys = issue_key_lookup(connection, project_id)
+    pattern = "%{0}%".format(search_value)
+
+    task_filters = [
+        """
+        (
+            tasks.task_id LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(tasks.description, '') LIKE ?
+            OR COALESCE(goals.title, '') LIKE ?
+            OR COALESCE(agents.display_name, '') LIKE ?
+        )
+        """
+    ]
+    task_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        task_filters.append("tasks.project_id = ?")
+        task_params.append(project_id)
+    if goal_id:
+        task_filters.append("tasks.goal_id = ?")
+        task_params.append(goal_id)
+    if agent_id:
+        task_filters.append("tasks.assigned_agent_id = ?")
+        task_params.append(agent_id)
+    if priority_min is not None:
+        task_filters.append("tasks.priority >= ?")
+        task_params.append(priority_min)
+
+    issue_rows = connection.execute(
+        """
+        SELECT
+            tasks.task_id,
+            tasks.project_id,
+            projects.name AS project_name,
+            tasks.title,
+            tasks.status,
+            tasks.priority,
+            tasks.updated_at,
+            tasks.goal_id,
+            goals.title AS goal_title,
+            tasks.assigned_agent_id AS agent_id,
+            agents.display_name AS agent_name,
+            CASE
+                WHEN COALESCE(tasks.description, '') LIKE ? THEN COALESCE(tasks.description, '')
+                WHEN COALESCE(goals.title, '') LIKE ? THEN 'Goal: ' || goals.title
+                WHEN COALESCE(agents.display_name, '') LIKE ? THEN 'Owner: ' || agents.display_name
+                ELSE COALESCE(tasks.description, goals.title, tasks.title)
+            END AS match_context
+        FROM tasks
+        JOIN projects ON projects.project_id = tasks.project_id
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY tasks.priority DESC, tasks.updated_at DESC, tasks.created_at DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(task_filters)),
+        tuple([pattern, pattern, pattern] + task_params + [safe_limit]),
+    ).fetchall()
+    issues = [
+        {
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]),
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "title": row["title"],
+            "status": row["status"],
+            "priority": row["priority"],
+            "goal_id": row["goal_id"],
+            "goal_title": row["goal_title"],
+            "agent_id": row["agent_id"],
+            "agent_name": row["agent_name"],
+            "match_context": row["match_context"] or row["title"],
+            "updated_at": row["updated_at"],
+        }
+        for row in issue_rows
+    ]
+
+    run_filters = [
+        """
+        (
+            sessions.session_id LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(tasks.task_id, '') LIKE ?
+            OR COALESCE(agents.display_name, '') LIKE ?
+            OR COALESCE(sessions.status_message, '') LIKE ?
+        )
+        """
+    ]
+    run_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        run_filters.append("sessions.project_id = ?")
+        run_params.append(project_id)
+    if goal_id:
+        run_filters.append("tasks.goal_id = ?")
+        run_params.append(goal_id)
+    if agent_id:
+        run_filters.append("sessions.agent_id = ?")
+        run_params.append(agent_id)
+    if priority_min is not None:
+        run_filters.append("tasks.priority >= ?")
+        run_params.append(priority_min)
+
+    run_rows = connection.execute(
+        """
+        SELECT
+            sessions.session_id,
+            sessions.project_id,
+            projects.name AS project_name,
+            sessions.task_id,
+            tasks.title AS task_title,
+            sessions.status,
+            sessions.provider_type,
+            sessions.started_at,
+            sessions.status_message AS match_context,
+            json_extract(start_log.details_json, '$.execution_mode') AS execution_mode,
+            json_extract(start_log.details_json, '$.external_runtime') AS external_runtime
+        FROM sessions
+        JOIN projects ON projects.project_id = sessions.project_id
+        LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+        LEFT JOIN activity_log AS start_log
+            ON start_log.project_id = sessions.project_id
+           AND start_log.task_id = sessions.task_id
+           AND start_log.action = 'provider_adapter_started'
+           AND json_extract(start_log.details_json, '$.session_id') = sessions.session_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY
+            CASE sessions.status WHEN 'active' THEN 0 ELSE 1 END,
+            COALESCE(sessions.ended_at, sessions.started_at) DESC,
+            sessions.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(run_filters)),
+        tuple(run_params + [safe_limit]),
+    ).fetchall()
+    runs = [
+        {
+            "session_id": row["session_id"],
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "task_title": row["task_title"],
+            "status": row["status"],
+            "provider_type": row["provider_type"],
+            "execution_mode": row["execution_mode"],
+            "external_runtime": row["external_runtime"],
+            "match_context": row["match_context"] or row["task_title"] or row["session_id"],
+            "started_at": row["started_at"],
+        }
+        for row in run_rows
+    ]
+
+    artifact_filters = [
+        """
+        (
+            artifacts.artifact_id LIKE ?
+            OR COALESCE(artifacts.path, '') LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(tasks.task_id, '') LIKE ?
+            OR COALESCE(artifacts.artifact_type, '') LIKE ?
+        )
+        """
+    ]
+    artifact_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        artifact_filters.append("artifacts.project_id = ?")
+        artifact_params.append(project_id)
+    if goal_id:
+        artifact_filters.append("tasks.goal_id = ?")
+        artifact_params.append(goal_id)
+    if agent_id:
+        artifact_filters.append("tasks.assigned_agent_id = ?")
+        artifact_params.append(agent_id)
+    if priority_min is not None:
+        artifact_filters.append("tasks.priority >= ?")
+        artifact_params.append(priority_min)
+
+    artifact_rows = connection.execute(
+        """
+        SELECT
+            artifacts.artifact_id,
+            artifacts.project_id,
+            projects.name AS project_name,
+            artifacts.task_id,
+            artifacts.session_id,
+            artifacts.path AS artifact_path,
+            artifacts.artifact_type,
+            COALESCE(json_extract(artifacts.metadata_json, '$.artifact_state'), 'active') AS artifact_state,
+            COALESCE(tasks.title, artifacts.path, artifacts.artifact_id) AS title,
+            artifacts.created_at
+        FROM artifacts
+        JOIN projects ON projects.project_id = artifacts.project_id
+        LEFT JOIN tasks ON tasks.task_id = artifacts.task_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY artifacts.created_at DESC, artifacts.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(artifact_filters)),
+        tuple(artifact_params + [safe_limit]),
+    ).fetchall()
+    artifacts = [
+        {
+            "artifact_id": row["artifact_id"],
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+            "session_id": row["session_id"],
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "artifact_path": row["artifact_path"],
+            "artifact_type": row["artifact_type"],
+            "artifact_state": row["artifact_state"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+        }
+        for row in artifact_rows
+    ]
+
+    event_filters = [
+        """
+        (
+            activity_log.activity_id LIKE ?
+            OR COALESCE(activity_log.action, '') LIKE ?
+            OR COALESCE(activity_log.description, '') LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(agents.display_name, '') LIKE ?
+        )
+        """
+    ]
+    event_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        event_filters.append("activity_log.project_id = ?")
+        event_params.append(project_id)
+    if goal_id:
+        event_filters.append("tasks.goal_id = ?")
+        event_params.append(goal_id)
+    if agent_id:
+        event_filters.append("activity_log.agent_id = ?")
+        event_params.append(agent_id)
+    if priority_min is not None:
+        event_filters.append("tasks.priority >= ?")
+        event_params.append(priority_min)
+
+    event_rows = connection.execute(
+        """
+        SELECT
+            activity_log.activity_id AS event_id,
+            activity_log.project_id,
+            projects.name AS project_name,
+            activity_log.task_id,
+            json_extract(activity_log.details_json, '$.session_id') AS session_id,
+            activity_log.agent_id,
+            activity_log.action AS title,
+            activity_log.description,
+            activity_log.created_at
+        FROM activity_log
+        JOIN projects ON projects.project_id = activity_log.project_id
+        LEFT JOIN tasks ON tasks.task_id = activity_log.task_id
+        LEFT JOIN agents ON agents.agent_id = activity_log.agent_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(event_filters)),
+        tuple(event_params + [safe_limit]),
+    ).fetchall()
+    events = [
+        {
+            "source": "activity",
+            "event_id": row["event_id"],
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+            "session_id": row["session_id"],
+            "agent_id": row["agent_id"],
+            "title": row["title"],
+            "description": row["description"] or row["title"],
+            "created_at": row["created_at"],
+        }
+        for row in event_rows
+    ]
+
+    return {
+        "query": {
+            "search": search_value,
+            "goal_id": goal_id,
+            "agent_id": agent_id,
+            "priority_min": priority_min,
+        },
+        "summary": {
+            "total_hits": len(issues) + len(runs) + len(artifacts) + len(events),
+            "issue_hits": len(issues),
+            "run_hits": len(runs),
+            "artifact_hits": len(artifacts),
+            "event_hits": len(events),
+        },
+        "issues": issues,
+        "runs": runs,
+        "artifacts": artifacts,
+        "events": events,
+    }
+
+
 def _issue_run_console(connection, project_paths, project_id, task_id, runs):
     if not runs:
         return None
@@ -342,6 +956,8 @@ def fetch_run_detail(connection, project_paths, project_id, session_id):
             sessions.started_at,
             sessions.ended_at,
             tasks.title AS task_title,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
             agents.display_name AS agent_name
         FROM sessions
         LEFT JOIN tasks ON tasks.task_id = sessions.task_id
@@ -363,22 +979,31 @@ def fetch_run_detail(connection, project_paths, project_id, session_id):
     start_details = _session_start_details(connection, project_id, row["task_id"], session_id)
     artifacts = _session_artifacts(connection, project_paths, project_id, session_id)
     return {
+        **_run_row_to_dict(
+            {
+                **dict(row),
+                "task_status": row["task_status"],
+                "task_review_state": row["task_review_state"],
+                "goal_id": None,
+                "goal_title": None,
+                "execution_mode": start_details.get("execution_mode"),
+                "external_runtime": start_details.get("external_runtime"),
+                "artifact_count": len(artifacts["items"]),
+                "failure_count": 0,
+            },
+            issue_keys,
+        ),
         "session_id": row["session_id"],
         "task_id": row["task_id"],
         "task_title": row["task_title"],
+        "task_status": row["task_status"],
+        "task_review_state": row["task_review_state"],
         "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
         "agent_id": row["agent_id"],
         "agent_name": row["agent_name"],
         "provider_type": row["provider_type"],
         "execution_mode": start_details.get("execution_mode"),
         "external_runtime": start_details.get("external_runtime"),
-        "status": row["status"],
-        "progress_pct": row["progress_pct"],
-        "status_message": row["status_message"],
-        "last_heartbeat_at": row["last_heartbeat_at"],
-        "started_at": row["started_at"],
-        "ended_at": row["ended_at"],
-        "is_live": row["status"] == "active",
         "timeout_seconds": start_details.get("timeout_seconds"),
         "command": start_details.get("command"),
         "runtime_root": start_details.get("runtime_root") or envelope_root,
@@ -448,6 +1073,8 @@ def _agent_runs(connection, project_id, agent_id):
         SELECT
             sessions.session_id,
             sessions.task_id,
+            tasks.status AS task_status,
+            tasks.review_state AS task_review_state,
             sessions.provider_type,
             sessions.status,
             sessions.progress_pct,
@@ -455,9 +1082,16 @@ def _agent_runs(connection, project_id, agent_id):
             sessions.last_heartbeat_at,
             sessions.started_at,
             sessions.ended_at,
-            tasks.title AS task_title
+            tasks.title AS task_title,
+            json_extract(start_log.details_json, '$.execution_mode') AS execution_mode,
+            json_extract(start_log.details_json, '$.external_runtime') AS external_runtime
         FROM sessions
         LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN activity_log AS start_log
+            ON start_log.project_id = sessions.project_id
+           AND start_log.task_id = sessions.task_id
+           AND start_log.action = 'provider_adapter_started'
+           AND json_extract(start_log.details_json, '$.session_id') = sessions.session_id
         WHERE sessions.project_id = ?
           AND sessions.agent_id = ?
         ORDER BY sessions.started_at DESC, sessions.rowid DESC
@@ -465,7 +1099,22 @@ def _agent_runs(connection, project_id, agent_id):
         """,
         (project_id, agent_id),
     ).fetchall()
-    return [dict(row) for row in rows]
+    issue_keys = issue_key_lookup(connection, project_id)
+    return [
+        _run_row_to_dict(
+            {
+                **dict(row),
+                "goal_id": None,
+                "goal_title": None,
+                "agent_id": agent_id,
+                "agent_name": None,
+                "artifact_count": 0,
+                "failure_count": 0,
+            },
+            issue_keys,
+        )
+        for row in rows
+    ]
 
 
 def fetch_agent_detail(connection, project_id, agent_id):
@@ -553,6 +1202,23 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
     run_console = _issue_run_console(connection, project_paths, project_id, task_id, runs)
     history = fetch_incident_timeline(connection, project_id=project_id, task_id=task_id, limit=30, order="desc")["events"]
     verification_runs = fetch_verification_runs(connection, project_id=project_id, task_id=task_id, limit=10)
+    failure_count_row = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM failure_log
+        WHERE project_id = ?
+          AND task_id = ?
+        """,
+        (project_id, task_id),
+    ).fetchone()
+    project_policy = fetch_project_review_policy(connection, project_id)
+    review_decision = evaluate_review_decision_state(
+        connection,
+        dict(task_row),
+        project_policy,
+        verification_runs=verification_runs,
+        failure_count=(failure_count_row["count"] if failure_count_row else 0),
+    )
     git_workspace = fetch_task_git_workspace(connection, task_id)
     artifact_payload = fetch_artifacts(
         connection,
@@ -595,5 +1261,6 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "artifacts": artifact_payload["items"],
         "artifact_summary": artifact_payload["summary"],
         "verification_runs": verification_runs,
+        "review_decision": review_decision,
         "git_workspace": git_workspace,
     }

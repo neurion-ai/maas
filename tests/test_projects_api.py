@@ -136,6 +136,128 @@ lint = "imported:lint"
             projects_payload = client.get("/api/projects").json()
             self.assertFalse(any(project["project_id"] == project_id for project in projects_payload["projects"]))
 
+    def test_clone_project_creates_a_fresh_workspace_copy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Fresh Workspace",
+                    "description": "greenfield",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                    "create_source_root": True,
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            created = create_response.json()
+            project_id = created["project"]["project_id"]
+            original_source_root = created["metadata"]["source_root"]
+
+            clone_response = client.post(
+                f"/api/projects/{project_id}/actions/clone",
+                json={"actor_id": "agent_allocator", "name": "Fresh Workspace Clone"},
+            )
+
+            self.assertEqual(clone_response.status_code, 200)
+            clone_payload = clone_response.json()
+            self.assertEqual(clone_payload["project"]["name"], "Fresh Workspace Clone")
+            self.assertNotEqual(clone_payload["project"]["project_id"], project_id)
+            self.assertTrue(clone_payload["metadata"]["generated_source_root"])
+            self.assertNotEqual(clone_payload["metadata"]["source_root"], original_source_root)
+            self.assertEqual(clone_payload["metadata"]["cloned_from_project_id"], project_id)
+            self.assertTrue(os.path.isdir(clone_payload["metadata"]["source_root"]))
+
+    def test_clone_project_resets_brownfield_onboarding_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = os.path.join(tmpdir, "workspace")
+            repo_root = os.path.join(tmpdir, "imported-repo")
+            os.makedirs(workspace_root, exist_ok=True)
+            os.makedirs(repo_root, exist_ok=True)
+            self._create_brownfield_repo(repo_root)
+            bootstrap_project(workspace_root, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(workspace_root))
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Imported Repo",
+                    "description": "brownfield import",
+                    "project_type": "custom",
+                    "mode": "auto",
+                    "source_root": repo_root,
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            source_project_id = create_response.json()["project"]["project_id"]
+
+            connection = connect(project_paths(workspace_root))
+            try:
+                source_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (source_project_id,),
+                ).fetchone()
+                source_config = json.loads(source_row["config_json"])
+                onboarding = dict(source_config.get("onboarding") or {})
+                onboarding.update(
+                    {
+                        "review_status": "approved",
+                        "review_required": False,
+                        "review_task_id": "task_stale_review",
+                        "review_task_status": "done",
+                        "review_task_review_state": "approved",
+                        "pending_gated_tasks": 7,
+                        "last_scanned_at": "2026-03-20T12:00:00Z",
+                        "last_scanned_by": "agent_reviewer",
+                        "drift_summary": {"detected": True},
+                        "reviewed_by": "agent_reviewer",
+                        "reviewed_at": "2026-03-20T12:00:00Z",
+                    }
+                )
+                source_config["onboarding"] = onboarding
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(source_config), source_project_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            clone_response = client.post(
+                f"/api/projects/{source_project_id}/actions/clone",
+                json={"actor_id": "agent_allocator", "name": "Imported Repo Clone"},
+            )
+            self.assertEqual(clone_response.status_code, 200)
+            clone_project_id = clone_response.json()["project"]["project_id"]
+
+            connection = connect(project_paths(workspace_root))
+            try:
+                clone_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (clone_project_id,),
+                ).fetchone()
+                clone_config = json.loads(clone_row["config_json"])
+            finally:
+                connection.close()
+
+            clone_onboarding = clone_config["onboarding"]
+            self.assertEqual(clone_onboarding["mode"], "brownfield")
+            self.assertEqual(clone_onboarding["review_status"], "review_pending")
+            self.assertTrue(clone_onboarding["review_required"])
+            self.assertIsNone(clone_onboarding["review_task_id"])
+            self.assertIsNone(clone_onboarding["review_task_status"])
+            self.assertIsNone(clone_onboarding["review_task_review_state"])
+            self.assertEqual(clone_onboarding["pending_gated_tasks"], 0)
+            self.assertIsNone(clone_onboarding["last_scanned_at"])
+            self.assertIsNone(clone_onboarding["last_scanned_by"])
+            self.assertIsNone(clone_onboarding["drift_summary"])
+            self.assertIsNone(clone_onboarding["reviewed_by"])
+            self.assertIsNone(clone_onboarding["reviewed_at"])
+
     def test_delete_project_rejects_projects_with_queued_provider_jobs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

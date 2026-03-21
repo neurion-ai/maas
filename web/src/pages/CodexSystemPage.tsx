@@ -1,39 +1,41 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchActivity, fetchAgentRoster, fetchCodexRunDetail, fetchIncidentTimeline, fetchProviders } from "../lib/controlRoomApi";
+import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
+import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
 import { boardCounts, formatTimestamp, openBoardTasks, resolvedBoardTasks } from "../lib/codexMvp";
+import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { ActivityItem, AgentRosterResponse, BoardTask, CodexRunDetailResponse, ProvidersResponse, TimelineEvent } from "../types";
+import type { ActivityItem, BoardTask, CodexRunDetailResponse, CodexSystemDiagnosticsResponse, ProvidersResponse, TimelineEvent } from "../types";
 
-type ViewTarget = "work" | "issues" | "agents" | "system" | "projects" | "command";
+type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command";
 
 export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
-  const [roster, setRoster] = useState<AgentRosterResponse | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [resolved, setResolved] = useState<BoardTask[]>([]);
+  const [diagnostics, setDiagnostics] = useState<CodexSystemDiagnosticsResponse | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunDetail, setSelectedRunDetail] = useState<CodexRunDetailResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   async function loadSystem(signal?: AbortSignal) {
-    const [providersPayload, rosterPayload, activityPayload, timelinePayload, boardPayload] = await Promise.all([
+    const [providersPayload, activityPayload, timelinePayload, boardPayload, diagnosticsPayload] = await Promise.all([
       fetchProviders(),
-      fetchAgentRoster(),
       fetchActivity(),
       fetchIncidentTimeline({ limit: 24 }, signal),
       fetchBoard({}, signal),
+      fetchCodexSystemDiagnostics(signal),
     ]);
     setProviders(providersPayload);
-    setRoster(rosterPayload);
     setActivity(activityPayload);
     setTimeline(timelinePayload.events);
     setTasks(openBoardTasks(boardPayload.columns));
     setResolved(resolvedBoardTasks(boardPayload.columns));
+    setDiagnostics(diagnosticsPayload);
   }
 
   useEffect(() => {
@@ -103,29 +105,7 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
       { total: 0, liveReady: 0, simulation: 0, issues: 0, queued: 0, running: 0 }
     );
   }, [providers]);
-  const runtimeDiagnostics = useMemo(() => {
-    const queuedJobs = providers?.job_queue?.filter((job) => job.status === "queued") ?? [];
-    const runningJobs = providers?.job_queue?.filter((job) => job.status === "running") ?? [];
-    const staleAgents = (roster?.agents ?? []).filter((agent) => (agent.heartbeat_age_seconds ?? 0) >= 90);
-    const oldestQueued = queuedJobs.reduce<string | null>((oldest, job) => {
-      if (!oldest || job.created_at < oldest) {
-        return job.created_at;
-      }
-      return oldest;
-    }, null);
-    const oldestRunning = runningJobs.reduce<string | null>((oldest, job) => {
-      const candidate = job.started_at ?? job.created_at;
-      if (!oldest || candidate < oldest) {
-        return candidate;
-      }
-      return oldest;
-    }, null);
-    return {
-      staleAgents: staleAgents.length,
-      oldestQueued,
-      oldestRunning,
-    };
-  }, [providers, roster]);
+  const runtimeDiagnostics = diagnostics;
 
   return (
     <section className="codex-page">
@@ -161,9 +141,13 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
           <p>{timeline.length} timeline events loaded</p>
         </article>
         <article className="codex-panel codex-stat">
-          <strong>{runtimeDiagnostics.staleAgents}</strong>
+          <strong>{runtimeDiagnostics?.summary.stale_agents ?? 0}</strong>
           <span>Stale agents</span>
-          <p>{runtimeDiagnostics.oldestQueued ? `Oldest queued ${formatTimestamp(runtimeDiagnostics.oldestQueued)}` : "No queued backlog"}</p>
+          <p>
+            {runtimeDiagnostics?.summary.oldest_queued_at
+              ? `Oldest queued ${formatTimestamp(runtimeDiagnostics.summary.oldest_queued_at)}`
+              : "No queued backlog"}
+          </p>
         </article>
       </div>
 
@@ -206,14 +190,14 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
                 <strong>Oldest queued job</strong>
                 <span>{providers?.job_queue?.filter((job) => job.status === "queued").length ?? 0}</span>
               </div>
-              <span>{runtimeDiagnostics.oldestQueued ? formatTimestamp(runtimeDiagnostics.oldestQueued) : "No queued jobs."}</span>
+              <span>{runtimeDiagnostics?.queue_pressure.oldest_queued_at ? formatTimestamp(runtimeDiagnostics.queue_pressure.oldest_queued_at) : "No queued jobs."}</span>
             </div>
             <div className="codex-run-item">
               <div className="codex-run-item__meta">
                 <strong>Oldest running job</strong>
                 <span>{providers?.job_queue?.filter((job) => job.status === "running").length ?? 0}</span>
               </div>
-              <span>{runtimeDiagnostics.oldestRunning ? formatTimestamp(runtimeDiagnostics.oldestRunning) : "No active jobs."}</span>
+              <span>{runtimeDiagnostics?.queue_pressure.oldest_running_at ? formatTimestamp(runtimeDiagnostics.queue_pressure.oldest_running_at) : "No active jobs."}</span>
             </div>
             <button
               type="button"
@@ -261,6 +245,54 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
             </button>
           </div>
         </section>
+
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Needs inspection</span>
+              <h2>Suspect runs and stale agents</h2>
+            </div>
+          </div>
+          <div className="codex-run-list">
+            {(runtimeDiagnostics?.suspect_runs ?? []).map((run) => (
+              <button
+                key={run.session_id}
+                type="button"
+                className="codex-run-item codex-run-item--interactive"
+                onClick={() => {
+                  setSelectedRunId(run.session_id);
+                  setPendingRunFocus(run.session_id);
+                  onNavigate("runs");
+                }}
+              >
+                <div className="codex-run-item__meta">
+                  <strong>{run.issue_key ?? run.task_title ?? run.session_id}</strong>
+                  <span>{run.is_stale ? "stale run" : run.status.replaceAll("_", " ")}</span>
+                </div>
+                <span>{run.diagnostic_summary ?? run.status_message ?? run.provider_type}</span>
+                <span>{run.recommended_action ?? "Open the run page for detail."}</span>
+              </button>
+            ))}
+            {(runtimeDiagnostics?.stale_agents ?? []).map((agent) => (
+              <button
+                key={agent.agent_id}
+                type="button"
+                className="codex-run-item codex-run-item--interactive"
+                onClick={() => onNavigate("agents")}
+              >
+                <div className="codex-run-item__meta">
+                  <strong>{agent.display_name}</strong>
+                  <span>stale agent</span>
+                </div>
+                <span>{agent.diagnostic_summary ?? "Agent heartbeat is stale."}</span>
+                <span>{agent.recommended_action ?? "Open the agent page for detail."}</span>
+              </button>
+            ))}
+            {!(runtimeDiagnostics?.suspect_runs.length || runtimeDiagnostics?.stale_agents.length) ? (
+              <div className="codex-empty-copy">No suspect runs or stale agents need inspection right now.</div>
+            ) : null}
+          </div>
+        </section>
       </div>
 
       <div className="codex-two-column">
@@ -303,49 +335,35 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
             </div>
           </div>
           {selectedRunDetail ? (
-            <div className="codex-detail-stack">
-              <div className="codex-review-callout">
-                <strong>{selectedRunDetail.status_message ?? "No runtime summary recorded."}</strong>
-                <p>
-                  {selectedRunDetail.task_title ?? selectedRunDetail.task_id ?? "Unlinked issue"} ·{" "}
-                  {selectedRunDetail.provider_type.replaceAll("_", " ")} · {selectedRunDetail.execution_mode?.replaceAll("_", " ") ?? "unknown mode"} ·{" "}
-                  started {formatTimestamp(selectedRunDetail.started_at)}
-                </p>
-                <div className="codex-review-facts">
-                  <div className="codex-review-fact">
-                    <span>Status</span>
-                    <strong>{selectedRunDetail.status.replaceAll("_", " ")}</strong>
-                  </div>
-                  <div className="codex-review-fact">
-                    <span>Progress</span>
-                    <strong>{selectedRunDetail.progress_pct ?? 0}%</strong>
-                  </div>
-                  <div className="codex-review-fact">
-                    <span>Artifacts</span>
-                    <strong>{selectedRunDetail.artifacts.length}</strong>
-                  </div>
-                </div>
-              </div>
-              {selectedRunDetail.output_preview?.content ? (
-                <pre className="codex-output-preview__content">{selectedRunDetail.output_preview.content}</pre>
-              ) : (
-                <div className="codex-empty-copy">No runtime output preview is available for the selected run yet.</div>
-              )}
-              {selectedRunDetail.task_id ? (
-                <div className="codex-detail-actions">
+            <CodexRunDetailCard
+              run={selectedRunDetail}
+              actions={
+                <>
+                  {selectedRunDetail.task_id ? (
+                    <button
+                      type="button"
+                      className="codex-button codex-button--primary"
+                      onClick={() => {
+                        setPendingTaskFocus(selectedRunDetail.task_id!);
+                        onNavigate("work");
+                      }}
+                    >
+                      Open issue
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="codex-button"
                     onClick={() => {
-                      setPendingTaskFocus(selectedRunDetail.task_id!);
-                      onNavigate("work");
+                      setPendingRunFocus(selectedRunDetail.session_id);
+                      onNavigate("runs");
                     }}
                   >
-                    Open issue
+                    Open run page
                   </button>
-                </div>
-              ) : null}
-            </div>
+                </>
+              }
+            />
           ) : (
             <div className="codex-empty-copy">Select a queued or running session to inspect its trace.</div>
           )}

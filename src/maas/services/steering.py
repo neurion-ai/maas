@@ -594,6 +594,26 @@ def halt_task(connection, task_id, actor_id):
     return {"task_id": task_id, "status": "cancelled"}
 
 
+def cancel_run(connection, session_id, actor_id):
+    session = connection.execute(
+        """
+        SELECT session_id, project_id, task_id, status
+        FROM sessions
+        WHERE session_id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    if session is None:
+        raise ValueError("Run not found")
+    if session["status"] != "active":
+        raise ValueError("Only active runs can be cancelled")
+    if session["task_id"] is None:
+        raise ValueError("Run is not linked to a task and cannot be cancelled from the operator surface")
+    result = halt_task(connection, session["task_id"], actor_id)
+    result["session_id"] = session_id
+    return result
+
+
 def recover_task(connection, task_id, actor_id):
     task = _load_recoverable_task(connection, task_id, actor_id)
     _reset_recoverable_task(

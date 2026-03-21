@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { CodexIssueScopeToolbar } from "../components/CodexIssueScopeToolbar";
 import { CodexIssueDetailPanel } from "../components/CodexIssueDetailPanel";
-import { boardCounts, formatTimestamp, issueKeyMap, openBoardTasks, operatorQueueTasks, priorityLabel, resolvedBoardTasks, statusLabel } from "../lib/codexMvp";
+import { boardCounts, formatTimestamp, issueKeyMap, priorityLabel, statusLabel } from "../lib/codexMvp";
 import { filterCodexTasks, useCodexIssueScope, useCodexScopeOptions } from "../lib/codexIssueScopes";
-import { fetchCodexIssueDetail, fetchFailures } from "../lib/controlRoomApi";
-import { fetchBoard, haltTask, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
+import { fetchCodexIssueDetail, fetchCodexIssueIndex } from "../lib/controlRoomApi";
+import { haltTask, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { BoardTask, CodexIssueDetailResponse, FailureItem } from "../types";
+import type { BoardTask, CodexIssueDetailResponse, CodexIssueIndexResponse } from "../types";
 
 type IssuesTab = "queue" | "resolved";
+type ViewTarget = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects";
 
 function issueLabel(task: BoardTask, fallbackKeys: Map<string, string>) {
   return task.issue_key ?? fallbackKeys.get(task.task_id) ?? task.task_id;
@@ -23,11 +24,11 @@ function nextVisibleTaskId(currentTaskId: string | null, openTasks: BoardTask[],
   return openTasks[0]?.task_id ?? resolvedTasks[0]?.task_id ?? null;
 }
 
-export function CodexIssuesPage() {
+export function CodexIssuesPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [issuesTab, setIssuesTab] = useState<IssuesTab>("queue");
+  const [issueIndex, setIssueIndex] = useState<CodexIssueIndexResponse | null>(null);
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [resolved, setResolved] = useState<BoardTask[]>([]);
-  const [failures, setFailures] = useState<FailureItem[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(() => consumePendingTaskFocus());
   const [detail, setDetail] = useState<CodexIssueDetailResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -37,12 +38,16 @@ export function CodexIssuesPage() {
     useCodexIssueScope(getSelectedProjectId(), "issues");
 
   async function loadIssues(signal?: AbortSignal) {
-    const [boardPayload, failuresPayload] = await Promise.all([fetchBoard({}, signal), fetchFailures()]);
-    const openTasks = openBoardTasks(boardPayload.columns);
-    const resolvedTasks = resolvedBoardTasks(boardPayload.columns);
+    const payload = await fetchCodexIssueIndex(signal);
+    const openTasks = [
+      ...payload.queue.review.items,
+      ...payload.queue.blocked_failures.items,
+      ...payload.queue.blocked_dependencies.items,
+    ];
+    const resolvedTasks = payload.resolved;
+    setIssueIndex(payload);
     setTasks(openTasks);
     setResolved(resolvedTasks);
-    setFailures(failuresPayload.recent);
     const nextTaskId = nextVisibleTaskId(selectedTaskId, openTasks, resolvedTasks);
     setSelectedTaskId(nextTaskId);
     return { openTasks, resolvedTasks, nextTaskId };
@@ -72,7 +77,22 @@ export function CodexIssuesPage() {
 
   const keyMap = useMemo(() => issueKeyMap([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const scopeOptions = useCodexScopeOptions([...tasks, ...resolved]);
-  const filteredOpenTasks = useMemo(() => filterCodexTasks(tasks, scope), [tasks, scope]);
+  const filteredReviewItems = useMemo(
+    () => filterCodexTasks(issueIndex?.queue.review.items ?? [], scope),
+    [issueIndex, scope]
+  );
+  const filteredBlockedFailureItems = useMemo(
+    () => filterCodexTasks(issueIndex?.queue.blocked_failures.items ?? [], scope),
+    [issueIndex, scope]
+  );
+  const filteredBlockedDependencyItems = useMemo(
+    () => filterCodexTasks(issueIndex?.queue.blocked_dependencies.items ?? [], scope),
+    [issueIndex, scope]
+  );
+  const filteredOpenTasks = useMemo(
+    () => [...filteredReviewItems, ...filteredBlockedFailureItems, ...filteredBlockedDependencyItems],
+    [filteredReviewItems, filteredBlockedFailureItems, filteredBlockedDependencyItems]
+  );
   const filteredResolved = useMemo(
     () => filterCodexTasks(resolved, { ...scope, queueFilter: "all" }),
     [resolved, scope]
@@ -81,38 +101,18 @@ export function CodexIssuesPage() {
     () => boardCounts([{ key: "ready", title: "Ready", tasks: filteredOpenTasks }, { key: "done", title: "Done", tasks: filteredResolved }]),
     [filteredOpenTasks, filteredResolved]
   );
-  const queueItems = useMemo(() => operatorQueueTasks(filteredOpenTasks), [filteredOpenTasks]);
-  const reviewItems = useMemo(() => queueItems.filter((task) => task.status === "review"), [queueItems]);
-  const batchReviewItems = useMemo(
-    () =>
-      reviewItems.filter(
-        (task) => task.priority <= 69 && !task.failure_count && task.latest_verification_status === "passed"
-      ),
-    [reviewItems]
-  );
-  const blockedItems = useMemo(() => queueItems.filter((task) => task.status === "blocked"), [queueItems]);
-  const blockedFailureItems = useMemo(
-    () =>
-      blockedItems.filter((task) =>
-        Boolean(task.failure_count) || ["session_failed", "timed_out", "circuit_breaker_open", "retry_budget_exhausted"].includes(task.review_state ?? "")
-      ),
-    [blockedItems]
-  );
-  const blockedDependencyItems = useMemo(
-    () => blockedItems.filter((task) => !blockedFailureItems.some((item) => item.task_id === task.task_id)),
-    [blockedItems, blockedFailureItems]
-  );
-  const visibleItems = issuesTab === "queue" ? queueItems : filteredResolved;
+  const batchReviewItems = useMemo(() => filteredReviewItems.filter((task) => task.batch_review_eligible), [filteredReviewItems]);
+  const visibleItems = issuesTab === "queue" ? filteredOpenTasks : filteredResolved;
   const selectedTask = useMemo(() => {
-    const allItems = [...queueItems, ...filteredResolved];
+    const allItems = [...filteredOpenTasks, ...filteredResolved];
     return allItems.find((task) => task.task_id === selectedTaskId) ?? visibleItems[0] ?? null;
-  }, [queueItems, filteredResolved, visibleItems, selectedTaskId]);
+  }, [filteredOpenTasks, filteredResolved, visibleItems, selectedTaskId]);
 
   useEffect(() => {
     if (!selectedTaskId) {
       return;
     }
-    if (queueItems.some((task) => task.task_id === selectedTaskId)) {
+    if (filteredOpenTasks.some((task) => task.task_id === selectedTaskId)) {
       setIssuesTab((current) => (current === "queue" ? current : "queue"));
       return;
     }
@@ -121,7 +121,7 @@ export function CodexIssuesPage() {
       return;
     }
     setSelectedTaskId(visibleItems[0]?.task_id ?? null);
-  }, [selectedTaskId, queueItems, filteredResolved, visibleItems]);
+  }, [selectedTaskId, filteredOpenTasks, filteredResolved, visibleItems]);
 
   async function runAction(key: string, action: () => Promise<unknown>, message: string) {
     setPendingKey(key);
@@ -301,9 +301,9 @@ export function CodexIssuesPage() {
           />
 
           <div className="codex-chip-row">
-            <span className="codex-chip">{counts.review} review</span>
-            <span className="codex-chip">{counts.blocked} blocked</span>
-            <span className="codex-chip">{failures.length} recent failures</span>
+            <span className="codex-chip">{filteredReviewItems.length} review</span>
+            <span className="codex-chip">{filteredBlockedFailureItems.length + filteredBlockedDependencyItems.length} blocked</span>
+            <span className="codex-chip">{filteredBlockedFailureItems.length} recent failures</span>
             <span className="codex-chip">{counts.done} resolved</span>
           </div>
 
@@ -313,7 +313,7 @@ export function CodexIssuesPage() {
               <section className="codex-list-section">
                 <div className="codex-section-heading">
                   <strong>Review queue</strong>
-                  <span>{reviewItems.length}</span>
+                  <span>{filteredReviewItems.length}</span>
                 </div>
                 {batchReviewItems.length ? (
                   <div className="codex-detail-actions">
@@ -335,10 +335,10 @@ export function CodexIssuesPage() {
                     </button>
                   </div>
                 ) : (
-                  <div className="codex-empty-copy">Only low-risk reviewed issues with passing checks can be batch-decided here.</div>
+                  <div className="codex-empty-copy">{issueIndex?.queue.review.batch_review?.summary ?? "No current review items meet the low-risk batch-review rules."}</div>
                 )}
-                {reviewItems.length ? (
-                  reviewItems.map((task) => (
+                {filteredReviewItems.length ? (
+                  filteredReviewItems.map((task) => (
                     <button
                       key={task.task_id}
                       type="button"
@@ -369,11 +369,11 @@ export function CodexIssuesPage() {
 
               <section className="codex-list-section">
                 <div className="codex-section-heading">
-                  <strong>Blocked by failures</strong>
-                  <span>{blockedFailureItems.length}</span>
+                  <strong>{issueIndex?.queue.blocked_failures.title ?? "Blocked by failures"}</strong>
+                  <span>{filteredBlockedFailureItems.length}</span>
                 </div>
-                {blockedFailureItems.length ? (
-                  blockedFailureItems.map((task) => (
+                {filteredBlockedFailureItems.length ? (
+                  filteredBlockedFailureItems.map((task) => (
                     <button
                       key={task.task_id}
                       type="button"
@@ -404,11 +404,11 @@ export function CodexIssuesPage() {
 
               <section className="codex-list-section">
                 <div className="codex-section-heading">
-                  <strong>Blocked by dependencies or operator state</strong>
-                  <span>{blockedDependencyItems.length}</span>
+                  <strong>{issueIndex?.queue.blocked_dependencies.title ?? "Blocked by dependencies or operator state"}</strong>
+                  <span>{filteredBlockedDependencyItems.length}</span>
                 </div>
-                {blockedDependencyItems.length ? (
-                  blockedDependencyItems.map((task) => (
+                {filteredBlockedDependencyItems.length ? (
+                  filteredBlockedDependencyItems.map((task) => (
                     <button
                       key={task.task_id}
                       type="button"
@@ -475,6 +475,7 @@ export function CodexIssuesPage() {
           issueKeyMap={keyMap}
           actions={detailActions}
           onSelectTask={setSelectedTaskId}
+          onNavigate={onNavigate}
         />
       </div>
     </section>

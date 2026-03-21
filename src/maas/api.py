@@ -17,8 +17,15 @@ from maas.services.artifacts import (
     fetch_artifacts,
     resolve_artifact_download,
 )
-from maas.services.board import fetch_board
-from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail
+from maas.services.board import fetch_board, fetch_issue_index
+from maas.services.codex_mvp import (
+    fetch_agent_detail,
+    fetch_issue_detail,
+    fetch_retrieval_search,
+    fetch_run_detail,
+    fetch_runs,
+    fetch_system_diagnostics,
+)
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -47,6 +54,7 @@ from maas.services.provider_workers import run_provider_worker_once
 from maas.services.portfolio import fetch_portfolio
 from maas.services.projects import (
     archive_project,
+    clone_project,
     create_project,
     delete_project,
     list_projects,
@@ -67,6 +75,7 @@ from maas.services.scheduler_policy import update_project_scheduler_policy
 from maas.services.security import fetch_task_capabilities
 from maas.services.steering import (
     dismiss_quarantine_entry,
+    cancel_run,
     recover_and_requeue_task,
     finish_task_replan,
     halt_task,
@@ -268,6 +277,11 @@ class ProjectCreateRequest(BaseModel):
     create_source_root: bool = False
 
 
+class ProjectCloneRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    name: Optional[str] = None
+
+
 class ProjectOnboardingReviewUpdateRequest(BaseModel):
     actor_id: str = "agent_allocator"
     ignored_paths: List[str] = []
@@ -387,6 +401,16 @@ def create_app(project_root="."):
                 source_root=payload.source_root,
                 create_source_root=payload.create_source_root,
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/clone")
+    def projects_clone(project_id: str, payload: ProjectCloneRequest):
+        connection = connect(paths)
+        try:
+            return clone_project(connection, paths, project_id, payload.actor_id, name=payload.name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -897,6 +921,39 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/issues/index")
+    def issue_index(project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_issue_index(connection, project_id=scoped_project_id)
+        finally:
+            connection.close()
+
+    @app.get("/api/retrieval/search")
+    def retrieval_search(
+        search: str,
+        project_id: str = None,
+        goal_id: str = None,
+        agent_id: str = None,
+        priority_min: int = None,
+        limit: int = 8,
+    ):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_retrieval_search(
+                connection,
+                project_id=scoped_project_id,
+                search=search,
+                goal_id=goal_id,
+                agent_id=agent_id,
+                priority_min=priority_min,
+                limit=limit,
+            )
+        finally:
+            connection.close()
+
     @app.get("/api/issues/{task_id}")
     def issue_detail(task_id: str, project_id: str = None):
         connection = connect(paths)
@@ -918,6 +975,40 @@ def create_app(project_root="."):
             if payload is None:
                 raise HTTPException(status_code=404, detail="run not found")
             return payload
+        finally:
+            connection.close()
+
+    @app.get("/api/runs")
+    def run_index(project_id: str = None, limit: int = 200, status: str = "", search: str = ""):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_runs(
+                connection,
+                scoped_project_id,
+                limit=int(limit),
+                status=status or None,
+                search=search or None,
+            )
+        finally:
+            connection.close()
+
+    @app.get("/api/system/diagnostics")
+    def system_diagnostics(project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_system_diagnostics(connection, scoped_project_id)
+        finally:
+            connection.close()
+
+    @app.post("/api/runs/{session_id}/actions/cancel")
+    def run_cancel_action(session_id: str, payload: AgentActionRequest):
+        connection = connect(paths)
+        try:
+            return cancel_run(connection, session_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()
 

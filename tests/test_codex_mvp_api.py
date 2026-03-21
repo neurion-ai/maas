@@ -204,6 +204,87 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertIn("heartbeating", run["diagnostic_summary"])
             self.assertIn("Let the run continue", run["recommended_action"])
 
+    def test_system_diagnostics_exposes_suspect_runs_and_stale_agents(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Diagnostics Test", description="codex diagnostics", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    WHERE assigned_agent_id IS NOT NULL
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET last_heartbeat_at = DATETIME('now', '-180 seconds')
+                    WHERE agent_id = ?
+                    """,
+                    (task["assigned_agent_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'active', 'openai_codex', 35,
+                        'Codex is synthesizing a review packet', DATETIME('now', '-180 seconds'), CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (session_id, task["project_id"], task["assigned_agent_id"], task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'provider_adapter_started', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        task["project_id"],
+                        task["assigned_agent_id"],
+                        task["task_id"],
+                        "Codex adapter started live execution.",
+                        json.dumps(
+                            {
+                                "session_id": session_id,
+                                "execution_mode": "codex_cli",
+                                "external_runtime": "codex_cli",
+                            }
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.get("/api/system/diagnostics")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertEqual(payload["summary"]["suspect_runs"], 1)
+            self.assertEqual(payload["summary"]["stale_agents"], 1)
+            self.assertEqual(payload["suspect_runs"][0]["session_id"], session_id)
+            self.assertTrue(payload["suspect_runs"][0]["is_stale"])
+            self.assertEqual(payload["stale_agents"][0]["agent_id"], task["assigned_agent_id"])
+            self.assertEqual(payload["stale_agents"][0]["focus_run_session_id"], session_id)
+
     def test_run_cancel_action_halts_linked_task(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex Run Cancel Test", description="codex cancel", project_type="custom")

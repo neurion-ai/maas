@@ -6,6 +6,7 @@ import os
 
 from maas.services.artifacts import fetch_artifacts
 from maas.services.git_workspaces import fetch_task_git_workspace
+from maas.services.provider_jobs import fetch_provider_jobs
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
@@ -480,6 +481,87 @@ def fetch_runs(connection, project_id, limit=200, status=None, search=None):
         "stale_runs": len([item for item in items if item["is_stale"]]),
     }
     return {"summary": summary, "items": items}
+
+
+def fetch_system_diagnostics(connection, project_id):
+    run_payload = fetch_runs(connection, project_id, limit=100)
+    suspect_runs = [
+        item
+        for item in run_payload["items"]
+        if item["is_stale"] or item["status"] in {"failed", "timed_out", "cancelled"}
+    ][:10]
+
+    issue_keys = issue_key_lookup(connection, project_id)
+    stale_agent_rows = connection.execute(
+        """
+        SELECT
+            agents.agent_id,
+            agents.display_name,
+            agents.status,
+            agents.current_task_id,
+            tasks.title AS current_task_title,
+            agents.last_heartbeat_at,
+            active_sessions.session_id AS focus_run_session_id
+        FROM agents
+        LEFT JOIN tasks ON tasks.task_id = agents.current_task_id
+        LEFT JOIN sessions AS active_sessions
+            ON active_sessions.project_id = agents.project_id
+           AND active_sessions.agent_id = agents.agent_id
+           AND active_sessions.status = 'active'
+        WHERE agents.project_id = ?
+        ORDER BY agents.display_name ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    stale_agents = []
+    for row in stale_agent_rows:
+        heartbeat_age_seconds = _age_seconds(row["last_heartbeat_at"])
+        if heartbeat_age_seconds is None or heartbeat_age_seconds < STALE_RUN_HEARTBEAT_SECONDS:
+            continue
+        stale_agents.append(
+            {
+                "agent_id": row["agent_id"],
+                "display_name": row["display_name"],
+                "status": row["status"],
+                "heartbeat_age_seconds": heartbeat_age_seconds,
+                "current_task_id": row["current_task_id"],
+                "current_issue_key": issue_keys.get(row["current_task_id"]) if row["current_task_id"] else None,
+                "current_task_title": row["current_task_title"],
+                "focus_run_session_id": row["focus_run_session_id"],
+                "diagnostic_summary": "The agent heartbeat is stale enough to inspect for a stuck Codex thread or crashed worker.",
+                "recommended_action": (
+                    "Open the live run if one exists, otherwise inspect the agent history and recover the agent if it is no longer progressing."
+                ),
+            }
+        )
+
+    provider_jobs = fetch_provider_jobs(connection, project_id=project_id, limit=200)
+    queued_jobs = [job for job in provider_jobs if job["status"] == "queued"]
+    running_jobs = [job for job in provider_jobs if job["status"] == "running"]
+    oldest_queued_at = min((job["created_at"] for job in queued_jobs), default=None)
+    oldest_running_at = min(
+        ((job["started_at"] or job["created_at"]) for job in running_jobs),
+        default=None,
+    )
+
+    return {
+        "summary": {
+            "suspect_runs": len(suspect_runs),
+            "stale_agents": len(stale_agents),
+            "queued_jobs": len(queued_jobs),
+            "running_jobs": len(running_jobs),
+            "oldest_queued_at": oldest_queued_at,
+            "oldest_running_at": oldest_running_at,
+        },
+        "suspect_runs": suspect_runs,
+        "stale_agents": stale_agents,
+        "queue_pressure": {
+            "queued_jobs": len(queued_jobs),
+            "running_jobs": len(running_jobs),
+            "oldest_queued_at": oldest_queued_at,
+            "oldest_running_at": oldest_running_at,
+        },
+    }
 
 
 def _issue_run_console(connection, project_paths, project_id, task_id, runs):

@@ -1387,6 +1387,36 @@ export interface CodexRunIndexResponse {
   items: CodexRunListItem[];
 }
 
+export interface CodexSystemDiagnosticsResponse {
+  summary: {
+    suspect_runs: number;
+    stale_agents: number;
+    queued_jobs: number;
+    running_jobs: number;
+    oldest_queued_at?: string | null;
+    oldest_running_at?: string | null;
+  };
+  suspect_runs: CodexRunListItem[];
+  stale_agents: Array<{
+    agent_id: string;
+    display_name: string;
+    status: string;
+    heartbeat_age_seconds?: number | null;
+    current_task_id?: string | null;
+    current_issue_key?: string | null;
+    current_task_title?: string | null;
+    focus_run_session_id?: string | null;
+    diagnostic_summary?: string | null;
+    recommended_action?: string | null;
+  }>;
+  queue_pressure: {
+    queued_jobs: number;
+    running_jobs: number;
+    oldest_queued_at?: string | null;
+    oldest_running_at?: string | null;
+  };
+}
+
 export interface CodexRunConsoleActivityItem {
   activity_id?: string | null;
   action: string;

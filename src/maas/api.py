@@ -18,7 +18,7 @@ from maas.services.artifacts import (
     resolve_artifact_download,
 )
 from maas.services.board import fetch_board, fetch_issue_index
-from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail, fetch_runs
+from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail, fetch_runs, fetch_system_diagnostics
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -943,6 +943,15 @@ def create_app(project_root="."):
                 status=status or None,
                 search=search or None,
             )
+        finally:
+            connection.close()
+
+    @app.get("/api/system/diagnostics")
+    def system_diagnostics(project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_system_diagnostics(connection, scoped_project_id)
         finally:
             connection.close()
 

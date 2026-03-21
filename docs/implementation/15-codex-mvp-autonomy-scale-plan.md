@@ -78,6 +78,11 @@ The current branch also extends agent execution truth:
 - agent-detail runs now expose execution mode, stale/live state, diagnostics, and recommended next action
 - `Agents` surfaces that execution diagnosis directly instead of only showing raw heartbeat age
 
+The current branch now also lands the first backend-owned system diagnostics pass:
+
+- canonical `/api/system/diagnostics` read model for suspect runs, stale agents, and queue pressure
+- `System` now renders that backend truth instead of recomputing stale diagnostics in the browser
+
 ## Why This Order
 
 The run object is the strongest source of truth for what MAAS is actually doing.

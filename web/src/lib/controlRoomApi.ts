@@ -11,6 +11,7 @@ import type {
   CodexIssueIndexResponse,
   CodexIssueDetailResponse,
   CodexRunIndexResponse,
+  CodexSystemDiagnosticsResponse,
   CodexRunDetailResponse,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
@@ -1005,6 +1006,32 @@ export function fetchCodexRuns(
         stale_runs: 0,
       },
       items: [],
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<CodexSystemDiagnosticsResponse>(
+    appendProjectScope("/api/system/diagnostics"),
+    {
+      summary: {
+        suspect_runs: 0,
+        stale_agents: 0,
+        queued_jobs: 0,
+        running_jobs: 0,
+        oldest_queued_at: null,
+        oldest_running_at: null,
+      },
+      suspect_runs: [],
+      stale_agents: [],
+      queue_pressure: {
+        queued_jobs: 0,
+        running_jobs: 0,
+        oldest_queued_at: null,
+        oldest_running_at: null,
+      },
     },
     signal,
     onFallback

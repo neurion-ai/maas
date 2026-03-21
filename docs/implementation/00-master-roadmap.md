@@ -35,6 +35,8 @@ For the current autopilot-and-memory batch, see [16-codex-mvp-autopilot-memory-p
 
 For the current control-loop hardening batch, see [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md).
 
+For the current doctor, planning, and delivery-loop batch, see [18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -109,6 +111,16 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#212` Operator inbox
 - [x] `#213` Notification reliability and overdue decisions
 - [x] `#214` Autonomy correctness regression suite
+- [x] `#215` Environment doctor and live-launch readiness
+- [x] `#216` Goal intake and planning surface
+- [x] `#217` Goal-to-issue synthesis and refresh loop
+- [x] `#218` Deliverable surface for diffs, reports, and output bundles
+- [x] `#219` GitHub delivery loop and PR-draft preparation
+- [x] `#220` Autopilot governance: budgets, stop conditions, and schedule windows
+- [x] `#221` No-progress diagnostics and explicit blocked reasons
+- [x] `#222` Review packets v3 and grouped approval
+- [x] `#223` Memory feedback, decay, and usefulness scoring
+- [x] `#224` Async supervision v3 and overdue decision posture
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

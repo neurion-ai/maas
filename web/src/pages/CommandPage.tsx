@@ -1,24 +1,41 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import {
   fetchAlerts,
   fetchAgentRoster,
   fetchAutopilotStatus,
+  fetchDeliveryOverview,
   fetchCodexIssueIndex,
   fetchCodexRetrievalSearch,
+  fetchEnvironmentDoctor,
+  fetchGoalPlanning,
   fetchIncidentTimeline,
   fetchOverview,
   fetchPortfolio,
+  prepareTaskPrDraft,
   runOrchestratorPass,
+  createGoal,
+  synthesizeGoal,
   updateProjectAutopilot,
   updateProjectProviderCapacity,
 } from "../lib/controlRoomApi";
 import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap } from "../lib/codexMvp";
-import { getSelectedProjectId } from "../lib/projectScope";
+import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { AlertItem, AutopilotStatusResponse, BoardTask, CodexRetrievalSearchResponse, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
+import type {
+  AlertItem,
+  AutopilotStatusResponse,
+  BoardTask,
+  CodexRetrievalSearchResponse,
+  DeliveryOverviewResponse,
+  EnvironmentDoctorResponse,
+  GoalPlanningResponse,
+  OverviewResponse,
+  PortfolioProject,
+  TimelineEvent,
+} from "../types";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 
 type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects";
@@ -47,6 +64,9 @@ export function CommandPage({
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [project, setProject] = useState<PortfolioProject | null>(null);
   const [autopilot, setAutopilot] = useState<AutopilotStatusResponse | null>(null);
+  const [doctor, setDoctor] = useState<EnvironmentDoctorResponse | null>(null);
+  const [goalPlanning, setGoalPlanning] = useState<GoalPlanningResponse | null>(null);
+  const [delivery, setDelivery] = useState<DeliveryOverviewResponse | null>(null);
   const [runningAgents, setRunningAgents] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
@@ -54,17 +74,42 @@ export function CommandPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [retrieval, setRetrieval] = useState<CodexRetrievalSearchResponse | null>(null);
   const [retrievalNotice, setRetrievalNotice] = useState<string | null>(null);
+  const [goalTitle, setGoalTitle] = useState("");
+  const [goalDescription, setGoalDescription] = useState("");
+  const [goalNotice, setGoalNotice] = useState<string | null>(null);
+  const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => getSelectedProjectId());
   const livePulse = useLivePulse();
 
+  useEffect(() => subscribeProjectScope(setSelectedProjectId), []);
+
   async function loadCommand(signal?: AbortSignal) {
-    const [issueIndexPayload, overviewPayload, alertsPayload, timelinePayload, rosterPayload, portfolioPayload, autopilotPayload] = await Promise.all([
-      fetchCodexIssueIndex(signal),
-      fetchOverview(),
-      fetchAlerts(),
-      fetchIncidentTimeline({ limit: 18 }, signal),
-      fetchAgentRoster(),
-      fetchPortfolio(),
-      fetchAutopilotStatus(signal),
+    let usedFallback = false;
+    const markFallback = () => {
+      usedFallback = true;
+    };
+    const [
+      issueIndexPayload,
+      overviewPayload,
+      alertsPayload,
+      timelinePayload,
+      rosterPayload,
+      portfolioPayload,
+      autopilotPayload,
+      doctorPayload,
+      goalPlanningPayload,
+      deliveryPayload,
+    ] = await Promise.all([
+      fetchCodexIssueIndex(signal, markFallback),
+      fetchOverview(selectedProjectId, signal, markFallback),
+      fetchAlerts(signal, markFallback, selectedProjectId),
+      fetchIncidentTimeline({ limit: 18 }, signal, markFallback, selectedProjectId),
+      fetchAgentRoster(signal, markFallback, selectedProjectId),
+      fetchPortfolio(signal, markFallback),
+      fetchAutopilotStatus(signal, markFallback, selectedProjectId),
+      fetchEnvironmentDoctor(signal, markFallback, selectedProjectId),
+      fetchGoalPlanning(signal, markFallback, selectedProjectId),
+      fetchDeliveryOverview(signal, markFallback, selectedProjectId),
     ]);
     setOverview(overviewPayload);
     setTasks([
@@ -78,19 +123,22 @@ export function CommandPage({
     setTimeline(timelinePayload.events);
     setRunningAgents(rosterPayload.agents.filter((agent) => agent.status === "running").length);
     setAutopilot(autopilotPayload);
-    const selectedProjectId = getSelectedProjectId();
+    setDoctor(doctorPayload);
+    setGoalPlanning(goalPlanningPayload);
+    setDelivery(deliveryPayload);
     setProject(
       portfolioPayload.projects.find((item) => item.project_id === selectedProjectId) ??
         portfolioPayload.projects[0] ??
         null
     );
+    setNotice(usedFallback ? "Command refresh fell back to cached data for one or more panels." : null);
   }
 
   useEffect(() => {
     const controller = new AbortController();
     void loadCommand(controller.signal).catch(() => setNotice("Command refresh failed; showing the latest available state."));
     return () => controller.abort();
-  }, [livePulse]);
+  }, [livePulse, selectedProjectId]);
 
   useEffect(() => {
     const trimmed = searchQuery.trim();
@@ -99,9 +147,11 @@ export function CommandPage({
       setRetrievalNotice(null);
       return;
     }
+    setRetrieval(null);
+    setRetrievalNotice(null);
     const controller = new AbortController();
     const timeout = window.setTimeout(() => {
-      void fetchCodexRetrievalSearch({ search: trimmed }, controller.signal)
+      void fetchCodexRetrievalSearch({ search: trimmed }, controller.signal, undefined, selectedProjectId)
         .then((payload) => {
           setRetrieval(payload);
           setRetrievalNotice(null);
@@ -117,7 +167,7 @@ export function CommandPage({
       controller.abort();
       window.clearTimeout(timeout);
     };
-  }, [searchQuery]);
+  }, [searchQuery, selectedProjectId]);
 
   const keyMap = useMemo(() => issueKeyMap([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
@@ -252,6 +302,12 @@ export function CommandPage({
         auto_launch_assigned_work: autopilot.policy.auto_launch_assigned_work,
         process_notifications: autopilot.policy.process_notifications,
         notification_batch_limit: autopilot.policy.notification_batch_limit,
+        schedule_window_start_hour_utc: autopilot.policy.schedule_window_start_hour_utc ?? null,
+        schedule_window_end_hour_utc: autopilot.policy.schedule_window_end_hour_utc ?? null,
+        stop_when_doctor_blocked: autopilot.policy.stop_when_doctor_blocked ?? false,
+        max_review_queue: autopilot.policy.max_review_queue ?? 0,
+        max_blocked_queue: autopilot.policy.max_blocked_queue ?? 0,
+        max_idle_cycles_before_alert: autopilot.policy.max_idle_cycles_before_alert ?? 0,
       });
       await loadCommand();
       await holdPendingState(startedAt);
@@ -259,6 +315,64 @@ export function CommandPage({
       setNotice(enabled ? "Autopilot enabled for this project." : "Autopilot disabled for this project.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not update autopilot.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleCreateGoal(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedTitle = goalTitle.trim();
+    if (!trimmedTitle) {
+      setGoalNotice("Goal title is required.");
+      return;
+    }
+    setPendingKey("goal-create");
+    setGoalNotice(null);
+    try {
+      const payload = await createGoal({
+        title: trimmedTitle,
+        description: goalDescription.trim(),
+        goal_type: "initiative",
+        priority: 75,
+      });
+      await synthesizeGoal(payload.goal.goal_id, true);
+      await loadCommand();
+      setGoalTitle("");
+      setGoalDescription("");
+      setGoalNotice(`Created goal "${payload.goal.title}" and synthesized an initial issue plan.`);
+    } catch (error) {
+      setGoalNotice(error instanceof Error ? error.message : "Could not create a goal.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleSynthesizeGoal(goalId: string) {
+    setPendingKey(`goal-sync:${goalId}`);
+    setGoalNotice(null);
+    try {
+      const result = await synthesizeGoal(goalId, true);
+      await loadCommand();
+      setGoalNotice(
+        `Refreshed goal plan: ${result.created_count} created, ${result.updated_count} updated, ${result.cancelled_count} cancelled.`
+      );
+    } catch (error) {
+      setGoalNotice(error instanceof Error ? error.message : "Could not refresh the goal plan.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handlePreparePrDraft(taskId: string) {
+    setPendingKey(`delivery:${taskId}`);
+    setDeliveryNotice(null);
+    try {
+      const payload = await prepareTaskPrDraft(taskId);
+      await loadCommand();
+      setDeliveryNotice(`Prepared PR draft "${payload.title}". Suggested command: ${payload.gh_command}`);
+    } catch (error) {
+      setDeliveryNotice(error instanceof Error ? error.message : "Could not prepare the PR draft.");
     } finally {
       setPendingKey(null);
     }
@@ -368,6 +482,155 @@ export function CommandPage({
       />
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+
+      <div className="codex-three-column">
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Doctor</span>
+              <h2>Safe start and no-progress diagnosis</h2>
+            </div>
+            <span
+              className={`codex-chip ${
+                doctor?.summary.status === "blocked"
+                  ? "codex-chip--tone-danger"
+                  : doctor?.summary.status === "ready"
+                    ? "codex-chip--active"
+                    : "codex-chip--tone-warn"
+              }`}
+            >
+              {doctor?.summary.label ?? "Loading"}
+            </span>
+          </div>
+          <p>{doctor?.summary.summary ?? "Refreshing environment doctor checks."}</p>
+          <div className="codex-inline-facts">
+            <span className="codex-chip">{doctor?.progress.status?.replaceAll("_", " ") ?? "idle"}</span>
+            <span className="codex-chip">{doctor?.progress.facts.review_tasks ?? 0} review</span>
+            <span className="codex-chip">{doctor?.progress.facts.blocked_tasks ?? 0} blocked</span>
+            <span className="codex-chip">{doctor?.preferred_provider_id ?? "provider?"}</span>
+          </div>
+          <p className="codex-muted-copy">{doctor?.progress.detail ?? "The doctor will explain why progress is moving or stalled."}</p>
+          <div className="codex-check-list">
+            {(doctor?.checks ?? []).slice(0, 4).map((check) => (
+              <div key={check.code} className="codex-check-list__item">
+                <span className={`codex-check-list__state is-${check.status}`}>{check.status}</span>
+                <div>
+                  <strong>{check.label}</strong>
+                  <p>{check.summary}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {(doctor?.recommended_actions?.length ?? 0) > 0 ? (
+            <div className="codex-list-block">
+              <strong>Recommended next actions</strong>
+              <ul>
+                {doctor?.recommended_actions.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </div>
+          ) : null}
+        </section>
+
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Goals</span>
+              <h2>Intake and issue synthesis</h2>
+            </div>
+            <span className="codex-chip">{goalPlanning?.summary.total_goals ?? 0} goals</span>
+          </div>
+          <form className="codex-inline-form" onSubmit={(event) => void handleCreateGoal(event)}>
+            <label className="field-control">
+              <span>Goal title</span>
+              <input value={goalTitle} onChange={(event) => setGoalTitle(event.target.value)} placeholder="Define the next objective" />
+            </label>
+            <label className="field-control">
+              <span>Why it matters</span>
+              <textarea value={goalDescription} onChange={(event) => setGoalDescription(event.target.value)} placeholder="Optional context that should influence planning" rows={3} />
+            </label>
+            <button type="submit" className="codex-button codex-button--primary" disabled={pendingKey !== null}>
+              {pendingKey === "goal-create" ? "Creating..." : "Create goal + synthesize plan"}
+            </button>
+          </form>
+          {goalNotice ? <div className="codex-banner">{goalNotice}</div> : null}
+          <div className="codex-stack-list">
+            {(goalPlanning?.items ?? []).slice(0, 4).map((goal) => (
+              <div key={goal.goal_id} className="codex-stack-item codex-stack-item--static">
+                <div className="codex-stack-item__header">
+                  <strong>{goal.title}</strong>
+                  <span>{goal.next_step}</span>
+                </div>
+                <span>{goal.goal_type} · {goal.open_issue_count} open issues · {goal.synthesized_tasks} synthesized</span>
+                <p>{goal.description || "No goal description recorded yet."}</p>
+                <div className="codex-detail-actions">
+                  <button
+                    type="button"
+                    className="codex-button"
+                    disabled={pendingKey !== null}
+                    onClick={() => void handleSynthesizeGoal(goal.goal_id)}
+                  >
+                    {pendingKey === `goal-sync:${goal.goal_id}` ? "Refreshing..." : "Refresh issue plan"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!goalPlanning?.items.length ? (
+              <div className="codex-empty-copy">No goals yet. Create one objective and let MAAS derive the initial issue plan.</div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Delivery</span>
+              <h2>Turn completed work into deliverables</h2>
+            </div>
+            <span className="codex-chip">{delivery?.summary.candidate_count ?? 0} candidates</span>
+          </div>
+          <p className="codex-muted-copy">
+            {delivery?.git.is_git_repo
+              ? `Repo branch ${delivery.git.branch ?? "unknown"} is ${delivery.git.dirty ? "dirty" : "clean"} for delivery preparation.`
+              : "No Git repository detected yet, so PR delivery is limited."}
+          </p>
+          {deliveryNotice ? <div className="codex-banner">{deliveryNotice}</div> : null}
+          <div className="codex-stack-list">
+            {(delivery?.items ?? []).slice(0, 4).map((item) => (
+              <div key={item.task_id} className="codex-stack-item codex-stack-item--static">
+                <div className="codex-stack-item__header">
+                  <strong>{item.issue_key ?? item.task_id}</strong>
+                  <span>{item.delivery_kind}</span>
+                </div>
+                <span>{item.title}</span>
+                <p>{item.goal_title ?? "No linked goal"} · {item.artifact_count} artifacts</p>
+                <div className="codex-detail-actions">
+                  <button
+                    type="button"
+                    className="codex-button"
+                    disabled={pendingKey !== null || !item.github_ready}
+                    onClick={() => void handlePreparePrDraft(item.task_id)}
+                  >
+                    {pendingKey === `delivery:${item.task_id}` ? "Preparing..." : "Prepare PR draft"}
+                  </button>
+                  <button
+                    type="button"
+                    className="codex-button"
+                    onClick={() => {
+                      setPendingTaskFocus(item.task_id);
+                      onNavigate("issues");
+                    }}
+                  >
+                    Open issue
+                  </button>
+                </div>
+              </div>
+            ))}
+            {!delivery?.items.length ? (
+              <div className="codex-empty-copy">No reviewable or delivered work is ready to package yet.</div>
+            ) : null}
+          </div>
+        </section>
+      </div>
 
       <section className="codex-panel">
         <div className="codex-panel__header">

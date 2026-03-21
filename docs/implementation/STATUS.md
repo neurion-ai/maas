@@ -41,6 +41,7 @@ See:
 - [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md)
 - [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md)
 - [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md)
+- [18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend
@@ -182,6 +183,16 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#212` is implemented on `codex/codex-mvp-control-loop-hardening`
 - [x] `#213` is implemented on `codex/codex-mvp-control-loop-hardening`
 - [x] `#214` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#215` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#216` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#217` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#218` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#219` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#220` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#221` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#222` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#223` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#224` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 
 ## Extended Numbered Roadmap
 

@@ -182,6 +182,44 @@ class OperatorInboxApiTest(unittest.TestCase):
             self.assertEqual(notification_item["metadata"]["delivery_state"], "retry_exhausted")
             self.assertTrue(notification_item["metadata"]["retry_budget_exhausted"])
 
+    def test_operator_inbox_uses_review_age_not_task_creation_age_for_overdue_reviews(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Operator Review Age Test", description="operator review age", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET created_at = DATETIME('now', '-3 hours'),
+                        status = 'review',
+                        review_state = 'review_requested',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with TestClient(create_app(tmpdir)) as client:
+                response = client.get("/api/operator-inbox", params={"project_id": project_id})
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            review_item = next(item for item in payload["buckets"]["review"] if item["resource_id"] == task["task_id"])
+            self.assertEqual(review_item["subtype"], "review_requested")
+            self.assertFalse(review_item["metadata"]["overdue"])
+
 
 if __name__ == "__main__":
     unittest.main()

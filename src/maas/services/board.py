@@ -9,7 +9,7 @@ from maas.services.codex_mvp import issue_key_lookup
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.review_policy import evaluate_review_decision_state, review_policy_from_row
 from maas.services.scheduler import adaptive_replan_feedback, describe_task_scheduler, scheduler_decisions_for_tasks
-from maas.services.verification import fetch_latest_verification_by_task
+from maas.services.verification import fetch_latest_verification_by_task, fetch_verification_history_by_task
 
 
 BLOCKED_FAILURE_REVIEW_STATES = {
@@ -180,12 +180,16 @@ def _batch_review_eligibility(card, project_operator_config):
     return evaluate_review_decision_state(
         None,
         {
+            "project_id": card.get("project_id"),
             "status": card["status"],
             "title": card["title"],
             "priority": card["priority"],
+            "goal_id": card.get("goal", {}).get("id"),
+            "goal_title": card.get("goal", {}).get("title"),
+            "review_state": card.get("review_state"),
         },
         project_operator_config.get("review_policy") or review_policy_from_row(None),
-        verification_runs=([{"status": "passed"}] if card.get("latest_verification_status") == "passed" else []),
+        verification_runs=card.get("verification_runs") or [],
         failure_count=card.get("failure_count", 0),
         onboarding_mode=project_operator_config.get("onboarding_mode"),
     )
@@ -326,6 +330,7 @@ def fetch_board(connection, filters=None, project_id=None):
 
     scheduler_decisions = scheduler_decisions_for_tasks(scheduler_rows, agent_rows)
     latest_verification_by_task = fetch_latest_verification_by_task(connection, project_id=project_id)
+    verification_history_by_task = fetch_verification_history_by_task(connection, project_id=project_id)
     git_workspaces_by_task = fetch_latest_git_workspace_by_task(connection, project_id=project_id)
 
     cards_by_status = {}
@@ -334,6 +339,7 @@ def fetch_board(connection, filters=None, project_id=None):
     operator_config_by_project = {}
     for row in filtered_rows:
         age_minutes = _age_minutes(row["created_at"])
+        review_age_minutes = _age_minutes(row["updated_at"]) if row["status"] == "review" else None
         column_key = _board_column_key(row["status"])
         scheduler = describe_task_scheduler(row, scheduler_decisions.get(row["task_id"]))
         replan_feedback = adaptive_replan_feedback(row)
@@ -345,6 +351,7 @@ def fetch_board(connection, filters=None, project_id=None):
             operator_config_by_project[row["project_id"]] = _project_operator_config(connection, row["project_id"])
         card = {
             "task_id": row["task_id"],
+            "project_id": row["project_id"],
             "issue_key": issue_keys.get(row["task_id"]),
             "title": row["title"],
             "description": row["description"],
@@ -369,6 +376,7 @@ def fetch_board(connection, filters=None, project_id=None):
             "latest_failure_at": row.get("latest_failure_at"),
             "heartbeat_age_seconds": _age_seconds(row["last_heartbeat_at"]),
             "age_hours": round(age_minutes / 60.0, 1) if age_minutes is not None else None,
+            "review_age_hours": round(review_age_minutes / 60.0, 1) if review_age_minutes is not None else None,
             "scheduler_status": scheduler.get("scheduler_status"),
             "scheduler_summary": scheduler.get("scheduler_summary"),
             "scheduler_score": scheduler.get("scheduler_score"),
@@ -390,6 +398,7 @@ def fetch_board(connection, filters=None, project_id=None):
             "latest_verification_status": latest_verification.get("status"),
             "latest_verification_at": latest_verification.get("finished_at"),
             "latest_verification_command": latest_verification.get("command"),
+            "verification_runs": verification_history_by_task.get(row["task_id"], []),
             "git_workspace_supported": git_supported_by_project.get(row["project_id"], False),
             "git_workspace_prepared": bool(git_workspace),
             "git_workspace_branch": git_workspace.get("branch_name"),

@@ -7,6 +7,7 @@ from unittest import mock
 
 from maas.db import connect, project_paths
 from maas.services.autopilot import (
+    _apply_idle_cycle_governance,
     _load_cycle_policy,
     _run_orchestrator_with_lease_refresh,
     claim_autopilot_runtime_lease,
@@ -16,6 +17,7 @@ from maas.services.autopilot import (
     release_autopilot_runtime_lease,
 )
 from maas.services.bootstrap import bootstrap_project
+from maas.services.notifications import fetch_notification_outbox
 
 
 class AutopilotRuntimeTest(unittest.TestCase):
@@ -159,6 +161,91 @@ class AutopilotRuntimeTest(unittest.TestCase):
                     runtime = fetch_autopilot_status(connection, paths, project_id)
                     self.assertEqual(runtime["runtime"]["lease_owner"], "worker-a")
                     self.assertTrue(runtime["runtime"]["running"])
+            finally:
+                connection.close()
+
+    def test_idle_cycle_governance_triggers_notification_on_threshold_crossing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Autopilot Idle Alert Test", description="idle alert", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = self._project_id(connection)
+                row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(row["config_json"] or "{}")
+                config["notifications"] = {
+                    "webhook_urls": ["https://example.test/maas"],
+                    "minimum_severity": "warning",
+                    "enabled_events": ["escalation_requested"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                connection.commit()
+                policy = normalize_autopilot_policy(
+                    {"enabled": True, "interval_seconds": 9, "max_idle_cycles_before_alert": 2}
+                )
+                first_summary = _apply_idle_cycle_governance(
+                    connection,
+                    project_id,
+                    policy,
+                    {
+                        "assigned_count": 0,
+                        "provider_jobs_queued": 0,
+                        "provider_jobs_processed": 0,
+                        "provider_jobs_dispatched": 0,
+                        "notifications_processed": 0,
+                        "why_idle": "No runnable work exists.",
+                        "governance_gate": {"blocked": False, "reason": None},
+                    },
+                    {},
+                )
+                self.assertEqual(first_summary["consecutive_idle_cycles"], 1)
+                self.assertFalse(first_summary["idle_alert_triggered"])
+                self.assertEqual(fetch_notification_outbox(connection, project_id=project_id), [])
+
+                second_summary = _apply_idle_cycle_governance(
+                    connection,
+                    project_id,
+                    policy,
+                    {
+                        "assigned_count": 0,
+                        "provider_jobs_queued": 0,
+                        "provider_jobs_processed": 0,
+                        "provider_jobs_dispatched": 0,
+                        "notifications_processed": 0,
+                        "why_idle": "No runnable work exists.",
+                        "governance_gate": {"blocked": False, "reason": None},
+                    },
+                    first_summary,
+                )
+                self.assertEqual(second_summary["consecutive_idle_cycles"], 2)
+                self.assertTrue(second_summary["idle_alert_triggered"])
+                notifications = fetch_notification_outbox(connection, project_id=project_id)
+                self.assertEqual(len(notifications), 1)
+
+                third_summary = _apply_idle_cycle_governance(
+                    connection,
+                    project_id,
+                    policy,
+                    {
+                        "assigned_count": 0,
+                        "provider_jobs_queued": 0,
+                        "provider_jobs_processed": 0,
+                        "provider_jobs_dispatched": 0,
+                        "notifications_processed": 0,
+                        "why_idle": "No runnable work exists.",
+                        "governance_gate": {"blocked": False, "reason": None},
+                    },
+                    second_summary,
+                )
+                self.assertEqual(third_summary["consecutive_idle_cycles"], 3)
+                self.assertFalse(third_summary["idle_alert_triggered"])
+                notifications = fetch_notification_outbox(connection, project_id=project_id)
+                self.assertEqual(len(notifications), 1)
             finally:
                 connection.close()
 

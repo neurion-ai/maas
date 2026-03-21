@@ -120,38 +120,48 @@ lint = "imported:lint"
     def test_update_autopilot_persists_and_status_endpoint_reflects_it(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
-            client = TestClient(create_app(tmpdir))
-            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+            with TestClient(create_app(tmpdir)) as client:
+                project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
 
-            response = client.post(
-                f"/api/projects/{project_id}/actions/update-autopilot",
-                json={
-                    "actor_id": "agent_allocator",
-                    "enabled": True,
-                    "interval_seconds": 9,
-                    "allocate_limit": 3,
-                    "provider_job_limit": 2,
-                    "auto_launch_assigned_work": True,
-                    "process_notifications": False,
-                    "notification_batch_limit": 1,
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            payload = response.json()
-            self.assertTrue(payload["policy"]["enabled"])
-            self.assertEqual(payload["policy"]["interval_seconds"], 9)
-            self.assertEqual(payload["policy"]["allocate_limit"], 3)
-            self.assertFalse(payload["policy"]["process_notifications"])
+                response = client.post(
+                    f"/api/projects/{project_id}/actions/update-autopilot",
+                    json={
+                        "actor_id": "agent_allocator",
+                        "enabled": True,
+                        "interval_seconds": 9,
+                        "allocate_limit": 3,
+                        "provider_job_limit": 2,
+                        "auto_launch_assigned_work": True,
+                        "process_notifications": False,
+                        "notification_batch_limit": 1,
+                        "schedule_window_start_hour_utc": 8,
+                        "schedule_window_end_hour_utc": 18,
+                        "stop_when_doctor_blocked": True,
+                        "max_review_queue": 4,
+                        "max_blocked_queue": 3,
+                        "max_idle_cycles_before_alert": 7,
+                    },
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertTrue(payload["policy"]["enabled"])
+                self.assertEqual(payload["policy"]["interval_seconds"], 9)
+                self.assertEqual(payload["policy"]["allocate_limit"], 3)
+                self.assertFalse(payload["policy"]["process_notifications"])
+                self.assertEqual(payload["policy"]["schedule_window_start_hour_utc"], 8)
+                self.assertEqual(payload["policy"]["max_review_queue"], 4)
 
-            status_response = client.get("/api/autopilot/status", params={"project_id": project_id})
-            self.assertEqual(status_response.status_code, 200)
-            status_payload = status_response.json()
-            self.assertEqual(status_payload["project_id"], project_id)
-            self.assertTrue(status_payload["policy"]["enabled"])
-            self.assertEqual(status_payload["policy"]["interval_seconds"], 9)
-            self.assertEqual(status_payload["policy"]["provider_job_limit"], 2)
-            self.assertFalse(status_payload["policy"]["process_notifications"])
-            self.assertTrue(status_payload["runtime"]["enabled"])
+                status_response = client.get("/api/autopilot/status", params={"project_id": project_id})
+                self.assertEqual(status_response.status_code, 200)
+                status_payload = status_response.json()
+                self.assertEqual(status_payload["project_id"], project_id)
+                self.assertTrue(status_payload["policy"]["enabled"])
+                self.assertEqual(status_payload["policy"]["interval_seconds"], 9)
+                self.assertEqual(status_payload["policy"]["provider_job_limit"], 2)
+                self.assertFalse(status_payload["policy"]["process_notifications"])
+                self.assertEqual(status_payload["policy"]["schedule_window_end_hour_utc"], 18)
+                self.assertEqual(status_payload["policy"]["max_blocked_queue"], 3)
+                self.assertTrue(status_payload["runtime"]["enabled"])
 
     def test_archiving_project_stops_autopilot_loop(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
@@ -9,7 +10,11 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
+from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview
+from maas.services.environment_doctor import _git_status, fetch_environment_doctor
+from maas.services.goal_planning import create_goal, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
+
 class CodexMvpApiTest(unittest.TestCase):
     def test_issue_index_groups_review_and_blocked_work_with_batch_review_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -97,9 +102,8 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(payload["summary"]["batch_review_eligible"], 1)
             self.assertEqual(payload["queue"]["review"]["batch_review"]["eligible_task_ids"], [review_task["task_id"]])
             self.assertEqual(len(payload["queue"]["review"]["batch_review"]["packets"]), 1)
-            self.assertEqual(
-                payload["queue"]["review"]["batch_review"]["packets"][0]["packet_key"],
-                "low_risk_verified_auto",
+            self.assertTrue(
+                payload["queue"]["review"]["batch_review"]["packets"][0]["packet_key"].startswith("low_risk_verified_auto:")
             )
             self.assertEqual(
                 payload["queue"]["review"]["batch_review"]["packets"][0]["eligible_task_ids"],
@@ -132,9 +136,8 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(detail_payload["review_decision"]["status"], "low_risk_review")
             self.assertTrue(detail_payload["review_decision"]["batch_review_eligible"])
             self.assertEqual(detail_payload["review_decision"]["decision_mode"], "auto_approve")
-            self.assertEqual(
-                detail_payload["review_decision"]["grouped_review_packet"]["packet_key"],
-                "low_risk_verified_auto",
+            self.assertTrue(
+                detail_payload["review_decision"]["grouped_review_packet"]["packet_key"].startswith("low_risk_verified_auto:")
             )
             self.assertEqual(detail_payload["recovery_playbook"]["title"], "Low-risk review should auto-advance")
 
@@ -187,7 +190,7 @@ class CodexMvpApiTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["decision"], "approve")
-            self.assertEqual(response.json()["review_packets"][0]["packet_key"], "low_risk_verified_auto")
+            self.assertTrue(response.json()["review_packets"][0]["packet_key"].startswith("low_risk_verified_auto:"))
             self.assertEqual(response.json()["review_packets"][0]["eligible_task_ids"], [task["task_id"]])
 
             connection = connect(paths)
@@ -252,6 +255,121 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(task_row["status"], "review")
             self.assertEqual(task_row["review_state"], "review_requested")
 
+    def test_batch_review_requires_tasks_from_the_same_packet(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Mixed Packet Test", description="codex mixed packet", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                tasks = connection.execute(
+                    """
+                    SELECT task_id, project_id, title
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 2
+                    """
+                ).fetchall()
+                first_task, second_task = tasks
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id IN (?, ?)
+                    """,
+                    (first_task["task_id"], second_task["task_id"]),
+                )
+                connection.execute(
+                    "UPDATE tasks SET goal_id = NULL WHERE task_id = ?",
+                    (second_task["task_id"],),
+                )
+                for task in tasks:
+                    connection.execute(
+                        """
+                        INSERT INTO verification_runs (
+                            verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                            artifact_id, actor_id, started_at, finished_at
+                        ) VALUES (
+                            ?, ?, ?, 'pytest tests/test_batch.py', 'passed', 0, '1 passed',
+                            NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                        """,
+                        (generate_id("vrf"), task["project_id"], task["task_id"]),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with TestClient(create_app(tmpdir)) as client:
+                response = client.post(
+                    "/api/issues/actions/batch-review",
+                    json={
+                        "actor_id": "agent_allocator",
+                        "decision": "approve",
+                        "task_ids": [first_task["task_id"], second_task["task_id"]],
+                    },
+                )
+
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("same grouped review packet", response.json()["detail"])
+
+    def test_issue_index_uses_full_verification_history_for_batch_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Verification History Test", description="codex verification history", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_history.py', 'failed', 1, '1 failed',
+                        NULL, 'agent_reviewer', DATETIME('now', '-2 minutes'), DATETIME('now', '-2 minutes')
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_history.py', 'passed', 0, '1 passed',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with TestClient(create_app(tmpdir)) as client:
+                response = client.get("/api/issues/index")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            review_item = next(item for item in payload["queue"]["review"]["items"] if item["task_id"] == task["task_id"])
+            self.assertFalse(review_item["batch_review_eligible"])
+            self.assertIn("did not pass", review_item["batch_review_reason"])
+
     def test_issue_detail_exposes_batch_review_packet_when_auto_approve_is_disabled(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex Batch Packet Test", description="codex batch packet", project_type="custom")
@@ -315,11 +433,71 @@ class CodexMvpApiTest(unittest.TestCase):
                 detail_payload["review_decision"]["why_not_auto_approved"],
                 "This issue qualifies for the low-risk review packet, but project policy still requires a human or batch approval step.",
             )
-            self.assertEqual(
-                detail_payload["review_decision"]["grouped_review_packet"]["packet_key"],
-                "low_risk_verified_manual",
+            self.assertTrue(
+                detail_payload["review_decision"]["grouped_review_packet"]["packet_key"].startswith("low_risk_verified_manual:")
             )
             self.assertEqual(detail_payload["recovery_playbook"]["title"], "Low-risk verified review packet")
+
+    def test_goal_resynthesis_clears_stale_internal_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Goal Refresh Test", description="goal refresh", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                goal = create_goal(
+                    connection,
+                    "agent_allocator",
+                    None,
+                    "Launch issue synthesis",
+                    "Turn the objective into executable MAAS tasks.",
+                    priority=82,
+                )
+                first_pass = synthesize_goal_issues(connection, None, goal["goal_id"], "agent_allocator", refresh=True)
+                self.assertEqual(first_pass["task_count"], 5)
+                dependency_count = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM task_dependencies
+                    JOIN tasks dependent ON dependent.task_id = task_dependencies.target_task_id
+                    JOIN tasks blocking ON blocking.task_id = task_dependencies.source_task_id
+                    WHERE task_dependencies.project_id = ?
+                      AND dependency_type = 'blocks'
+                      AND dependent.goal_id = ?
+                      AND blocking.goal_id = ?
+                    """,
+                    (first_pass["project_id"], goal["goal_id"], goal["goal_id"]),
+                ).fetchone()[0]
+                self.assertEqual(dependency_count, 4)
+
+                project_row = connection.execute(
+                    "SELECT project_type, config_json FROM projects WHERE project_id = ?",
+                    (first_pass["project_id"],),
+                ).fetchone()
+                goal_row = connection.execute(
+                    "SELECT title, description, priority FROM goals WHERE goal_id = ?",
+                    (goal["goal_id"],),
+                ).fetchone()
+                shortened_specs = _goal_issue_specs(goal_row, project_row)[:3]
+                with mock.patch("maas.services.goal_planning._goal_issue_specs", return_value=shortened_specs):
+                    second_pass = synthesize_goal_issues(connection, None, goal["goal_id"], "agent_allocator", refresh=True)
+
+                self.assertEqual(second_pass["task_count"], 3)
+                dependency_count = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM task_dependencies
+                    JOIN tasks dependent ON dependent.task_id = task_dependencies.target_task_id
+                    JOIN tasks blocking ON blocking.task_id = task_dependencies.source_task_id
+                    WHERE task_dependencies.project_id = ?
+                      AND dependency_type = 'blocks'
+                      AND dependent.goal_id = ?
+                      AND blocking.goal_id = ?
+                    """,
+                    (second_pass["project_id"], goal["goal_id"], goal["goal_id"]),
+                ).fetchone()[0]
+                self.assertEqual(dependency_count, 2)
+            finally:
+                connection.close()
 
     def test_memory_promotion_feeds_memory_index_retrieval_and_issue_detail(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1283,3 +1461,356 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(payload["runs"][0]["execution_mode"], "codex_cli")
             self.assertIn("heartbeating", payload["runs"][0]["diagnostic_summary"])
             self.assertGreaterEqual(len(payload["history"]), 1)
+
+    def test_environment_doctor_goal_planning_and_delivery_endpoints(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Doctor Test", description="doctor", project_type="custom")
+            paths = project_paths(tmpdir)
+            client = TestClient(create_app(tmpdir))
+
+            doctor_response = client.get("/api/environment/doctor")
+            self.assertEqual(doctor_response.status_code, 200)
+            doctor_payload = doctor_response.json()
+            self.assertIn(doctor_payload["summary"]["status"], {"blocked", "simulation_only", "attention", "ready"})
+            self.assertIn("status", doctor_payload["progress"])
+
+            goal_response = client.post(
+                "/api/goals",
+                json={
+                    "actor_id": "agent_allocator",
+                    "title": "Launch issue synthesis",
+                    "description": "Turn the objective into executable MAAS tasks.",
+                    "goal_type": "initiative",
+                    "priority": 82,
+                },
+            )
+            self.assertEqual(goal_response.status_code, 200)
+            goal_payload = goal_response.json()["goal"]
+
+            synthesize_response = client.post(
+                f"/api/goals/{goal_payload['goal_id']}/actions/synthesize",
+                json={"actor_id": "agent_allocator", "refresh": True},
+            )
+            self.assertEqual(synthesize_response.status_code, 200)
+            synthesize_payload = synthesize_response.json()
+            self.assertGreaterEqual(synthesize_payload["created_count"], 1)
+            self.assertTrue(synthesize_payload["task_ids"])
+
+            planning_response = client.get("/api/goals/planning")
+            self.assertEqual(planning_response.status_code, 200)
+            planning_payload = planning_response.json()
+            self.assertGreaterEqual(planning_payload["summary"]["total_goals"], 1)
+            self.assertGreaterEqual(planning_payload["summary"]["open_issue_count"], 1)
+
+            task_id = synthesize_payload["task_ids"][0]
+            connection = connect(paths)
+            try:
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task_id,),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-test.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('delivery')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, (SELECT project_id FROM tasks WHERE task_id = ?), ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task_id, task_id, artifact_path),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            delivery_response = client.get("/api/delivery")
+            self.assertEqual(delivery_response.status_code, 200)
+            delivery_payload = delivery_response.json()
+            self.assertGreaterEqual(delivery_payload["summary"]["candidate_count"], 1)
+            delivery_item = next(item for item in delivery_payload["items"] if item["task_id"] == task_id)
+            self.assertEqual(delivery_item["delivery_kind"], "diff")
+
+            draft_response = client.post(
+                f"/api/tasks/{task_id}/actions/prepare-pr-draft",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(draft_response.status_code, 200)
+            draft_payload = draft_response.json()
+            self.assertTrue(draft_payload["gh_command"].startswith("gh pr create"))
+            self.assertTrue(os.path.exists(draft_payload["body_path"]))
+
+    def test_delivery_overview_does_not_build_temp_bundles_on_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Refresh Test", description="delivery refresh", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-refresh.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('refresh')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.commit()
+
+                with mock.patch(
+                    "maas.services.delivery.build_artifact_export_bundle",
+                    side_effect=AssertionError("delivery overview should not create export bundles"),
+                ):
+                    payload = fetch_delivery_overview(connection, paths, task["project_id"])
+            finally:
+                connection.close()
+
+            item = next(entry for entry in payload["items"] if entry["task_id"] == task["task_id"])
+            self.assertTrue(item["bundle_ready"])
+
+    def test_board_review_eligibility_uses_full_verification_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Board Verification History Test", description="board verification history", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                for index in range(11):
+                    status = "failed" if index == 0 else "passed"
+                    connection.execute(
+                        """
+                        INSERT INTO verification_runs (
+                            verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                            artifact_id, actor_id, started_at, finished_at
+                        ) VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, NULL, 'agent_reviewer',
+                            DATETIME('now', ?), DATETIME('now', ?)
+                        )
+                        """,
+                        (
+                            generate_id("vrf"),
+                            task["project_id"],
+                            task["task_id"],
+                            "pytest tests/test_history.py",
+                            status,
+                            1 if status == "failed" else 0,
+                            status,
+                            "-{0} minutes".format(120 - index),
+                            "-{0} minutes".format(120 - index),
+                        ),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            board_payload = client.get("/api/board").json()
+            board_task = next(
+                item
+                for column in board_payload["columns"]
+                for item in column["tasks"]
+                if item["task_id"] == task["task_id"]
+            )
+
+            self.assertFalse(board_task["batch_review_eligible"])
+            self.assertEqual(
+                board_task["review_eligibility"]["why_not_batch_reviewed"],
+                "One or more verification runs did not pass.",
+            )
+            response = client.post(
+                "/api/issues/actions/batch-review",
+                json={
+                    "actor_id": "agent_allocator",
+                    "decision": "approve",
+                    "task_ids": [task["task_id"]],
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("did not pass", response.json()["detail"])
+
+    def test_environment_doctor_does_not_block_on_nonpreferred_provider_failure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Doctor Provider Test", description="doctor provider", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                with mock.patch(
+                    "maas.services.environment_doctor.list_provider_status",
+                    return_value=[
+                        {
+                            "id": "openai_codex",
+                            "name": "OpenAI Codex",
+                            "effective_execution_mode": "codex_cli",
+                            "execution_mode": "codex_cli",
+                            "is_runnable": True,
+                            "configurable_runtime_controls": {"cli_command": "codex"},
+                            "config_warnings": [],
+                            "notes": None,
+                        },
+                        {
+                            "id": "claude_code",
+                            "name": "Claude Code",
+                            "effective_execution_mode": "codex_cli",
+                            "execution_mode": "codex_cli",
+                            "is_runnable": False,
+                            "configurable_runtime_controls": {"cli_command": "claude"},
+                            "config_warnings": ["CLI not installed"],
+                            "notes": "CLI not installed",
+                        },
+                    ],
+                ), mock.patch(
+                    "maas.services.environment_doctor._cli_available",
+                    side_effect=lambda command: command == "codex",
+                ), mock.patch(
+                    "maas.services.environment_doctor._codex_auth_available",
+                    return_value=True,
+                ):
+                    payload = fetch_environment_doctor(connection, paths, project_id)
+            finally:
+                connection.close()
+
+            self.assertNotEqual(payload["summary"]["status"], "blocked")
+            provider_checks = {item["code"]: item for item in payload["checks"] if item["code"].startswith("provider_")}
+            self.assertEqual(provider_checks["provider_openai_codex"]["status"], "passed")
+            self.assertEqual(provider_checks["provider_claude_code"]["status"], "warning")
+
+    def test_goal_creation_rejects_parent_goal_from_another_project(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Cross Project Parent Test", description="cross project parent", project_type="custom")
+            with TestClient(create_app(tmpdir)) as client:
+                second_project = client.post(
+                    "/api/projects",
+                    json={
+                        "actor_id": "agent_allocator",
+                        "name": "Second Project",
+                        "description": "secondary",
+                        "project_type": "custom",
+                        "mode": "greenfield",
+                    },
+                ).json()["project"]
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_rows = connection.execute(
+                    "SELECT project_id FROM projects ORDER BY created_at ASC"
+                ).fetchall()
+                first_project_id = project_rows[0]["project_id"]
+                parent_goal = create_goal(
+                    connection,
+                    "agent_allocator",
+                    first_project_id,
+                    "Parent goal",
+                    "first project goal",
+                )
+                with self.assertRaisesRegex(ValueError, "parent goal not found"):
+                    create_goal(
+                        connection,
+                        "agent_allocator",
+                        second_project["project_id"],
+                        "Child goal",
+                        "should fail",
+                        parent_goal_id=parent_goal["goal_id"],
+                    )
+            finally:
+                connection.close()
+
+    def test_prepare_pr_draft_rejects_non_delivery_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Guard Test", description="delivery guard", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE status = 'planned'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+
+            response = client.post(
+                f"/api/tasks/{task['task_id']}/actions/prepare-pr-draft",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("not ready for delivery", response.json()["detail"])
+
+    def test_git_helpers_accept_worktree_style_git_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with open(os.path.join(tmpdir, ".git"), "w", encoding="utf-8") as handle:
+                handle.write("gitdir: /tmp/fake-worktree\n")
+
+            def fake_run(command, **kwargs):
+                args = tuple(command)
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = ""
+                if args == ("git", "rev-parse", "--is-inside-work-tree"):
+                    completed.stdout = "true\n"
+                elif args == ("git", "rev-parse", "--abbrev-ref", "HEAD"):
+                    completed.stdout = "main\n"
+                elif args == ("git", "symbolic-ref", "refs/remotes/origin/HEAD"):
+                    completed.stdout = "refs/remotes/origin/main\n"
+                elif args == ("git", "status", "--porcelain"):
+                    completed.stdout = ""
+                else:  # pragma: no cover - guards the expected call set
+                    raise AssertionError(f"unexpected git command: {command}")
+                return completed
+
+            with mock.patch("maas.services.environment_doctor.subprocess.run", side_effect=fake_run):
+                doctor_git = _git_status(tmpdir)
+            with mock.patch("maas.services.delivery.subprocess.run", side_effect=fake_run), mock.patch(
+                "maas.services.delivery.shutil.which", return_value="/usr/bin/gh"
+            ):
+                delivery_git = _git_repo_snapshot(tmpdir)
+
+            self.assertTrue(doctor_git["is_git_repo"])
+            self.assertEqual(doctor_git["branch"], "main")
+            self.assertEqual(doctor_git["default_branch"], "main")
+            self.assertTrue(delivery_git["is_git_repo"])
+            self.assertEqual(delivery_git["branch"], "main")
+            self.assertEqual(delivery_git["default_branch"], "main")

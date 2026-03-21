@@ -14,7 +14,7 @@ from maas.config import DEFAULT_AUTOPILOT_SETTINGS
 from maas.db import connect
 from maas.ids import generate_id
 from maas.paths import ProjectPaths
-from maas.services.notifications import process_next_notification
+from maas.services.notifications import process_next_notification, queue_notification_event
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
@@ -132,7 +132,7 @@ def claim_autopilot_runtime_lease(connection, project_id, lease_token, lease_own
     return fetch_autopilot_runtime(connection, project_id)
 
 
-def record_autopilot_runtime_result(connection, project_id, lease_token, policy, summary=None, error=None):
+def record_autopilot_runtime_result(connection, project_id, lease_token, policy, summary=None, error=None, status_override=None):
     _ensure_runtime_row(connection, project_id)
     lease_seconds = _lease_duration_seconds(policy)
     cursor = connection.execute(
@@ -151,7 +151,7 @@ def record_autopilot_runtime_result(connection, project_id, lease_token, policy,
         (
             _runtime_summary_json(summary) if summary is not None else None,
             error,
-            "error" if error else "running",
+            status_override or ("error" if error else "running"),
             "+{0} seconds".format(lease_seconds),
             project_id,
             lease_token,
@@ -214,6 +214,91 @@ def release_autopilot_runtime_lease(connection, project_id, lease_token=None, st
     return fetch_autopilot_runtime(connection, project_id)
 
 
+def _process_autopilot_notifications(connection, project_id, policy, lease_token=None):
+    if not policy.get("process_notifications"):
+        return 0
+    processed_count = 0
+    for _ in range(policy["notification_batch_limit"]):
+        processed = process_next_notification(
+            connection,
+            AUTOPILOT_ACTOR_ID,
+            project_id=project_id,
+        )
+        if not processed["processed"]:
+            break
+        processed_count += 1
+        if lease_token is not None:
+            refresh_autopilot_runtime_lease(
+                connection,
+                project_id,
+                lease_token,
+                policy,
+                status="waiting",
+            )
+    return processed_count
+
+
+def _idle_cycle_signature(summary):
+    governance_gate = (summary or {}).get("governance_gate") or {}
+    reason = governance_gate.get("reason")
+    if reason:
+        return "gate:{0}".format(reason)
+    why_idle = (summary or {}).get("why_idle")
+    return why_idle or "active"
+
+
+def _summary_has_forward_progress(summary):
+    if not summary:
+        return False
+    return any(
+        int(summary.get(key) or 0) > 0
+        for key in (
+            "assigned_count",
+            "provider_jobs_queued",
+            "provider_jobs_processed",
+            "provider_jobs_dispatched",
+            "notifications_processed",
+        )
+    )
+
+
+def _apply_idle_cycle_governance(connection, project_id, policy, summary, previous_summary=None):
+    if summary is None:
+        return None
+    previous = previous_summary or {}
+    signature = _idle_cycle_signature(summary)
+    threshold = max(1, int(policy.get("max_idle_cycles_before_alert") or 1))
+    if _summary_has_forward_progress(summary):
+        summary["consecutive_idle_cycles"] = 0
+        summary["idle_signature"] = None
+        summary["idle_alert_triggered"] = False
+        return summary
+    previous_signature = previous.get("idle_signature")
+    previous_cycles = int(previous.get("consecutive_idle_cycles") or 0) if previous_signature == signature else 0
+    cycles = previous_cycles + 1
+    summary["consecutive_idle_cycles"] = cycles
+    summary["idle_signature"] = signature
+    triggered = previous_cycles < threshold <= cycles and signature != "gate:outside_schedule_window"
+    summary["idle_alert_triggered"] = triggered
+    if triggered:
+        queue_notification_event(
+            connection,
+            project_id,
+            "escalation_requested",
+            "warning",
+            "Autopilot is idle without forward progress",
+            summary.get("why_idle") or "Autopilot has not advanced work for several consecutive cycles.",
+            resource_type="project",
+            resource_id=project_id,
+            payload={
+                "idle_signature": signature,
+                "consecutive_idle_cycles": cycles,
+                "threshold": threshold,
+            },
+        )
+    return summary
+
+
 def normalize_autopilot_policy(policy=None):
     requested = policy or {}
     defaults = DEFAULT_AUTOPILOT_SETTINGS
@@ -236,6 +321,36 @@ def normalize_autopilot_policy(policy=None):
             or defaults["notification_batch_limit"]
         ),
     )
+    start_hour = requested.get("schedule_window_start_hour_utc", defaults["schedule_window_start_hour_utc"])
+    end_hour = requested.get("schedule_window_end_hour_utc", defaults["schedule_window_end_hour_utc"])
+
+    def _normalize_hour(value, field_name):
+        if value in (None, ""):
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("{0} must be an integer hour or null".format(field_name))
+        if value < 0 or value > 23:
+            raise ValueError("{0} must be between 0 and 23".format(field_name))
+        return value
+
+    stop_when_doctor_blocked = bool(
+        requested.get("stop_when_doctor_blocked", defaults["stop_when_doctor_blocked"])
+    )
+    max_review_queue = max(
+        0,
+        int(requested.get("max_review_queue", defaults["max_review_queue"]) or 0),
+    )
+    max_blocked_queue = max(
+        0,
+        int(requested.get("max_blocked_queue", defaults["max_blocked_queue"]) or 0),
+    )
+    max_idle_cycles_before_alert = max(
+        1,
+        int(
+            requested.get("max_idle_cycles_before_alert", defaults["max_idle_cycles_before_alert"])
+            or defaults["max_idle_cycles_before_alert"]
+        ),
+    )
     return {
         "enabled": enabled,
         "interval_seconds": interval_seconds,
@@ -244,6 +359,18 @@ def normalize_autopilot_policy(policy=None):
         "auto_launch_assigned_work": auto_launch_assigned_work,
         "process_notifications": process_notifications,
         "notification_batch_limit": notification_batch_limit,
+        "schedule_window_start_hour_utc": _normalize_hour(
+            start_hour,
+            "schedule_window_start_hour_utc",
+        ),
+        "schedule_window_end_hour_utc": _normalize_hour(
+            end_hour,
+            "schedule_window_end_hour_utc",
+        ),
+        "stop_when_doctor_blocked": stop_when_doctor_blocked,
+        "max_review_queue": max_review_queue,
+        "max_blocked_queue": max_blocked_queue,
+        "max_idle_cycles_before_alert": max_idle_cycles_before_alert,
     }
 
 
@@ -317,6 +444,95 @@ def _load_cycle_policy(connection, project_id, fallback_policy):
         return normalize_autopilot_policy(fallback_policy)
 
 
+def _schedule_window_open(policy, now=None):
+    start_hour = policy.get("schedule_window_start_hour_utc")
+    end_hour = policy.get("schedule_window_end_hour_utc")
+    if start_hour is None or end_hour is None:
+        return True
+    current = now or datetime.now(timezone.utc)
+    hour = current.hour
+    if start_hour == end_hour:
+        return True
+    if start_hour < end_hour:
+        return start_hour <= hour < end_hour
+    return hour >= start_hour or hour < end_hour
+
+
+def _governance_gate(connection, project_paths, project_id, policy):
+    review_count = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE project_id = ?
+          AND status = 'review'
+        """,
+        (project_id,),
+    ).fetchone()["count"]
+    blocked_count = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM tasks
+        WHERE project_id = ?
+          AND status = 'blocked'
+        """,
+        (project_id,),
+    ).fetchone()["count"]
+    gate = {
+        "blocked": False,
+        "reason": None,
+        "detail": None,
+        "review_queue": review_count or 0,
+        "blocked_queue": blocked_count or 0,
+        "schedule_window_open": _schedule_window_open(policy),
+        "doctor_summary": None,
+        "doctor_state": None,
+    }
+    if not gate["schedule_window_open"]:
+        gate.update(
+            {
+                "blocked": True,
+                "reason": "outside_schedule_window",
+                "detail": "Autopilot is outside the configured UTC schedule window for this project.",
+            }
+        )
+        return gate
+    max_review_queue = int(policy.get("max_review_queue") or 0)
+    if max_review_queue > 0 and gate["review_queue"] >= max_review_queue:
+        gate.update(
+            {
+                "blocked": True,
+                "reason": "review_queue_limit",
+                "detail": "Autopilot paused because the review queue reached the configured threshold.",
+            }
+        )
+        return gate
+    max_blocked_queue = int(policy.get("max_blocked_queue") or 0)
+    if max_blocked_queue > 0 and gate["blocked_queue"] >= max_blocked_queue:
+        gate.update(
+            {
+                "blocked": True,
+                "reason": "blocked_queue_limit",
+                "detail": "Autopilot paused because the blocked queue reached the configured threshold.",
+            }
+        )
+        return gate
+    if policy.get("stop_when_doctor_blocked", True):
+        from maas.services.environment_doctor import fetch_environment_doctor
+
+        doctor = fetch_environment_doctor(connection, project_paths, project_id)
+        gate["doctor_summary"] = doctor.get("summary")
+        gate["doctor_state"] = (doctor.get("progress") or {}).get("status")
+        if (doctor.get("summary") or {}).get("status") == "blocked":
+            gate.update(
+                {
+                    "blocked": True,
+                    "reason": "doctor_blocked",
+                    "detail": "Autopilot is paused because environment doctor checks are blocking live execution.",
+                }
+            )
+    return gate
+
+
 def _run_orchestrator_with_lease_refresh(project_root, project_id, lease_token, policy):
     paths = ProjectPaths(project_root)
     result_holder = {}
@@ -326,8 +542,9 @@ def _run_orchestrator_with_lease_refresh(project_root, project_id, lease_token, 
     heartbeat_interval = max(1.0, min(5.0, _lease_duration_seconds(policy) / 3.0))
 
     def _worker():
-        worker_connection = connect(paths)
+        worker_connection = None
         try:
+            worker_connection = connect(paths)
             result_holder["result"] = run_orchestrator_once(
                 worker_connection,
                 paths,
@@ -339,7 +556,8 @@ def _run_orchestrator_with_lease_refresh(project_root, project_id, lease_token, 
         except Exception as exc:  # pragma: no cover - surfaced to caller
             error_holder["error"] = exc
         finally:
-            worker_connection.close()
+            if worker_connection is not None:
+                worker_connection.close()
             finished.set()
 
     worker = threading.Thread(
@@ -474,6 +692,42 @@ class AutopilotLoop:
                         self.mark_waiting()
                     else:
                         try:
+                            previous_summary = runtime_row.get("last_summary") or {}
+                            governance_gate = _governance_gate(connection, paths, self.project_id, policy)
+                            if governance_gate["blocked"]:
+                                notifications_processed = _process_autopilot_notifications(
+                                    connection,
+                                    self.project_id,
+                                    policy,
+                                    lease_token=self.loop_token,
+                                )
+                                summary = {
+                                    "assigned_count": 0,
+                                    "provider_jobs_queued": 0,
+                                    "provider_jobs_processed": 0,
+                                    "provider_jobs_dispatched": 0,
+                                    "notifications_processed": notifications_processed,
+                                    "why_idle": governance_gate["detail"],
+                                    "governance_gate": governance_gate,
+                                }
+                                summary = _apply_idle_cycle_governance(
+                                    connection,
+                                    self.project_id,
+                                    policy,
+                                    summary,
+                                    previous_summary,
+                                )
+                                runtime_row = record_autopilot_runtime_result(
+                                    connection,
+                                    self.project_id,
+                                    self.loop_token,
+                                    policy,
+                                    summary=summary,
+                                    error=governance_gate["detail"],
+                                    status_override="waiting",
+                                )
+                                self.mark_result(runtime_row, summary=summary, error=governance_gate["detail"])
+                                continue
                             runtime_row = refresh_autopilot_runtime_lease(
                                 connection,
                                 self.project_id,
@@ -487,24 +741,12 @@ class AutopilotLoop:
                                 self.loop_token,
                                 policy,
                             )
-                            notifications_processed = 0
-                            if policy.get("process_notifications"):
-                                for _ in range(policy["notification_batch_limit"]):
-                                    processed = process_next_notification(
-                                        connection,
-                                        AUTOPILOT_ACTOR_ID,
-                                        project_id=self.project_id,
-                                    )
-                                    if not processed["processed"]:
-                                        break
-                                    notifications_processed += 1
-                                    runtime_row = refresh_autopilot_runtime_lease(
-                                        connection,
-                                        self.project_id,
-                                        self.loop_token,
-                                        policy,
-                                        status="running",
-                                    )
+                            notifications_processed = _process_autopilot_notifications(
+                                connection,
+                                self.project_id,
+                                policy,
+                                lease_token=self.loop_token,
+                            )
                             summary = {
                                 "assigned_count": result.get("assigned_count", 0),
                                 "provider_jobs_queued": result.get("provider_jobs_queued", 0),
@@ -512,7 +754,15 @@ class AutopilotLoop:
                                 "provider_jobs_dispatched": result.get("provider_jobs_dispatched", 0),
                                 "notifications_processed": notifications_processed,
                                 "why_idle": _execution_explanation(connection, self.project_id),
+                                "governance_gate": governance_gate,
                             }
+                            summary = _apply_idle_cycle_governance(
+                                connection,
+                                self.project_id,
+                                policy,
+                                summary,
+                                previous_summary,
+                            )
                             runtime_row = record_autopilot_runtime_result(
                                 connection,
                                 self.project_id,
@@ -651,6 +901,7 @@ def fetch_autopilot_status(connection, project_paths, project_id=None):
     if resolved_project_id is None:
         raise ValueError("project not found")
     policy = fetch_project_autopilot_policy(connection, resolved_project_id)
+    governance_gate = _governance_gate(connection, project_paths, resolved_project_id, policy)
     key = _manager_key(project_paths, resolved_project_id)
     with _AUTOPILOT_LOCK:
         loop = _AUTOPILOT_THREADS.get(key)
@@ -693,6 +944,7 @@ def fetch_autopilot_status(connection, project_paths, project_id=None):
             "holder_is_local": False,
         },
         "why_idle": _execution_explanation(connection, resolved_project_id),
+        "governance_gate": governance_gate,
     }
 
 

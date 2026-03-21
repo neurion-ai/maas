@@ -80,6 +80,32 @@ class PortfolioApiTest(unittest.TestCase):
                     """,
                     (generate_id("dlq"), second_project_id, second_task_id),
                 )
+                primary_failure_task_id = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (primary_project_id,),
+                ).fetchone()["task_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked', review_state = 'awaiting_dependency'
+                    WHERE task_id = ?
+                    """,
+                    (primary_failure_task_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES (?, ?, ?, NULL, NULL, 'session_failed', 'portfolio failure test', '{}')
+                    """,
+                    (generate_id("fail"), primary_project_id, primary_failure_task_id),
+                )
                 connection.execute(
                     "UPDATE alerts SET status = 'resolved' WHERE project_id = ?",
                     (second_project_id,),
@@ -120,13 +146,26 @@ class PortfolioApiTest(unittest.TestCase):
             self.assertEqual(secondary["health"], "critical")
             self.assertEqual(secondary["open_alerts"], 0)
             self.assertEqual(secondary["blocked_tasks"], 0)
+            self.assertIn("review_queue_count", primary)
+            self.assertIn("blocked_failure_count", primary)
+            self.assertIn("suspect_run_count", primary)
+            self.assertIn("stale_agent_count", primary)
             self.assertEqual(payload["summary"]["open_escalations"], 1)
             self.assertEqual(payload["summary"]["queued_provider_jobs"], 1)
             self.assertEqual(len(payload["command_center"]["open_escalations"]), 1)
             self.assertEqual(len(payload["command_center"]["queued_provider_jobs"]), 1)
             self.assertEqual(len(payload["command_center"]["open_dead_letter_entries"]), 1)
+            self.assertIn("review_queue", payload["summary"])
+            self.assertIn("blocked_failures", payload["summary"])
+            self.assertIn("suspect_runs", payload["summary"])
+            self.assertIn("stale_agents", payload["summary"])
+            self.assertIn("review_queue", payload["command_center"])
+            self.assertIn("blocked_failures", payload["command_center"])
+            self.assertIn("suspect_runs", payload["command_center"])
             self.assertEqual(payload["command_center"]["open_escalations"][0]["project_name"], "Portfolio Primary")
             self.assertEqual(payload["command_center"]["queued_provider_jobs"][0]["project_name"], "Portfolio Secondary")
+            self.assertEqual(primary["blocked_failure_count"], 1)
+            self.assertEqual(payload["summary"]["blocked_failures"], len(payload["command_center"]["blocked_failures"]))
 
 
 if __name__ == "__main__":

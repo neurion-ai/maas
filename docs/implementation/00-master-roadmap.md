@@ -80,13 +80,13 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#187` Projects shell unification and clean-start flow
 - [x] `#188` First-class run page and replay foundation
 - [x] `#189` Safe interruption and drain/resume surface
-- [ ] `#190` Exception-first `Issues` v2
-- [ ] `#191` Memory and retrieval foundation
-- [ ] `#192` Policy-driven autonomy v2
-- [ ] `#193` Project lifecycle simplification
-- [ ] `#194` Stuck-run and stale-agent diagnostics
-- [ ] `#195` Multi-project supervision pass
-- [ ] `#196` Notifications and async operator loop
+- [x] `#190` Exception-first `Issues` v2
+- [x] `#191` Memory and retrieval foundation
+- [x] `#192` Policy-driven autonomy v2
+- [x] `#193` Project lifecycle simplification
+- [x] `#194` Stuck-run and stale-agent diagnostics
+- [x] `#195` Multi-project supervision pass
+- [x] `#196` Notifications and async operator loop
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

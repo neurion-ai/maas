@@ -3,9 +3,19 @@ type ThemeMode = "light" | "dark";
 export function SettingsPage({
   theme,
   onThemeChange,
+  desktopNotificationsEnabled,
+  notificationPermission,
+  notice,
+  onToggleDesktopNotifications,
+  onRequestDesktopNotifications,
 }: {
   theme: ThemeMode;
   onThemeChange: (theme: ThemeMode) => void;
+  desktopNotificationsEnabled: boolean;
+  notificationPermission: NotificationPermission;
+  notice: string | null;
+  onToggleDesktopNotifications: () => void;
+  onRequestDesktopNotifications: () => void;
 }) {
   return (
     <section className="codex-page">
@@ -16,6 +26,8 @@ export function SettingsPage({
           <p>Global preferences belong here instead of being stranded inside the shell.</p>
         </div>
       </header>
+
+      {notice ? <div className="codex-banner">{notice}</div> : null}
 
       <section className="codex-panel codex-settings-panel">
         <div className="codex-panel__header">
@@ -44,6 +56,35 @@ export function SettingsPage({
             <strong>Light</strong>
             <span>Brighter mode for long reading and review sessions.</span>
           </button>
+        </div>
+      </section>
+
+      <section className="codex-panel codex-settings-panel">
+        <div className="codex-panel__header">
+          <div>
+            <span className="codex-kicker">Notifications</span>
+            <h2>Async operator loop</h2>
+            <p>Let MAAS raise browser notifications when new review or failure pressure appears.</p>
+          </div>
+        </div>
+
+        <div className="codex-settings-options">
+          <button
+            type="button"
+            className={`codex-settings-option ${desktopNotificationsEnabled ? "is-active" : ""}`}
+            onClick={onToggleDesktopNotifications}
+          >
+            <strong>{desktopNotificationsEnabled ? "Desktop notifications on" : "Desktop notifications off"}</strong>
+            <span>
+              Permission: {notificationPermission}. Use this for review queue and suspect-run alerts without staring at the UI.
+            </span>
+          </button>
+          {notificationPermission !== "granted" ? (
+            <button type="button" className="codex-settings-option" onClick={onRequestDesktopNotifications}>
+              <strong>Request browser permission</strong>
+              <span>Grant browser permission before enabling desktop alerts.</span>
+            </button>
+          ) : null}
         </div>
       </section>
     </section>

@@ -483,6 +483,154 @@ def create_project(
     }
 
 
+def clone_project(connection, project_paths, project_id, actor_id, name=None):
+    project = resolve_project(connection, project_id, include_archived=True)
+    if project is None:
+        raise ValueError("project not found")
+
+    source_config = _load_project_config(project["config_json"])
+    source_project = dict(source_config.get("project") or {})
+    cloned_name = (name or "{0} copy".format(project["name"])).strip()
+    if not cloned_name:
+        raise ValueError("project name is required")
+
+    onboarding = dict(source_config.get("onboarding") or {})
+    source_mode = onboarding.get("mode") or "greenfield"
+    generated_source_root = bool(source_project.get("generated_source_root"))
+    source_root = os.path.abspath(project["source_root"] or source_project.get("source_root") or project_paths.root)
+
+    if source_mode == "greenfield" and generated_source_root:
+        resolved_source_root = _provision_greenfield_source_root(project_paths, cloned_name)
+        auto_created_source_root = True
+    else:
+        resolved_source_root = _normalize_source_root(project_paths, source_root)
+        auto_created_source_root = False
+
+    cloned_config = json.loads(json.dumps(source_config))
+    cloned_project = dict(cloned_config.get("project") or {})
+    cloned_project["name"] = cloned_name
+    cloned_project["description"] = project["description"] or ""
+    cloned_project["type"] = project["project_type"] or DEFAULT_PROJECT_TYPE
+    cloned_project["source_root"] = resolved_source_root
+    cloned_project["generated_source_root"] = auto_created_source_root
+    cloned_project["cloned_from_project_id"] = project_id
+    cloned_config["project"] = cloned_project
+
+    discovery = _load_project_discovery(project_paths, project_id) if source_mode == "brownfield" else None
+    if source_mode == "brownfield" and discovery is None:
+        discovery = discover_brownfield_project(resolved_source_root)
+    if source_mode == "brownfield":
+        onboarding["mode"] = "brownfield"
+        onboarding["discovery_summary"] = build_discovery_summary(discovery)
+        onboarding["review_overrides"] = default_onboarding_review_overrides(onboarding.get("discovery_summary") or {})
+        onboarding["review_status"] = "review_pending"
+        onboarding["review_required"] = True
+        onboarding["review_task_id"] = None
+        onboarding["review_task_status"] = None
+        onboarding["review_task_review_state"] = None
+        onboarding["pending_gated_tasks"] = 0
+        onboarding["last_scanned_at"] = None
+        onboarding["last_scanned_by"] = None
+        onboarding["drift_summary"] = None
+        onboarding["reviewed_by"] = None
+        onboarding["reviewed_at"] = None
+        cloned_config["onboarding"] = onboarding
+    else:
+        cloned_config["onboarding"] = {
+            "mode": "greenfield",
+            "review_status": "not_applicable",
+            "review_required": False,
+            "review_overrides": {"ignored_paths": [], "accepted_workflow_labels": [], "accepted_runbook_labels": []},
+            "discovery_summary": {},
+            "review_task_id": None,
+            "review_task_status": None,
+            "review_task_review_state": None,
+            "pending_gated_tasks": 0,
+            "last_scanned_at": None,
+            "last_scanned_by": None,
+            "drift_summary": None,
+            "reviewed_by": None,
+            "reviewed_at": None,
+        }
+
+    cloned_project_id = seed_project(
+        connection,
+        cloned_config,
+        mode=source_mode,
+        discovery=discovery,
+        source_root=resolved_source_root,
+        seed_runtime_demo=False,
+    )
+    _write_project_metadata(project_paths, cloned_project_id, cloned_config, source_mode, discovery)
+    _activity(
+        connection,
+        cloned_project_id,
+        "project_cloned",
+        "Project cloned from {0} into {1}.".format(project["name"], resolved_source_root),
+    )
+    _audit(
+        connection,
+        cloned_project_id,
+        actor_id,
+        "clone_project",
+        "project",
+        cloned_project_id,
+        {
+            "cloned_from_project_id": project_id,
+            "mode": source_mode,
+            "source_root": resolved_source_root,
+            "generated_source_root": auto_created_source_root,
+        },
+    )
+    connection.commit()
+
+    created_row = connection.execute(
+        """
+        SELECT
+            projects.project_id,
+            projects.name,
+            projects.description,
+            projects.project_type,
+            projects.config_json,
+            projects.created_at,
+            projects.updated_at,
+            projects.state,
+            projects.archived_at,
+            projects.source_root,
+            (
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE tasks.project_id = projects.project_id
+            ) AS task_count,
+            (
+                SELECT COUNT(*)
+                FROM agents
+                WHERE agents.project_id = projects.project_id
+            ) AS agent_count,
+            (
+                SELECT COUNT(*)
+                FROM alerts
+                WHERE alerts.project_id = projects.project_id
+                  AND alerts.status = 'open'
+            ) AS open_alert_count
+        FROM projects
+        WHERE projects.project_id = ?
+        """,
+        (cloned_project_id,),
+    ).fetchone()
+    return {
+        "project": _project_summary(created_row),
+        "mode": source_mode,
+        "metadata": {
+            "understanding_path": project_paths.project_understanding_path(cloned_project_id),
+            "discovery_path": project_paths.project_discovery_path(cloned_project_id) if discovery is not None else None,
+            "source_root": resolved_source_root,
+            "generated_source_root": auto_created_source_root,
+            "cloned_from_project_id": project_id,
+        },
+    }
+
+
 def archive_project(connection, project_id, actor_id):
     project = resolve_project(connection, project_id, include_archived=True)
     if project is None:

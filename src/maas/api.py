@@ -18,7 +18,14 @@ from maas.services.artifacts import (
     resolve_artifact_download,
 )
 from maas.services.board import fetch_board, fetch_issue_index
-from maas.services.codex_mvp import fetch_agent_detail, fetch_issue_detail, fetch_run_detail, fetch_runs, fetch_system_diagnostics
+from maas.services.codex_mvp import (
+    fetch_agent_detail,
+    fetch_issue_detail,
+    fetch_retrieval_search,
+    fetch_run_detail,
+    fetch_runs,
+    fetch_system_diagnostics,
+)
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
 from maas.services.failure_memory import fetch_failure_log, fetch_quarantine_queue
@@ -47,6 +54,7 @@ from maas.services.provider_workers import run_provider_worker_once
 from maas.services.portfolio import fetch_portfolio
 from maas.services.projects import (
     archive_project,
+    clone_project,
     create_project,
     delete_project,
     list_projects,
@@ -269,6 +277,11 @@ class ProjectCreateRequest(BaseModel):
     create_source_root: bool = False
 
 
+class ProjectCloneRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    name: Optional[str] = None
+
+
 class ProjectOnboardingReviewUpdateRequest(BaseModel):
     actor_id: str = "agent_allocator"
     ignored_paths: List[str] = []
@@ -388,6 +401,16 @@ def create_app(project_root="."):
                 source_root=payload.source_root,
                 create_source_root=payload.create_source_root,
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/clone")
+    def projects_clone(project_id: str, payload: ProjectCloneRequest):
+        connection = connect(paths)
+        try:
+            return clone_project(connection, paths, project_id, payload.actor_id, name=payload.name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
@@ -904,6 +927,30 @@ def create_app(project_root="."):
         try:
             scoped_project_id = _selected_project_id(connection, project_id)
             return fetch_issue_index(connection, project_id=scoped_project_id)
+        finally:
+            connection.close()
+
+    @app.get("/api/retrieval/search")
+    def retrieval_search(
+        search: str,
+        project_id: str = None,
+        goal_id: str = None,
+        agent_id: str = None,
+        priority_min: int = None,
+        limit: int = 8,
+    ):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_retrieval_search(
+                connection,
+                project_id=scoped_project_id,
+                search=search,
+                goal_id=goal_id,
+                agent_id=agent_id,
+                priority_min=priority_min,
+                limit=limit,
+            )
         finally:
             connection.close()
 

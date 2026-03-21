@@ -115,6 +115,102 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(detail_payload["review_decision"]["status"], "low_risk_review")
             self.assertTrue(detail_payload["review_decision"]["batch_review_eligible"])
 
+    def test_retrieval_search_returns_issue_run_artifact_and_event_hits(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Retrieval Test", description="codex retrieval", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id, title
+                    FROM tasks
+                    WHERE assigned_agent_id IS NOT NULL
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Prepare quant packet', description = 'Packet contains risk review context', status = 'in_progress'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'active', 'openai_codex', 45,
+                        'Generating packet summary', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (session_id, task["project_id"], task["assigned_agent_id"], task["task_id"]),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "packet-summary.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("packet artifact\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, ?, 'note', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], session_id, artifact_path),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'packet_generated', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        task["project_id"],
+                        task["assigned_agent_id"],
+                        task["task_id"],
+                        "Generated packet summary for operator review.",
+                        json.dumps({"session_id": session_id}),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.get("/api/retrieval/search", params={"search": "packet"})
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertGreaterEqual(payload["summary"]["issue_hits"], 1)
+            self.assertGreaterEqual(payload["summary"]["run_hits"], 1)
+            self.assertGreaterEqual(payload["summary"]["artifact_hits"], 1)
+            self.assertGreaterEqual(payload["summary"]["event_hits"], 1)
+            self.assertEqual(payload["issues"][0]["task_id"], task["task_id"])
+            self.assertEqual(payload["runs"][0]["session_id"], session_id)
+            self.assertEqual(payload["artifacts"][0]["task_id"], task["task_id"])
+            self.assertEqual(payload["events"][0]["task_id"], task["task_id"])
+
+            wrong_agent_response = client.get(
+                "/api/retrieval/search",
+                params={"search": "packet", "agent_id": "agent_missing"},
+            )
+            self.assertEqual(wrong_agent_response.status_code, 200)
+            wrong_agent_payload = wrong_agent_response.json()
+            self.assertEqual(wrong_agent_payload["summary"]["total_hits"], 0)
+
+            priority_response = client.get(
+                "/api/retrieval/search",
+                params={"search": "packet", "priority_min": 999},
+            )
+            self.assertEqual(priority_response.status_code, 200)
+            priority_payload = priority_response.json()
+            self.assertEqual(priority_payload["summary"]["total_hits"], 0)
+
     def test_run_index_lists_recent_runs_with_state_details(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex Run Index Test", description="codex runs", project_type="custom")

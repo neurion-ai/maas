@@ -564,6 +564,335 @@ def fetch_system_diagnostics(connection, project_id):
     }
 
 
+def fetch_retrieval_search(connection, project_id=None, search="", goal_id=None, agent_id=None, priority_min=None, limit=8):
+    search_value = (search or "").strip()
+    safe_limit = max(1, min(int(limit or 8), 25))
+    if not search_value:
+        return {
+            "query": {
+                "search": "",
+                "goal_id": goal_id,
+                "agent_id": agent_id,
+                "priority_min": priority_min,
+            },
+            "summary": {
+                "total_hits": 0,
+                "issue_hits": 0,
+                "run_hits": 0,
+                "artifact_hits": 0,
+                "event_hits": 0,
+            },
+            "issues": [],
+            "runs": [],
+            "artifacts": [],
+            "events": [],
+        }
+
+    issue_keys = issue_key_lookup(connection, project_id)
+    pattern = "%{0}%".format(search_value)
+
+    task_filters = [
+        """
+        (
+            tasks.task_id LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(tasks.description, '') LIKE ?
+            OR COALESCE(goals.title, '') LIKE ?
+            OR COALESCE(agents.display_name, '') LIKE ?
+        )
+        """
+    ]
+    task_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        task_filters.append("tasks.project_id = ?")
+        task_params.append(project_id)
+    if goal_id:
+        task_filters.append("tasks.goal_id = ?")
+        task_params.append(goal_id)
+    if agent_id:
+        task_filters.append("tasks.assigned_agent_id = ?")
+        task_params.append(agent_id)
+    if priority_min is not None:
+        task_filters.append("tasks.priority >= ?")
+        task_params.append(priority_min)
+
+    issue_rows = connection.execute(
+        """
+        SELECT
+            tasks.task_id,
+            tasks.project_id,
+            projects.name AS project_name,
+            tasks.title,
+            tasks.status,
+            tasks.priority,
+            tasks.updated_at,
+            tasks.goal_id,
+            goals.title AS goal_title,
+            tasks.assigned_agent_id AS agent_id,
+            agents.display_name AS agent_name,
+            CASE
+                WHEN COALESCE(tasks.description, '') LIKE ? THEN COALESCE(tasks.description, '')
+                WHEN COALESCE(goals.title, '') LIKE ? THEN 'Goal: ' || goals.title
+                WHEN COALESCE(agents.display_name, '') LIKE ? THEN 'Owner: ' || agents.display_name
+                ELSE COALESCE(tasks.description, goals.title, tasks.title)
+            END AS match_context
+        FROM tasks
+        JOIN projects ON projects.project_id = tasks.project_id
+        LEFT JOIN goals ON goals.goal_id = tasks.goal_id
+        LEFT JOIN agents ON agents.agent_id = tasks.assigned_agent_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY tasks.priority DESC, tasks.updated_at DESC, tasks.created_at DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(task_filters)),
+        tuple([pattern, pattern, pattern] + task_params + [safe_limit]),
+    ).fetchall()
+    issues = [
+        {
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]),
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "title": row["title"],
+            "status": row["status"],
+            "priority": row["priority"],
+            "goal_id": row["goal_id"],
+            "goal_title": row["goal_title"],
+            "agent_id": row["agent_id"],
+            "agent_name": row["agent_name"],
+            "match_context": row["match_context"] or row["title"],
+            "updated_at": row["updated_at"],
+        }
+        for row in issue_rows
+    ]
+
+    run_filters = [
+        """
+        (
+            sessions.session_id LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(tasks.task_id, '') LIKE ?
+            OR COALESCE(agents.display_name, '') LIKE ?
+            OR COALESCE(sessions.status_message, '') LIKE ?
+        )
+        """
+    ]
+    run_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        run_filters.append("sessions.project_id = ?")
+        run_params.append(project_id)
+    if goal_id:
+        run_filters.append("tasks.goal_id = ?")
+        run_params.append(goal_id)
+    if agent_id:
+        run_filters.append("sessions.agent_id = ?")
+        run_params.append(agent_id)
+    if priority_min is not None:
+        run_filters.append("tasks.priority >= ?")
+        run_params.append(priority_min)
+
+    run_rows = connection.execute(
+        """
+        SELECT
+            sessions.session_id,
+            sessions.project_id,
+            projects.name AS project_name,
+            sessions.task_id,
+            tasks.title AS task_title,
+            sessions.status,
+            sessions.provider_type,
+            sessions.started_at,
+            sessions.status_message AS match_context,
+            json_extract(start_log.details_json, '$.execution_mode') AS execution_mode,
+            json_extract(start_log.details_json, '$.external_runtime') AS external_runtime
+        FROM sessions
+        JOIN projects ON projects.project_id = sessions.project_id
+        LEFT JOIN tasks ON tasks.task_id = sessions.task_id
+        LEFT JOIN agents ON agents.agent_id = sessions.agent_id
+        LEFT JOIN activity_log AS start_log
+            ON start_log.project_id = sessions.project_id
+           AND start_log.task_id = sessions.task_id
+           AND start_log.action = 'provider_adapter_started'
+           AND json_extract(start_log.details_json, '$.session_id') = sessions.session_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY
+            CASE sessions.status WHEN 'active' THEN 0 ELSE 1 END,
+            COALESCE(sessions.ended_at, sessions.started_at) DESC,
+            sessions.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(run_filters)),
+        tuple(run_params + [safe_limit]),
+    ).fetchall()
+    runs = [
+        {
+            "session_id": row["session_id"],
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "task_title": row["task_title"],
+            "status": row["status"],
+            "provider_type": row["provider_type"],
+            "execution_mode": row["execution_mode"],
+            "external_runtime": row["external_runtime"],
+            "match_context": row["match_context"] or row["task_title"] or row["session_id"],
+            "started_at": row["started_at"],
+        }
+        for row in run_rows
+    ]
+
+    artifact_filters = [
+        """
+        (
+            artifacts.artifact_id LIKE ?
+            OR COALESCE(artifacts.path, '') LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(tasks.task_id, '') LIKE ?
+            OR COALESCE(artifacts.artifact_type, '') LIKE ?
+        )
+        """
+    ]
+    artifact_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        artifact_filters.append("artifacts.project_id = ?")
+        artifact_params.append(project_id)
+    if goal_id:
+        artifact_filters.append("tasks.goal_id = ?")
+        artifact_params.append(goal_id)
+    if agent_id:
+        artifact_filters.append("tasks.assigned_agent_id = ?")
+        artifact_params.append(agent_id)
+    if priority_min is not None:
+        artifact_filters.append("tasks.priority >= ?")
+        artifact_params.append(priority_min)
+
+    artifact_rows = connection.execute(
+        """
+        SELECT
+            artifacts.artifact_id,
+            artifacts.project_id,
+            projects.name AS project_name,
+            artifacts.task_id,
+            artifacts.session_id,
+            artifacts.path AS artifact_path,
+            artifacts.artifact_type,
+            COALESCE(json_extract(artifacts.metadata_json, '$.artifact_state'), 'active') AS artifact_state,
+            COALESCE(tasks.title, artifacts.path, artifacts.artifact_id) AS title,
+            artifacts.created_at
+        FROM artifacts
+        JOIN projects ON projects.project_id = artifacts.project_id
+        LEFT JOIN tasks ON tasks.task_id = artifacts.task_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY artifacts.created_at DESC, artifacts.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(artifact_filters)),
+        tuple(artifact_params + [safe_limit]),
+    ).fetchall()
+    artifacts = [
+        {
+            "artifact_id": row["artifact_id"],
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+            "session_id": row["session_id"],
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "artifact_path": row["artifact_path"],
+            "artifact_type": row["artifact_type"],
+            "artifact_state": row["artifact_state"],
+            "title": row["title"],
+            "created_at": row["created_at"],
+        }
+        for row in artifact_rows
+    ]
+
+    event_filters = [
+        """
+        (
+            activity_log.activity_id LIKE ?
+            OR COALESCE(activity_log.action, '') LIKE ?
+            OR COALESCE(activity_log.description, '') LIKE ?
+            OR COALESCE(tasks.title, '') LIKE ?
+            OR COALESCE(agents.display_name, '') LIKE ?
+        )
+        """
+    ]
+    event_params = [pattern, pattern, pattern, pattern, pattern]
+    if project_id is not None:
+        event_filters.append("activity_log.project_id = ?")
+        event_params.append(project_id)
+    if goal_id:
+        event_filters.append("tasks.goal_id = ?")
+        event_params.append(goal_id)
+    if agent_id:
+        event_filters.append("activity_log.agent_id = ?")
+        event_params.append(agent_id)
+    if priority_min is not None:
+        event_filters.append("tasks.priority >= ?")
+        event_params.append(priority_min)
+
+    event_rows = connection.execute(
+        """
+        SELECT
+            activity_log.activity_id AS event_id,
+            activity_log.project_id,
+            projects.name AS project_name,
+            activity_log.task_id,
+            json_extract(activity_log.details_json, '$.session_id') AS session_id,
+            activity_log.agent_id,
+            activity_log.action AS title,
+            activity_log.description,
+            activity_log.created_at
+        FROM activity_log
+        JOIN projects ON projects.project_id = activity_log.project_id
+        LEFT JOIN tasks ON tasks.task_id = activity_log.task_id
+        LEFT JOIN agents ON agents.agent_id = activity_log.agent_id
+        WHERE projects.state = 'active'
+          AND {where_clause}
+        ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+        LIMIT ?
+        """.format(where_clause=" AND ".join(event_filters)),
+        tuple(event_params + [safe_limit]),
+    ).fetchall()
+    events = [
+        {
+            "source": "activity",
+            "event_id": row["event_id"],
+            "project_id": row["project_id"],
+            "project_name": row["project_name"],
+            "task_id": row["task_id"],
+            "issue_key": issue_keys.get(row["task_id"]) if row["task_id"] else None,
+            "session_id": row["session_id"],
+            "agent_id": row["agent_id"],
+            "title": row["title"],
+            "description": row["description"] or row["title"],
+            "created_at": row["created_at"],
+        }
+        for row in event_rows
+    ]
+
+    return {
+        "query": {
+            "search": search_value,
+            "goal_id": goal_id,
+            "agent_id": agent_id,
+            "priority_min": priority_min,
+        },
+        "summary": {
+            "total_hits": len(issues) + len(runs) + len(artifacts) + len(events),
+            "issue_hits": len(issues),
+            "run_hits": len(runs),
+            "artifact_hits": len(artifacts),
+            "event_hits": len(events),
+        },
+        "issues": issues,
+        "runs": runs,
+        "artifacts": artifacts,
+        "events": events,
+    }
+
+
 def _issue_run_console(connection, project_paths, project_id, task_id, runs):
     if not runs:
         return None

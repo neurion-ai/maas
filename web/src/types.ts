@@ -28,6 +28,8 @@ export interface BoardGoal {
 export interface BoardTask {
   task_id: string;
   issue_key?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
   title: string;
   description?: string;
   status: BoardColumnKey | "assigned";
@@ -172,6 +174,10 @@ export interface PortfolioProject {
   running_agents: number;
   open_quarantine_entries: number;
   dead_letter_entries: number;
+  review_queue_count: number;
+  blocked_failure_count: number;
+  suspect_run_count: number;
+  stale_agent_count: number;
   repeated_failure_tasks: number;
   health: "healthy" | "warn" | "critical" | "archived";
   provider_readiness: {
@@ -233,6 +239,10 @@ export interface PortfolioResponse {
     queued_provider_jobs: number;
     queued_notifications: number;
     failed_notifications: number;
+    review_queue: number;
+    blocked_failures: number;
+    suspect_runs: number;
+    stale_agents: number;
   };
   projects: PortfolioProject[];
   command_center: {
@@ -240,6 +250,43 @@ export interface PortfolioResponse {
     urgent_alerts: AlertItem[];
     open_dead_letter_entries: DeadLetterQueueItem[];
     queued_provider_jobs: ProviderJobItem[];
+    review_queue: Array<{
+      project_id: string;
+      project_name: string;
+      task_id: string;
+      title: string;
+      priority: number;
+      review_state?: string | null;
+      goal_title?: string | null;
+      agent_name?: string | null;
+      updated_at?: string | null;
+    }>;
+    blocked_failures: Array<{
+      project_id: string;
+      project_name: string;
+      task_id: string;
+      title: string;
+      priority: number;
+      review_state?: string | null;
+      goal_title?: string | null;
+      agent_name?: string | null;
+      failure_count?: number;
+      latest_failure_at?: string | null;
+    }>;
+    suspect_runs: Array<{
+      project_id: string;
+      project_name: string;
+      session_id: string;
+      task_id?: string | null;
+      task_title?: string | null;
+      agent_id?: string | null;
+      agent_name?: string | null;
+      status: string;
+      provider_type: string;
+      status_message?: string | null;
+      started_at?: string | null;
+      last_heartbeat_at?: string | null;
+    }>;
     notification_deliveries: NotificationItem[];
   };
 }
@@ -262,6 +309,7 @@ export interface ProjectCreateResponse {
     discovery_path?: string | null;
     source_root: string;
     generated_source_root?: boolean;
+    cloned_from_project_id?: string;
   };
 }
 
@@ -1346,6 +1394,8 @@ export interface CodexRunDetailResponse {
 
 export interface CodexRunListItem {
   session_id: string;
+  project_id?: string | null;
+  project_name?: string | null;
   task_id?: string | null;
   task_title?: string | null;
   task_status?: string | null;
@@ -1598,4 +1648,83 @@ export interface CodexIssueIndexResponse {
   resolved: BoardTask[];
   board_summary: BoardSummary;
   filter_options?: BoardFilterOptions;
+}
+
+export interface CodexRetrievalIssueHit {
+  task_id: string;
+  issue_key?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  title: string;
+  status: string;
+  priority: number;
+  goal_id?: string | null;
+  goal_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  match_context: string;
+  updated_at?: string | null;
+}
+
+export interface CodexRetrievalRunHit {
+  session_id: string;
+  task_id?: string | null;
+  issue_key?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  task_title?: string | null;
+  status: string;
+  provider_type: string;
+  execution_mode?: string | null;
+  external_runtime?: string | null;
+  match_context: string;
+  started_at: string;
+}
+
+export interface CodexRetrievalArtifactHit {
+  artifact_id: string;
+  task_id?: string | null;
+  issue_key?: string | null;
+  session_id?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  artifact_path: string;
+  artifact_type: string;
+  artifact_state: string;
+  title: string;
+  created_at: string;
+}
+
+export interface CodexRetrievalEventHit {
+  source: string;
+  event_id: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  task_id?: string | null;
+  issue_key?: string | null;
+  session_id?: string | null;
+  agent_id?: string | null;
+  title: string;
+  description: string;
+  created_at: string;
+}
+
+export interface CodexRetrievalSearchResponse {
+  query: {
+    search: string;
+    goal_id?: string | null;
+    agent_id?: string | null;
+    priority_min?: number | null;
+  };
+  summary: {
+    total_hits: number;
+    issue_hits: number;
+    run_hits: number;
+    artifact_hits: number;
+    event_hits: number;
+  };
+  issues: CodexRetrievalIssueHit[];
+  runs: CodexRetrievalRunHit[];
+  artifacts: CodexRetrievalArtifactHit[];
+  events: CodexRetrievalEventHit[];
 }

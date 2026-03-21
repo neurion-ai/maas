@@ -1,6 +1,6 @@
 # MAAS Codex MVP Autonomy-Scale Plan
 
-Status: in progress on `codex/codex-mvp-autonomy-scale`
+Status: implemented on `codex/codex-mvp-autonomy-scale`
 
 ## Goal
 
@@ -26,29 +26,29 @@ This batch is about reducing guesswork:
   - keep launch posture controls visible on the run surface
   - make stale-run diagnosis and operator next-step clearer
 
-- [ ] `#190` Exception-first `Issues` v2
+- [x] `#190` Exception-first `Issues` v2
   - move issue queue grouping and batch-review eligibility into backend read models
   - stop duplicating policy heuristics in the browser
 
-- [ ] `#191` Memory and retrieval foundation
+- [x] `#191` Memory and retrieval foundation
   - search beyond loaded board rows
   - make prior outputs, checks, incidents, and history retrievable
 
-- [ ] `#192` Policy-driven autonomy v2
+- [x] `#192` Policy-driven autonomy v2
   - strengthen auto-advance and auto-review reasoning
   - surface why a task was or was not auto-approved
 
-- [ ] `#193` Project lifecycle simplification
+- [x] `#193` Project lifecycle simplification
   - simplify fresh-start testing further
   - add safer reset/clone semantics where justified
 
-- [ ] `#194` Stuck-run and stale-agent diagnostics
+- [x] `#194` Stuck-run and stale-agent diagnostics
   - move more liveness diagnosis into backend truth instead of page heuristics
 
-- [ ] `#195` Multi-project supervision pass
+- [x] `#195` Multi-project supervision pass
   - give the operator a better cross-project execution and exception view
 
-- [ ] `#196` Notifications and async operator loop
+- [x] `#196` Notifications and async operator loop
   - reduce the need to stare at the UI continuously
 
 ## What Landed So Far
@@ -82,6 +82,13 @@ The current branch now also lands the first backend-owned system diagnostics pas
 
 - canonical `/api/system/diagnostics` read model for suspect runs, stale agents, and queue pressure
 - `System` now renders that backend truth instead of recomputing stale diagnostics in the browser
+
+The final slice of this batch makes the operator loop more autonomous at scale:
+
+- retrieval search now spans issues, runs, artifacts, and events through `/api/retrieval/search`
+- project lifecycle now supports clone-for-fresh-run without destructive reset
+- portfolio and `Projects` now expose cross-project review queues, blocked failures, suspect runs, and stale agents
+- the shell now includes an attention queue plus optional desktop notifications so the operator does not need to stare at the app continuously
 
 ## Why This Order
 

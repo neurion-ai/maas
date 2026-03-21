@@ -8,6 +8,8 @@ import {
   runSupervisorPass,
   updateProjectReviewPolicy
 } from "../lib/controlRoomApi";
+import { setPendingRunFocus } from "../lib/runFocus";
+import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OverviewResponse, PortfolioProject, PortfolioResponse, ProjectSummary } from "../types";
 
@@ -28,10 +30,11 @@ interface ProjectsPageProps {
   onSelectProject: (projectId: string) => void;
   onProjectFormChange: (next: ProjectFormState) => void;
   onCreateProject: (event: FormEvent<HTMLFormElement>) => void;
+  onCloneProject: (projectId: string, suggestedName?: string) => Promise<void>;
   onArchiveProject: (projectId: string) => Promise<void>;
   onRestoreProject: (projectId: string) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<void>;
-  onNavigate?: (view: "command" | "work" | "issues" | "agents" | "system" | "projects") => void;
+  onNavigate?: (view: "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects") => void;
 }
 
 interface NextStep {
@@ -267,6 +270,7 @@ export function ProjectsPage({
   onSelectProject,
   onProjectFormChange,
   onCreateProject,
+  onCloneProject,
   onArchiveProject,
   onRestoreProject,
   onDeleteProject,
@@ -519,6 +523,20 @@ export function ProjectsPage({
                   onClick={() => onSelectProject(selectedProject.project_id)}
                 >
                   Keep selected
+                </button>
+                <button
+                  type="button"
+                  className="hero-button hero-button--ghost hero-button--compact"
+                  disabled={projectSubmitting}
+                  onClick={() => {
+                    const nextName = window.prompt("Clone project as", `${selectedProject.name} copy`);
+                    if (nextName == null) {
+                      return;
+                    }
+                    void onCloneProject(selectedProject.project_id, nextName);
+                  }}
+                >
+                  Clone for fresh run
                 </button>
                 <button
                   type="button"
@@ -798,6 +816,134 @@ export function ProjectsPage({
               >
                 Expand policy
               </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {portfolio ? (
+        <section className="single-column-grid">
+          <article className="surface-card">
+            <div className="surface-card__header">
+              <div>
+                <span className="eyebrow">Cross-project supervision</span>
+                <h2>What needs attention across all active projects</h2>
+              </div>
+            </div>
+            <div className="detail-grid">
+              <div>
+                <span>Review queue</span>
+                <strong>{portfolio.summary.review_queue}</strong>
+              </div>
+              <div>
+                <span>Blocked failures</span>
+                <strong>{portfolio.summary.blocked_failures}</strong>
+              </div>
+              <div>
+                <span>Suspect runs</span>
+                <strong>{portfolio.summary.suspect_runs}</strong>
+              </div>
+              <div>
+                <span>Stale agents</span>
+                <strong>{portfolio.summary.stale_agents}</strong>
+              </div>
+            </div>
+            <div className="two-column-grid">
+              <div className="list-stack">
+                <div className="list-row">
+                  <div>
+                    <strong>Review queue</strong>
+                    <p>Cross-project issues waiting on operator judgment.</p>
+                  </div>
+                </div>
+                {(portfolio.command_center.review_queue ?? []).slice(0, 5).map((item) => (
+                  <button
+                    key={item.task_id}
+                    type="button"
+                    className="list-row list-row--button"
+                    onClick={() => {
+                      onSelectProject(item.project_id);
+                      setPendingTaskFocus(item.task_id);
+                      onNavigate?.("issues");
+                    }}
+                  >
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p>
+                        {item.project_name} · {item.agent_name ?? "Unassigned"} · {item.goal_title ?? "No goal"}
+                      </p>
+                    </div>
+                    <div className="list-row__meta">
+                      <span className="status-pill status-pill--warn">{item.priority}</span>
+                    </div>
+                  </button>
+                ))}
+                {!portfolio.command_center.review_queue?.length ? (
+                  <div className="empty-state empty-state--compact">
+                    <strong>No review backlog.</strong>
+                    <p>Nothing across the portfolio is waiting on operator approval.</p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="list-stack">
+                <div className="list-row">
+                  <div>
+                    <strong>Blocked failures and suspect runs</strong>
+                    <p>Use this to jump straight to the project that is drifting or failing.</p>
+                  </div>
+                </div>
+                {(portfolio.command_center.blocked_failures ?? []).slice(0, 3).map((item) => (
+                  <button
+                    key={item.task_id}
+                    type="button"
+                    className="list-row list-row--button"
+                    onClick={() => {
+                      onSelectProject(item.project_id);
+                      setPendingTaskFocus(item.task_id);
+                      onNavigate?.("issues");
+                    }}
+                  >
+                    <div>
+                      <strong>{item.title}</strong>
+                      <p>
+                        {item.project_name} · {item.failure_count ?? 0} failures · {item.agent_name ?? "No owner"}
+                      </p>
+                    </div>
+                    <div className="list-row__meta">
+                      <span className="status-pill status-pill--danger">Blocked</span>
+                    </div>
+                  </button>
+                ))}
+                {(portfolio.command_center.suspect_runs ?? []).slice(0, 3).map((item) => (
+                  <button
+                    key={item.session_id}
+                    type="button"
+                    className="list-row list-row--button"
+                    onClick={() => {
+                      onSelectProject(item.project_id);
+                      setPendingRunFocus(item.session_id);
+                      onNavigate?.("runs");
+                    }}
+                  >
+                    <div>
+                      <strong>{item.task_title ?? item.session_id}</strong>
+                      <p>
+                        {item.project_name} · {item.agent_name ?? item.provider_type} · {item.status}
+                      </p>
+                    </div>
+                    <div className="list-row__meta">
+                      <span className="status-pill status-pill--warn">Run</span>
+                    </div>
+                  </button>
+                ))}
+                {!portfolio.command_center.blocked_failures?.length && !portfolio.command_center.suspect_runs?.length ? (
+                  <div className="empty-state empty-state--compact">
+                    <strong>No portfolio-wide failures.</strong>
+                    <p>Blocked failures and suspect runs will appear here across active projects.</p>
+                  </div>
+                ) : null}
+              </div>
             </div>
           </article>
         </section>

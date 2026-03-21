@@ -169,6 +169,8 @@ Current stacked development chain above `main`:
 
 The current operator-value and capability sequence in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md) is now implemented on `codex/codex-mvp-operator-scale`. It adds truthful queue posture, readiness-aware launch strategy, shared `Work`/`Issues` scopes, first-class run detail reads, stronger agent/system execution diagnostics, verification-driven auto-approval, and cleaner fresh-project lifecycle controls.
 
+The current autonomy-scale sequence in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md) is now implemented on `codex/codex-mvp-autonomy-scale`. It adds first-class `Runs`, backend-owned exception grouping, retrieval across issues/runs/artifacts/events, clone-for-fresh-run project lifecycle, stronger stale-run diagnostics, cross-project supervision in `Projects`, and an async attention loop with optional desktop notifications.
+
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 
 The current Codex-MVP integration sequence on `codex/codex-mvp-shell-integration` carries that product reset into the real app with a new shell, canonical issue identity, issue detail and agent detail read models, and integrated `Command` / `Work` / `Issues` / `Agents` / `System` surfaces.

@@ -9,6 +9,7 @@ import type {
   ArtifactsResponse,
   CodexAgentDetailResponse,
   CodexIssueIndexResponse,
+  CodexRetrievalSearchResponse,
   CodexIssueDetailResponse,
   CodexRunIndexResponse,
   CodexSystemDiagnosticsResponse,
@@ -20,6 +21,7 @@ import type {
   FailuresResponse,
   GoalTreeResponse,
   LiveSnapshot,
+  NotificationItem,
   OverviewResponse,
   OrchestratorRunResponse,
   PortfolioResponse,
@@ -171,7 +173,11 @@ const PORTFOLIO_FALLBACK: PortfolioResponse = {
     open_escalations: 0,
     queued_provider_jobs: 0,
     queued_notifications: 0,
-    failed_notifications: 0
+    failed_notifications: 0,
+    review_queue: 0,
+    blocked_failures: 0,
+    suspect_runs: 0,
+    stale_agents: 0,
   },
   projects: [],
   command_center: {
@@ -179,6 +185,9 @@ const PORTFOLIO_FALLBACK: PortfolioResponse = {
     urgent_alerts: [],
     open_dead_letter_entries: [],
     queued_provider_jobs: [],
+    review_queue: [],
+    blocked_failures: [],
+    suspect_runs: [],
     notification_deliveries: []
   }
 };
@@ -633,6 +642,14 @@ export async function createProject(payload: ProjectCreateRequest) {
   return response as ProjectCreateResponse;
 }
 
+export async function cloneProject(projectId: string, name?: string) {
+  const response = await postJson<ProjectCreateResponse>(`/api/projects/${projectId}/actions/clone`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    name: name?.trim() || undefined,
+  });
+  return response as ProjectCreateResponse;
+}
+
 export async function pickLocalDirectory() {
   const response = await postJson<DirectoryPickerResponse>("/api/system/actions/pick-directory", {});
   return response as DirectoryPickerResponse;
@@ -763,6 +780,22 @@ export async function processNextNotification(projectId?: string) {
     actor_id: "agent_allocator",
     project_id: projectId ?? null
   });
+}
+
+export function fetchNotifications(
+  filters: { status?: string; limit?: number } = {},
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const params = new URLSearchParams();
+  if (filters.status) {
+    params.set("status", filters.status);
+  }
+  if (filters.limit != null) {
+    params.set("limit", String(filters.limit));
+  }
+  const path = appendProjectScope(params.toString() ? `/api/notifications?${params.toString()}` : "/api/notifications");
+  return fetchJson<{ notifications: NotificationItem[] }>(path, { notifications: [] }, signal, onFallback);
 }
 
 export async function refreshRepoPlan(projectId: string) {
@@ -1032,6 +1065,48 @@ export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: (
         oldest_queued_at: null,
         oldest_running_at: null,
       },
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchCodexRetrievalSearch(
+  filters: { search: string; goalId?: string | null; agentId?: string | null; priorityMin?: number | null },
+  signal?: AbortSignal,
+  onFallback?: () => void
+) {
+  const params = new URLSearchParams();
+  params.set("search", filters.search);
+  if (filters.goalId) {
+    params.set("goal_id", filters.goalId);
+  }
+  if (filters.agentId) {
+    params.set("agent_id", filters.agentId);
+  }
+  if (filters.priorityMin != null) {
+    params.set("priority_min", String(filters.priorityMin));
+  }
+  return fetchJson<CodexRetrievalSearchResponse>(
+    appendProjectScope(`/api/retrieval/search?${params.toString()}`),
+    {
+      query: {
+        search: filters.search,
+        goal_id: filters.goalId ?? null,
+        agent_id: filters.agentId ?? null,
+        priority_min: filters.priorityMin ?? null,
+      },
+      summary: {
+        total_hits: 0,
+        issue_hits: 0,
+        run_hits: 0,
+        artifact_hits: 0,
+        event_hits: 0,
+      },
+      issues: [],
+      runs: [],
+      artifacts: [],
+      events: [],
     },
     signal,
     onFallback

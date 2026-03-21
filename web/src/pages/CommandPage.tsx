@@ -1,12 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchAlerts, fetchAgentRoster, fetchCodexIssueIndex, fetchIncidentTimeline, fetchOverview, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
+import {
+  fetchAlerts,
+  fetchAgentRoster,
+  fetchCodexIssueIndex,
+  fetchCodexRetrievalSearch,
+  fetchIncidentTimeline,
+  fetchOverview,
+  fetchPortfolio,
+  runOrchestratorPass,
+  updateProjectProviderCapacity,
+} from "../lib/controlRoomApi";
 import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap } from "../lib/codexMvp";
 import { getSelectedProjectId } from "../lib/projectScope";
+import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { AlertItem, BoardTask, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
+import type { AlertItem, BoardTask, CodexRetrievalSearchResponse, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
 
-type ViewTarget = "work" | "issues" | "agents" | "system" | "projects";
+type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects";
 
 const RUN_CONTROL_MIN_PENDING_MS = 900;
 
@@ -25,6 +36,9 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
   const [recentFailureCount, setRecentFailureCount] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [retrieval, setRetrieval] = useState<CodexRetrievalSearchResponse | null>(null);
+  const [retrievalNotice, setRetrievalNotice] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   async function loadCommand(signal?: AbortSignal) {
@@ -60,6 +74,33 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     void loadCommand(controller.signal).catch(() => setNotice("Command refresh failed; showing the latest available state."));
     return () => controller.abort();
   }, [livePulse]);
+
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (trimmed.length < 2) {
+      setRetrieval(null);
+      setRetrievalNotice(null);
+      return;
+    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => {
+      void fetchCodexRetrievalSearch({ search: trimmed }, controller.signal)
+        .then((payload) => {
+          setRetrieval(payload);
+          setRetrievalNotice(null);
+        })
+        .catch((error) => {
+          if (!(error instanceof Error && error.name === "AbortError")) {
+            setRetrieval(null);
+            setRetrievalNotice("Search refresh failed. Retrieval results could not be loaded for this query.");
+          }
+        });
+    }, 180);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timeout);
+    };
+  }, [searchQuery]);
 
   const keyMap = useMemo(() => issueKeyMap([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
@@ -245,6 +286,161 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       </div>
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+
+      <section className="codex-panel">
+        <div className="codex-panel__header">
+          <div>
+            <span className="codex-kicker">Retrieval</span>
+            <h2>Search prior work, runs, artifacts, and machine history</h2>
+          </div>
+        </div>
+        <div className="codex-search-panel">
+          <label className="field-control field-control--search">
+            <span>Search memory</span>
+            <input
+              type="search"
+              value={searchQuery}
+              placeholder="Search issues, runs, artifacts, and recent activity"
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+          </label>
+          <div className="hero-meta">
+            <span className="hero-meta__pill">{retrieval?.summary.issue_hits ?? 0} issues</span>
+            <span className="hero-meta__pill">{retrieval?.summary.run_hits ?? 0} runs</span>
+            <span className="hero-meta__pill">{retrieval?.summary.artifact_hits ?? 0} artifacts</span>
+            <span className="hero-meta__pill">{retrieval?.summary.event_hits ?? 0} events</span>
+          </div>
+        </div>
+        {retrievalNotice ? <p className="field-hint">{retrievalNotice}</p> : null}
+        {searchQuery.trim().length < 2 ? (
+          <div className="codex-empty-copy">Type at least two characters to search the wider project memory.</div>
+        ) : (
+          <div className="codex-three-column codex-three-column--dense">
+            <section className="codex-panel codex-panel--nested">
+              <div className="codex-panel__header">
+                <div>
+                  <span className="codex-kicker">Issues</span>
+                  <h3>Matching work</h3>
+                </div>
+              </div>
+              <div className="codex-stack-list">
+                {(retrieval?.issues ?? []).map((item) => (
+                  <button
+                    key={item.task_id}
+                    type="button"
+                    className="codex-stack-item"
+                    onClick={() => {
+                      setPendingTaskFocus(item.task_id);
+                      onNavigate("work");
+                    }}
+                  >
+                    <div className="codex-stack-item__header">
+                      <strong>{item.issue_key ?? item.task_id}</strong>
+                      <span>{item.status}</span>
+                    </div>
+                    <span>{item.title}</span>
+                    <p>{item.match_context}</p>
+                  </button>
+                ))}
+                {!retrieval?.issues.length ? <div className="codex-empty-copy">No issue matches.</div> : null}
+              </div>
+            </section>
+
+            <section className="codex-panel codex-panel--nested">
+              <div className="codex-panel__header">
+                <div>
+                  <span className="codex-kicker">Runs + artifacts</span>
+                  <h3>Execution evidence</h3>
+                </div>
+              </div>
+              <div className="codex-stack-list">
+                {(retrieval?.runs ?? []).map((item) => (
+                  <button
+                    key={item.session_id}
+                    type="button"
+                    className="codex-stack-item"
+                    onClick={() => {
+                      setPendingRunFocus(item.session_id);
+                      onNavigate("runs");
+                    }}
+                  >
+                    <div className="codex-stack-item__header">
+                      <strong>{item.issue_key ?? item.session_id}</strong>
+                      <span>{item.status}</span>
+                    </div>
+                    <span>{item.task_title ?? item.provider_type}</span>
+                    <p>{item.match_context}</p>
+                  </button>
+                ))}
+                {(retrieval?.artifacts ?? []).map((item) => (
+                  <button
+                    key={item.artifact_id}
+                    type="button"
+                    className="codex-stack-item"
+                    onClick={() => {
+                      if (item.task_id) {
+                        setPendingTaskFocus(item.task_id);
+                        onNavigate("work");
+                      } else if (item.session_id) {
+                        setPendingRunFocus(item.session_id);
+                        onNavigate("runs");
+                      }
+                    }}
+                  >
+                    <div className="codex-stack-item__header">
+                      <strong>{item.issue_key ?? item.artifact_type}</strong>
+                      <span>{item.artifact_state}</span>
+                    </div>
+                    <span>{item.title}</span>
+                    <p>{item.artifact_path}</p>
+                  </button>
+                ))}
+                {!retrieval?.runs.length && !retrieval?.artifacts.length ? (
+                  <div className="codex-empty-copy">No run or artifact matches.</div>
+                ) : null}
+              </div>
+            </section>
+
+            <section className="codex-panel codex-panel--nested">
+              <div className="codex-panel__header">
+                <div>
+                  <span className="codex-kicker">Recent events</span>
+                  <h3>Machine history</h3>
+                </div>
+              </div>
+              <div className="codex-history-list">
+                {(retrieval?.events ?? []).map((item) => (
+                  <button
+                    key={item.event_id}
+                    type="button"
+                    className="codex-history-item codex-history-item--button"
+                    onClick={() => {
+                      if (item.task_id) {
+                        setPendingTaskFocus(item.task_id);
+                        onNavigate("issues");
+                        return;
+                      }
+                      if (item.session_id) {
+                        setPendingRunFocus(item.session_id);
+                        onNavigate("runs");
+                        return;
+                      }
+                      onNavigate("system");
+                    }}
+                  >
+                    <div className="codex-history-item__meta">
+                      <strong>{item.title}</strong>
+                      <span>{formatTimestamp(item.created_at)}</span>
+                    </div>
+                    <span>{item.description}</span>
+                  </button>
+                ))}
+                {!retrieval?.events.length ? <div className="codex-empty-copy">No event matches.</div> : null}
+              </div>
+            </section>
+          </div>
+        )}
+      </section>
 
       <div className="codex-three-column">
         <section className="codex-panel">

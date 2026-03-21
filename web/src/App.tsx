@@ -1,13 +1,19 @@
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette, type CommandPaletteAction } from "./components/CommandPalette";
 import {
   archiveProject,
+  cloneProject,
   createProject,
   deleteProject,
+  fetchCodexIssueIndex,
+  fetchCodexSystemDiagnostics,
+  fetchNotifications,
   fetchProjects,
   restoreProject,
 } from "./lib/controlRoomApi";
 import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId } from "./lib/projectScope";
+import { setPendingRunFocus } from "./lib/runFocus";
+import { setPendingTaskFocus } from "./lib/taskFocus";
 import { LivePulseProvider, useLiveStatus, useThrottledLivePulse } from "./lib/useLivePulse";
 import { CommandPage } from "./pages/CommandPage";
 import { CodexAgentsPage } from "./pages/CodexAgentsPage";
@@ -17,12 +23,44 @@ import { CodexSystemPage } from "./pages/CodexSystemPage";
 import { CodexWorkPage } from "./pages/CodexWorkPage";
 import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import type { ProjectSummary } from "./types";
+import type { NotificationItem, ProjectSummary } from "./types";
 
 type View = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
 type ThemeMode = "light" | "dark";
+type AttentionTone = "warn" | "danger" | "default";
+type AttentionItem =
+  | {
+      id: string;
+      kind: "issue";
+      tone: AttentionTone;
+      title: string;
+      detail: string;
+      taskId: string;
+      targetView: Exclude<View, "settings">;
+    }
+  | {
+      id: string;
+      kind: "run";
+      tone: AttentionTone;
+      title: string;
+      detail: string;
+      sessionId: string;
+      projectId?: string | null;
+    }
+  | {
+      id: string;
+      kind: "notification";
+      tone: AttentionTone;
+      title: string;
+      detail: string;
+      notificationId: string;
+      projectId?: string | null;
+      resourceType?: string | null;
+      resourceId?: string | null;
+    };
 
 const THEME_STORAGE_KEY = "maas:theme";
+const DESKTOP_NOTIFICATIONS_STORAGE_KEY = "maas:desktop-notifications";
 
 const PRIMARY_VIEWS: Array<{ id: Exclude<View, "settings">; label: string; summary: string }> = [
   {
@@ -92,14 +130,25 @@ function getInitialTheme(): ThemeMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+function getInitialDesktopNotificationsEnabled() {
+  return window.localStorage.getItem(DESKTOP_NOTIFICATIONS_STORAGE_KEY) === "enabled";
+}
+
 function AppShell() {
   const [activeView, setActiveView] = useState<View>(getInitialView);
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+  const [desktopNotificationsEnabled, setDesktopNotificationsEnabled] = useState(getInitialDesktopNotificationsEnabled);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(
+    typeof window !== "undefined" && "Notification" in window ? window.Notification.permission : "default"
+  );
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [attentionOpen, setAttentionOpen] = useState(false);
+  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(getSelectedProjectId);
   const [projectForm, setProjectForm] = useState<ProjectFormState>(DEFAULT_PROJECT_FORM);
   const [projectNotice, setProjectNotice] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [projectSubmitting, setProjectSubmitting] = useState(false);
   const { connected, transport } = useLiveStatus();
   const livePulse = useThrottledLivePulse(1500);
@@ -107,6 +156,8 @@ function AppShell() {
   const activeProjects = projects.filter((project) => project.state !== "archived");
   const activeProject =
     activeProjects.find((project) => project.project_id === selectedProjectId) ?? activeProjects[0] ?? null;
+  const announcedAttentionIds = useRef<Set<string>>(new Set());
+  const attentionInitialized = useRef(false);
 
   useEffect(() => {
     if (!activeProjects.length && activeView !== "projects" && activeView !== "settings") {
@@ -160,6 +211,13 @@ function AppShell() {
   }, [livePulse]);
 
   useEffect(() => {
+    setAttentionItems([]);
+    setAttentionOpen(false);
+    announcedAttentionIds.current = new Set();
+    attentionInitialized.current = false;
+  }, [selectedProjectId]);
+
+  useEffect(() => {
     window.location.hash = activeView;
   }, [activeView]);
 
@@ -181,6 +239,13 @@ function AppShell() {
   }, [theme]);
 
   useEffect(() => {
+    window.localStorage.setItem(
+      DESKTOP_NOTIFICATIONS_STORAGE_KEY,
+      desktopNotificationsEnabled ? "enabled" : "disabled"
+    );
+  }, [desktopNotificationsEnabled]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -193,6 +258,80 @@ function AppShell() {
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadAttention() {
+      const [issueIndex, diagnostics, notificationsPayload] = await Promise.all([
+        fetchCodexIssueIndex(controller.signal),
+        fetchCodexSystemDiagnostics(controller.signal),
+        fetchNotifications({ status: "failed", limit: 6 }, controller.signal),
+      ]);
+      const nextItems: AttentionItem[] = [
+        ...issueIndex.queue.review.items.slice(0, 4).map((task) => ({
+          id: `issue-review:${task.task_id}`,
+          kind: "issue" as const,
+          tone: "warn" as const,
+          title: task.issue_key ?? task.title,
+          detail: task.title,
+          taskId: task.task_id,
+          targetView: "issues" as const,
+        })),
+        ...issueIndex.queue.blocked_failures.items.slice(0, 4).map((task) => ({
+          id: `issue-blocked:${task.task_id}`,
+          kind: "issue" as const,
+          tone: "danger" as const,
+          title: task.issue_key ?? task.title,
+          detail: task.title,
+          taskId: task.task_id,
+          targetView: "issues" as const,
+        })),
+        ...diagnostics.suspect_runs.slice(0, 4).map((run) => ({
+          id: `run:${run.session_id}`,
+          kind: "run" as const,
+          tone: "warn" as const,
+          title: run.issue_key ?? run.session_id,
+          detail: run.diagnostic_summary ?? run.status_message ?? "Suspect run needs inspection.",
+          sessionId: run.session_id,
+          projectId: run.project_id ?? null,
+        })),
+        ...notificationsPayload.notifications.slice(0, 4).map((item: NotificationItem) => ({
+          id: `notification:${item.notification_id}`,
+          kind: "notification" as const,
+          tone: item.status === "failed" ? ("danger" as const) : ("default" as const),
+          title: item.title,
+          detail: item.body,
+          notificationId: item.notification_id,
+          projectId: item.project_id ?? null,
+          resourceType: item.resource_type ?? null,
+          resourceId: item.resource_id ?? null,
+        })),
+      ];
+      setAttentionItems(nextItems);
+
+      if (!desktopNotificationsEnabled || notificationPermission !== "granted" || !("Notification" in window)) {
+        announcedAttentionIds.current = new Set(nextItems.map((item) => item.id));
+        attentionInitialized.current = true;
+        return;
+      }
+
+      const unseen = nextItems.filter((item) => !announcedAttentionIds.current.has(item.id));
+      if (attentionInitialized.current) {
+        unseen.slice(0, 2).forEach((item) => {
+          new window.Notification(item.title, {
+            body: item.detail,
+          });
+        });
+      }
+      announcedAttentionIds.current = new Set(nextItems.map((item) => item.id));
+      attentionInitialized.current = true;
+    }
+
+    void loadAttention().catch(() => {
+      setAttentionItems([]);
+    });
+    return () => controller.abort();
+  }, [livePulse, desktopNotificationsEnabled, notificationPermission, selectedProjectId]);
 
   const liveTransportTone = connected ? (transport === "polling" ? "warn" : "good") : transport === "polling" ? "warn" : "default";
   const liveTransportLabel = connected
@@ -247,6 +386,21 @@ function AppShell() {
     }
   }
 
+  async function handleCloneProject(projectId: string, suggestedName?: string) {
+    setProjectSubmitting(true);
+    setProjectNotice(null);
+    try {
+      const payload = await cloneProject(projectId, suggestedName);
+      await loadProjects(payload.project.project_id);
+      setProjectNotice(`Cloned ${payload.metadata.cloned_from_project_id ? "project" : "workspace"} into ${payload.project.name}.`);
+      setActiveView("projects");
+    } catch (error) {
+      setProjectNotice(error instanceof Error ? error.message : "Could not clone project.");
+    } finally {
+      setProjectSubmitting(false);
+    }
+  }
+
   async function handleRestoreProject(projectId: string) {
     setProjectSubmitting(true);
     setProjectNotice(null);
@@ -273,6 +427,59 @@ function AppShell() {
     } finally {
       setProjectSubmitting(false);
     }
+  }
+
+  async function handleRequestDesktopNotifications() {
+    if (!("Notification" in window)) {
+      setSettingsNotice("Browser notifications are not supported here.");
+      return;
+    }
+    const permission = await window.Notification.requestPermission();
+    setNotificationPermission(permission);
+    if (permission === "granted") {
+      setDesktopNotificationsEnabled(true);
+      setSettingsNotice("Desktop notifications enabled for new review and failure pressure.");
+      return;
+    }
+    setDesktopNotificationsEnabled(false);
+    setSettingsNotice("Desktop notifications were not granted.");
+  }
+
+  function handleAttentionItem(item: AttentionItem) {
+    if (item.kind === "issue") {
+      setPendingTaskFocus(item.taskId);
+      setActiveView(item.targetView);
+      setAttentionOpen(false);
+      return;
+    }
+    if (item.kind === "run") {
+      if (item.projectId) {
+        persistSelectedProjectId(item.projectId);
+        setSelectedProjectId(item.projectId);
+      }
+      setPendingRunFocus(item.sessionId);
+      setActiveView("runs");
+      setAttentionOpen(false);
+      return;
+    }
+    if (item.projectId) {
+      persistSelectedProjectId(item.projectId);
+      setSelectedProjectId(item.projectId);
+    }
+    if (item.resourceType === "task" && item.resourceId) {
+      setPendingTaskFocus(item.resourceId);
+      setActiveView("issues");
+      setAttentionOpen(false);
+      return;
+    }
+    if (item.resourceType === "session" && item.resourceId) {
+      setPendingRunFocus(item.resourceId);
+      setActiveView("runs");
+      setAttentionOpen(false);
+      return;
+    }
+    setActiveView("system");
+    setAttentionOpen(false);
   }
 
   const commandActions = useMemo<CommandPaletteAction[]>(() => {
@@ -407,9 +614,47 @@ function AppShell() {
               <span className="codex-chip">{activeProject?.task_count ?? 0} tasks</span>
               <span className="codex-chip">{activeProject?.agent_count ?? 0} agents</span>
               <span className="codex-chip">{activeProject?.open_alert_count ?? 0} alerts</span>
+              <button
+                type="button"
+                className={`codex-chip codex-chip--button ${attentionOpen ? "is-active" : ""}`}
+                onClick={() => setAttentionOpen((current) => !current)}
+              >
+                Attention {attentionItems.length}
+              </button>
             </div>
           </div>
         </header>
+
+        {attentionOpen ? (
+          <div className="codex-attention-popover codex-panel">
+            <div className="codex-panel__header">
+              <div>
+                <span className="codex-kicker">Attention inbox</span>
+                <h2>What just needs operator eyes</h2>
+              </div>
+            </div>
+            <div className="codex-stack-list">
+              {attentionItems.length ? (
+                attentionItems.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className={`codex-stack-item codex-stack-item--attention tone-${item.tone}`}
+                    onClick={() => handleAttentionItem(item)}
+                  >
+                    <div className="codex-stack-item__header">
+                      <strong>{item.title}</strong>
+                      <span>{item.kind}</span>
+                    </div>
+                    <p>{item.detail}</p>
+                  </button>
+                ))
+              ) : (
+                <div className="codex-empty-copy">Nothing new requires attention right now.</div>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <div className="codex-shell__content">
           {activeView === "command" ? <CommandPage key={`command:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
@@ -431,13 +676,36 @@ function AppShell() {
               }}
               onProjectFormChange={setProjectForm}
               onCreateProject={handleCreateProject}
-            onArchiveProject={handleArchiveProject}
-            onRestoreProject={handleRestoreProject}
-            onDeleteProject={handleDeleteProject}
-            onNavigate={setActiveView}
-          />
+              onCloneProject={handleCloneProject}
+              onArchiveProject={handleArchiveProject}
+              onRestoreProject={handleRestoreProject}
+              onDeleteProject={handleDeleteProject}
+              onNavigate={setActiveView}
+            />
           ) : null}
-          {activeView === "settings" ? <SettingsPage theme={theme} onThemeChange={setTheme} /> : null}
+          {activeView === "settings" ? (
+            <SettingsPage
+              theme={theme}
+              onThemeChange={setTheme}
+              desktopNotificationsEnabled={desktopNotificationsEnabled}
+              notificationPermission={notificationPermission}
+              notice={settingsNotice}
+              onToggleDesktopNotifications={() => {
+                setSettingsNotice(null);
+                if (!desktopNotificationsEnabled && notificationPermission !== "granted") {
+                  void handleRequestDesktopNotifications();
+                  return;
+                }
+                setDesktopNotificationsEnabled((current) => !current);
+                setSettingsNotice(
+                  desktopNotificationsEnabled
+                    ? "Desktop notifications disabled."
+                    : "Desktop notifications enabled for new review and failure pressure."
+                );
+              }}
+              onRequestDesktopNotifications={() => void handleRequestDesktopNotifications()}
+            />
+          ) : null}
         </div>
       </main>
 

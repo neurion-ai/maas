@@ -153,6 +153,15 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#185` is implemented on `codex/codex-mvp-operator-scale`
 - [x] `#186` is implemented on `codex/codex-mvp-operator-scale`
 - [x] `#187` is implemented on `codex/codex-mvp-operator-scale`
+- [x] `#188` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#189` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#190` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#191` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#192` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#193` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#194` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#195` is implemented on `codex/codex-mvp-autonomy-scale`
+- [x] `#196` is implemented on `codex/codex-mvp-autonomy-scale`
 
 ## Extended Numbered Roadmap
 

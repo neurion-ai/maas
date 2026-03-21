@@ -39,6 +39,23 @@ interface NextStep {
   detail: string;
 }
 
+const DEFAULT_PROVIDER_CAPACITY = {
+  queue_mode: "running" as const,
+  max_running_jobs: 0,
+  preferred_provider_id: null as string | null,
+  queued_jobs: 0,
+  running_jobs: 0,
+  at_capacity: false,
+  can_start_jobs: false,
+  can_launch_jobs: false,
+};
+
+const DEFAULT_REVIEW_POLICY = {
+  auto_approve_low_risk: false,
+  max_priority_for_auto_approve: 0,
+  require_verification_pass: true,
+};
+
 function healthTone(health: string) {
   if (health === "critical") {
     return "danger";
@@ -219,8 +236,8 @@ function buildNextSteps(
   if ((portfolioProject?.provider_capacity.queued_jobs ?? 0) > 0) {
     items.push({
       title: "Drain queued provider jobs",
-      detail: `${pluralize(portfolioProject?.provider_capacity.queued_jobs ?? 0, "queued provider job")} are waiting in ${
-        portfolioProject?.provider_capacity.queue_mode ?? "running"
+      detail: `${pluralize(portfolioProject?.provider_capacity?.queued_jobs ?? 0, "queued provider job")} are waiting in ${
+        portfolioProject?.provider_capacity?.queue_mode ?? "running"
       } mode.`
     });
   }
@@ -269,6 +286,8 @@ export function ProjectsPage({
     activeProjects.find((project) => project.project_id === selectedProjectId) ?? activeProjects[0] ?? null;
   const selectedPortfolioProject =
     portfolio?.projects.find((project) => project.project_id === selectedProject?.project_id) ?? null;
+  const selectedProviderCapacity = selectedPortfolioProject?.provider_capacity ?? DEFAULT_PROVIDER_CAPACITY;
+  const selectedReviewPolicy = selectedPortfolioProject?.review_policy ?? DEFAULT_REVIEW_POLICY;
   const otherActiveProjects = activeProjects.filter((project) => project.project_id !== selectedProject?.project_id);
   const portfolioById = useMemo(
     () => new Map((portfolio?.projects ?? []).map((project) => [project.project_id, project])),
@@ -464,7 +483,7 @@ export function ProjectsPage({
                 </div>
                 <div>
                   <span>Queued jobs</span>
-                  <strong>{selectedPortfolioProject?.provider_capacity.queued_jobs ?? 0}</strong>
+                  <strong>{selectedProviderCapacity.queued_jobs}</strong>
                 </div>
                 <div>
                   <span>Recovery pressure</span>
@@ -688,15 +707,15 @@ export function ProjectsPage({
             <div className="detail-grid">
               <div>
                 <span>Auto-approve low-risk work</span>
-                <strong>{selectedPortfolioProject.review_policy.auto_approve_low_risk ? "Enabled" : "Disabled"}</strong>
+                <strong>{selectedReviewPolicy.auto_approve_low_risk ? "Enabled" : "Disabled"}</strong>
               </div>
               <div>
                 <span>Priority ceiling</span>
-                <strong>{selectedPortfolioProject.review_policy.max_priority_for_auto_approve}</strong>
+                <strong>{selectedReviewPolicy.max_priority_for_auto_approve}</strong>
               </div>
               <div>
                 <span>Verification required</span>
-                <strong>{selectedPortfolioProject.review_policy.require_verification_pass ? "Required" : "Optional"}</strong>
+                <strong>{selectedReviewPolicy.require_verification_pass ? "Required" : "Optional"}</strong>
               </div>
             </div>
             <p className="project-form__hint">
@@ -712,13 +731,13 @@ export function ProjectsPage({
                   setNotice(null);
                   try {
                     await updateProjectReviewPolicy(selectedProject.project_id, {
-                      auto_approve_low_risk: !selectedPortfolioProject.review_policy.auto_approve_low_risk,
-                      max_priority_for_auto_approve: selectedPortfolioProject.review_policy.max_priority_for_auto_approve,
-                      require_verification_pass: selectedPortfolioProject.review_policy.require_verification_pass,
+                      auto_approve_low_risk: !selectedReviewPolicy.auto_approve_low_risk,
+                      max_priority_for_auto_approve: selectedReviewPolicy.max_priority_for_auto_approve,
+                      require_verification_pass: selectedReviewPolicy.require_verification_pass,
                     });
                     setPortfolio(await fetchPortfolio());
                     setNotice(
-                      !selectedPortfolioProject.review_policy.auto_approve_low_risk
+                      !selectedReviewPolicy.auto_approve_low_risk
                         ? "Enabled low-risk auto-approval."
                         : "Disabled low-risk auto-approval."
                     );
@@ -729,7 +748,7 @@ export function ProjectsPage({
                   }
                 }}
               >
-                {selectedPortfolioProject.review_policy.auto_approve_low_risk ? "Disable auto-approve" : "Enable auto-approve"}
+                {selectedReviewPolicy.auto_approve_low_risk ? "Disable auto-approve" : "Enable auto-approve"}
               </button>
               <button
                 type="button"
@@ -740,8 +759,8 @@ export function ProjectsPage({
                   setNotice(null);
                   try {
                     await updateProjectReviewPolicy(selectedProject.project_id, {
-                      auto_approve_low_risk: selectedPortfolioProject.review_policy.auto_approve_low_risk,
-                      max_priority_for_auto_approve: Math.max(0, selectedPortfolioProject.review_policy.max_priority_for_auto_approve - 10),
+                      auto_approve_low_risk: selectedReviewPolicy.auto_approve_low_risk,
+                      max_priority_for_auto_approve: Math.max(0, selectedReviewPolicy.max_priority_for_auto_approve - 10),
                       require_verification_pass: true,
                     });
                     setPortfolio(await fetchPortfolio());
@@ -764,9 +783,9 @@ export function ProjectsPage({
                   setNotice(null);
                   try {
                     await updateProjectReviewPolicy(selectedProject.project_id, {
-                      auto_approve_low_risk: selectedPortfolioProject.review_policy.auto_approve_low_risk,
-                      max_priority_for_auto_approve: selectedPortfolioProject.review_policy.max_priority_for_auto_approve + 10,
-                      require_verification_pass: selectedPortfolioProject.review_policy.require_verification_pass,
+                      auto_approve_low_risk: selectedReviewPolicy.auto_approve_low_risk,
+                      max_priority_for_auto_approve: selectedReviewPolicy.max_priority_for_auto_approve + 10,
+                      require_verification_pass: selectedReviewPolicy.require_verification_pass,
                     });
                     setPortfolio(await fetchPortfolio());
                     setNotice("Expanded the auto-approve priority ceiling.");

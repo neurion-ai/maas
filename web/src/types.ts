@@ -954,9 +954,83 @@ export interface NotificationItem {
   attempts: number;
   last_error?: string | null;
   last_response_code?: number | null;
+  dedupe_key?: string | null;
+  next_attempt_at?: string | null;
+  last_attempt_at?: string | null;
+  retry_budget_remaining?: number;
+  retry_budget_exhausted?: boolean;
+  delivery_state?: string;
+  next_attempt_due?: boolean;
+  next_attempt_in_seconds?: number | null;
   created_at: string;
   updated_at?: string | null;
   sent_at?: string | null;
+}
+
+export type OperatorLoopView = "command" | "issues" | "runs" | "system" | "projects";
+export type OperatorLoopTone = "default" | "warn" | "danger";
+
+export interface OperatorWorkflowItem {
+  id: string;
+  tone: OperatorLoopTone;
+  label: string;
+  title: string;
+  detail: string;
+  route: {
+    view: OperatorLoopView;
+    taskId?: string;
+    sessionId?: string;
+    projectId?: string | null;
+    resourceType?: string | null;
+    resourceId?: string | null;
+  };
+}
+
+export interface OperatorWorkflowState {
+  inbox: {
+    headline: string;
+    detail: string;
+    totalCount: number;
+    reviewCount: number;
+    recoveryCount: number;
+    suspectRunCount: number;
+    failedNotificationCount: number;
+    policyConflictCount?: number;
+    recommendedView: OperatorLoopView;
+    recommendedLabel: string;
+    items: OperatorWorkflowItem[];
+  };
+  autopilot: {
+    tone: OperatorLoopTone;
+    label: string;
+    summary: string;
+    detail: string;
+    facts: string[];
+  };
+}
+
+export interface OperatorInboxResponse {
+  project_id: string;
+  generated_at: string;
+  summary: {
+    total_items: number;
+    review: number;
+    stale_runs: number;
+    blocked_recovery: number;
+    policy_conflicts: number;
+    notification_failures: number;
+    critical_items: number;
+  };
+  buckets: Record<string, Array<Record<string, unknown>>>;
+  items: Array<Record<string, unknown>>;
+  workflow: OperatorWorkflowState;
+  project: {
+    project_id: string;
+    name: string;
+    queue_mode?: string | null;
+    max_running_jobs?: number | null;
+    autopilot_enabled: boolean;
+  };
 }
 
 export interface ProviderRuntimeControls {
@@ -1438,6 +1512,10 @@ export interface CodexRunDetailResponse {
     summary?: string | null;
     tags?: string[];
     score?: number;
+    promoted_at?: string | null;
+    age_days?: number | null;
+    freshness?: "fresh" | "aging" | "stale" | "unknown";
+    stale?: boolean;
   }>;
   output_preview?: CodexRunConsolePreview | null;
   stdout_preview?: CodexRunConsolePreview | null;
@@ -1692,6 +1770,9 @@ export interface CodexIssueDetailResponse {
     tags?: string[];
     promoted_at?: string | null;
     promoted_by?: string | null;
+    age_days?: number | null;
+    freshness?: "fresh" | "aging" | "stale" | "unknown";
+    stale?: boolean;
     preview?: {
       content?: string;
       truncated?: boolean;

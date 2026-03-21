@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
 import { cancelCodexRun, fetchCodexRunDetail, fetchCodexRuns, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
 import { getSelectedProjectId } from "../lib/projectScope";
@@ -7,6 +8,7 @@ import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
 import { recoverAndRequeueTask } from "../lib/boardApi";
 import { describeLaunchPosture, formatTimestamp } from "../lib/codexMvp";
+import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 import type { CodexRunDetailResponse, CodexRunListItem, PortfolioProject } from "../types";
 
 type ViewTarget = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects";
@@ -18,7 +20,17 @@ function issueLabel(run: CodexRunListItem | CodexRunDetailResponse) {
   return run.issue_key ?? run.task_id ?? run.session_id;
 }
 
-export function CodexRunsPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
+export function CodexRunsPage({
+  onNavigate,
+  operatorWorkflow,
+  operatorWorkflowWarning,
+  onOpenOperatorItem,
+}: {
+  onNavigate: (view: ViewTarget) => void;
+  operatorWorkflow: OperatorWorkflowState | null;
+  operatorWorkflowWarning?: string | null;
+  onOpenOperatorItem: (item: OperatorLoopItem) => void;
+}) {
   const [runs, setRuns] = useState<CodexRunListItem[]>([]);
   const [project, setProject] = useState<PortfolioProject | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(() => consumePendingRunFocus());
@@ -248,6 +260,26 @@ export function CodexRunsPage({ onNavigate }: { onNavigate: (view: ViewTarget) =
       </header>
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+
+      <OperatorLoopPanel
+        workflow={operatorWorkflow}
+        compact
+        maxItems={3}
+        title="Live-session intervention"
+        description="Runs owns stale-session inspection and safe stops. Review and recovery decisions still land in Issues."
+        onSelectItem={onOpenOperatorItem}
+        warning={operatorWorkflowWarning}
+        footer={
+          <div className="codex-detail-actions">
+            <button type="button" className="codex-button codex-button--primary" onClick={() => onNavigate("issues")}>
+              Open Issues
+            </button>
+            <button type="button" className="codex-button" onClick={() => onNavigate("command")}>
+              Open Command
+            </button>
+          </div>
+        }
+      />
 
       <div className="codex-metric-grid">
         <article className="codex-panel codex-stat">

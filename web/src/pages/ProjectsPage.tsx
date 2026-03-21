@@ -1,5 +1,6 @@
 import type { DragEvent, FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
+import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import {
   fetchOverview,
   fetchPortfolio,
@@ -9,6 +10,7 @@ import {
   runSupervisorPass,
   updateProjectReviewPolicy
 } from "../lib/controlRoomApi";
+import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -36,6 +38,9 @@ interface ProjectsPageProps {
   onArchiveProject: (projectId: string) => Promise<void>;
   onRestoreProject: (projectId: string) => Promise<void>;
   onDeleteProject: (projectId: string) => Promise<void>;
+  operatorWorkflow: OperatorWorkflowState | null;
+  operatorWorkflowWarning?: string | null;
+  onOpenOperatorItem: (item: OperatorLoopItem) => void;
   onNavigate?: (view: "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects") => void;
 }
 
@@ -276,6 +281,9 @@ export function ProjectsPage({
   onArchiveProject,
   onRestoreProject,
   onDeleteProject,
+  operatorWorkflow,
+  operatorWorkflowWarning,
+  onOpenOperatorItem,
   onNavigate
 }: ProjectsPageProps) {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
@@ -469,6 +477,47 @@ export function ProjectsPage({
 
       {projectNotice ? <div className="banner banner--info">{projectNotice}</div> : null}
       {notice ? <div className="banner banner--info">{notice}</div> : null}
+
+      <OperatorLoopPanel
+        workflow={operatorWorkflow}
+        compact
+        maxItems={3}
+        title="Workspace posture, not incident routing"
+        description="Projects owns onboarding, workspace lifecycle, and policy posture. Review and recovery still route through Command, Issues, and Runs."
+        onSelectItem={onOpenOperatorItem}
+        warning={operatorWorkflowWarning}
+        footer={
+          <div className="surface-card__actions">
+            {onNavigate ? (
+              <button
+                type="button"
+                className="hero-button hero-button--primary hero-button--compact"
+                onClick={() => onNavigate("command")}
+              >
+                Open command
+              </button>
+            ) : null}
+            {onNavigate ? (
+              <button
+                type="button"
+                className="hero-button hero-button--ghost hero-button--compact"
+                onClick={() => onNavigate("issues")}
+              >
+                Open issues
+              </button>
+            ) : null}
+            {onNavigate ? (
+              <button
+                type="button"
+                className="hero-button hero-button--ghost hero-button--compact"
+                onClick={() => onNavigate("runs")}
+              >
+                Open runs
+              </button>
+            ) : null}
+          </div>
+        }
+      />
 
       <section className="two-column-grid">
         <article className="surface-card">

@@ -96,12 +96,28 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertGreaterEqual(payload["summary"]["blocked_dependencies"], 1)
             self.assertEqual(payload["summary"]["batch_review_eligible"], 1)
             self.assertEqual(payload["queue"]["review"]["batch_review"]["eligible_task_ids"], [review_task["task_id"]])
+            self.assertEqual(len(payload["queue"]["review"]["batch_review"]["packets"]), 1)
+            self.assertEqual(
+                payload["queue"]["review"]["batch_review"]["packets"][0]["packet_key"],
+                "low_risk_verified_auto",
+            )
+            self.assertEqual(
+                payload["queue"]["review"]["batch_review"]["packets"][0]["eligible_task_ids"],
+                [review_task["task_id"]],
+            )
 
             review_items = {item["task_id"]: item for item in payload["queue"]["review"]["items"]}
             self.assertTrue(review_items[review_task["task_id"]]["batch_review_eligible"])
+            self.assertEqual(review_items[review_task["task_id"]]["review_eligibility"]["decision_mode"], "auto_approve")
+            self.assertTrue(review_items[review_task["task_id"]]["review_eligibility"]["auto_approve_eligible"])
+            self.assertIsNone(review_items[review_task["task_id"]]["review_eligibility"]["why_not_auto_approved"])
             self.assertFalse(review_items[high_priority_review["task_id"]]["batch_review_eligible"])
             self.assertEqual(
                 review_items[high_priority_review["task_id"]]["batch_review_reason"],
+                "Priority is above the low-risk review threshold for batch or automatic approval.",
+            )
+            self.assertEqual(
+                review_items[high_priority_review["task_id"]]["review_eligibility"]["why_not_auto_approved"],
                 "Priority is above the low-risk review threshold for batch or automatic approval.",
             )
 
@@ -115,6 +131,12 @@ class CodexMvpApiTest(unittest.TestCase):
             detail_payload = detail_response.json()
             self.assertEqual(detail_payload["review_decision"]["status"], "low_risk_review")
             self.assertTrue(detail_payload["review_decision"]["batch_review_eligible"])
+            self.assertEqual(detail_payload["review_decision"]["decision_mode"], "auto_approve")
+            self.assertEqual(
+                detail_payload["review_decision"]["grouped_review_packet"]["packet_key"],
+                "low_risk_verified_auto",
+            )
+            self.assertEqual(detail_payload["recovery_playbook"]["title"], "Low-risk review should auto-advance")
 
     def test_batch_review_endpoint_approves_low_risk_items(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -165,6 +187,8 @@ class CodexMvpApiTest(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.json()["decision"], "approve")
+            self.assertEqual(response.json()["review_packets"][0]["packet_key"], "low_risk_verified_auto")
+            self.assertEqual(response.json()["review_packets"][0]["eligible_task_ids"], [task["task_id"]])
 
             connection = connect(paths)
             try:
@@ -228,6 +252,75 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(task_row["status"], "review")
             self.assertEqual(task_row["review_state"], "review_requested")
 
+    def test_issue_detail_exposes_batch_review_packet_when_auto_approve_is_disabled(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Batch Packet Test", description="codex batch packet", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE projects
+                    SET config_json = json_set(
+                        config_json,
+                        '$.review_policy.auto_approve_low_risk', json('false'),
+                        '$.review_policy.max_priority_for_auto_approve', 60,
+                        '$.review_policy.require_verification_pass', json('true')
+                    )
+                    WHERE project_id = ?
+                    """,
+                    (task["project_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_packet.py', 'passed', 0, '1 passed',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            detail_response = client.get(f"/api/issues/{task['task_id']}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+
+            self.assertEqual(detail_payload["review_decision"]["decision_mode"], "batch_review")
+            self.assertTrue(detail_payload["review_decision"]["batch_review_eligible"])
+            self.assertFalse(detail_payload["review_decision"]["auto_approve_eligible"])
+            self.assertEqual(
+                detail_payload["review_decision"]["why_not_auto_approved"],
+                "This issue qualifies for the low-risk review packet, but project policy still requires a human or batch approval step.",
+            )
+            self.assertEqual(
+                detail_payload["review_decision"]["grouped_review_packet"]["packet_key"],
+                "low_risk_verified_manual",
+            )
+            self.assertEqual(detail_payload["recovery_playbook"]["title"], "Low-risk verified review packet")
+
     def test_memory_promotion_feeds_memory_index_retrieval_and_issue_detail(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex Memory Test", description="codex memory", project_type="custom")
@@ -283,6 +376,9 @@ class CodexMvpApiTest(unittest.TestCase):
             memory_payload = memory_response.json()
             self.assertEqual(memory_payload["items"][0]["artifact_id"], artifact_id)
             self.assertEqual(memory_payload["items"][0]["title"], "Quant packet memory")
+            self.assertEqual(memory_payload["items"][0]["freshness"], "fresh")
+            self.assertEqual(memory_payload["items"][0]["age_days"], 0)
+            self.assertFalse(memory_payload["items"][0]["stale"])
 
             retrieval_response = client.get("/api/retrieval/search", params={"search": "quant packet"})
             self.assertEqual(retrieval_response.status_code, 200)
@@ -295,6 +391,7 @@ class CodexMvpApiTest(unittest.TestCase):
             detail_payload = detail_response.json()
             self.assertGreaterEqual(len(detail_payload["memory_context"]), 1)
             self.assertEqual(detail_payload["memory_context"][0]["artifact_id"], artifact_id)
+            self.assertEqual(detail_payload["memory_context"][0]["freshness"], "fresh")
 
     def test_memory_retrieval_prefers_newer_promoted_items_on_score_ties(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -491,6 +588,9 @@ class CodexMvpApiTest(unittest.TestCase):
                                         "summary": "Reusable packet context",
                                         "tags": ["quant", "packet"],
                                         "score": 3,
+                                        "freshness": "fresh",
+                                        "age_days": 0,
+                                        "stale": False,
                                     }
                                 ],
                             }
@@ -508,6 +608,7 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(run_payload["session_id"], session_id)
             self.assertGreaterEqual(len(run_payload["memory_context"]), 1)
             self.assertEqual(run_payload["memory_context"][0]["artifact_id"], "art_mem_1")
+            self.assertEqual(run_payload["memory_context"][0]["freshness"], "fresh")
             self.assertGreaterEqual(len(run_payload["phases"]), 1)
 
             diagnostics_response = client.get("/api/system/diagnostics")

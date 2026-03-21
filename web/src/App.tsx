@@ -1,16 +1,16 @@
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { CommandPalette, type CommandPaletteAction } from "./components/CommandPalette";
+import { OperatorLoopPanel } from "./components/OperatorLoopPanel";
 import {
   archiveProject,
   cloneProject,
   createProject,
   deleteProject,
-  fetchCodexIssueIndex,
-  fetchCodexSystemDiagnostics,
-  fetchNotifications,
+  fetchOperatorInbox,
   fetchProjects,
   restoreProject,
 } from "./lib/controlRoomApi";
+import type { OperatorLoopItem, OperatorWorkflowState } from "./lib/operatorLoop";
 import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId } from "./lib/projectScope";
 import { setPendingRunFocus } from "./lib/runFocus";
 import { setPendingTaskFocus } from "./lib/taskFocus";
@@ -23,41 +23,10 @@ import { CodexSystemPage } from "./pages/CodexSystemPage";
 import { CodexWorkPage } from "./pages/CodexWorkPage";
 import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import type { NotificationItem, ProjectSummary } from "./types";
+import type { ProjectSummary } from "./types";
 
 type View = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
 type ThemeMode = "light" | "dark";
-type AttentionTone = "warn" | "danger" | "default";
-type AttentionItem =
-  | {
-      id: string;
-      kind: "issue";
-      tone: AttentionTone;
-      title: string;
-      detail: string;
-      taskId: string;
-      targetView: Exclude<View, "settings">;
-    }
-  | {
-      id: string;
-      kind: "run";
-      tone: AttentionTone;
-      title: string;
-      detail: string;
-      sessionId: string;
-      projectId?: string | null;
-    }
-  | {
-      id: string;
-      kind: "notification";
-      tone: AttentionTone;
-      title: string;
-      detail: string;
-      notificationId: string;
-      projectId?: string | null;
-      resourceType?: string | null;
-      resourceId?: string | null;
-    };
 
 const THEME_STORAGE_KEY = "maas:theme";
 const DESKTOP_NOTIFICATIONS_STORAGE_KEY = "maas:desktop-notifications";
@@ -144,7 +113,8 @@ function AppShell() {
   );
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [attentionOpen, setAttentionOpen] = useState(false);
-  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
+  const [operatorWorkflow, setOperatorWorkflow] = useState<OperatorWorkflowState | null>(null);
+  const [operatorWorkflowWarning, setOperatorWorkflowWarning] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(getSelectedProjectId);
   const [projectForm, setProjectForm] = useState<ProjectFormState>(DEFAULT_PROJECT_FORM);
@@ -212,7 +182,8 @@ function AppShell() {
   }, [livePulse]);
 
   useEffect(() => {
-    setAttentionItems([]);
+    setOperatorWorkflow(null);
+    setOperatorWorkflowWarning(null);
     setAttentionOpen(false);
     announcedAttentionIds.current = new Set();
     attentionInitialized.current = false;
@@ -263,60 +234,30 @@ function AppShell() {
   useEffect(() => {
     const controller = new AbortController();
     async function loadAttention() {
-      const [issueIndex, diagnostics, notificationsPayload] = await Promise.all([
-        fetchCodexIssueIndex(controller.signal),
-        fetchCodexSystemDiagnostics(controller.signal),
-        fetchNotifications({ status: "failed", limit: 6 }, controller.signal),
-      ]);
-      const nextItems: AttentionItem[] = [
-        ...issueIndex.queue.review.items.slice(0, 4).map((task) => ({
-          id: `issue-review:${task.task_id}`,
-          kind: "issue" as const,
-          tone: "warn" as const,
-          title: task.issue_key ?? task.title,
-          detail: task.title,
-          taskId: task.task_id,
-          targetView: "issues" as const,
-        })),
-        ...issueIndex.queue.blocked_failures.items.slice(0, 4).map((task) => ({
-          id: `issue-blocked:${task.task_id}`,
-          kind: "issue" as const,
-          tone: "danger" as const,
-          title: task.issue_key ?? task.title,
-          detail: task.title,
-          taskId: task.task_id,
-          targetView: "issues" as const,
-        })),
-        ...diagnostics.suspect_runs.slice(0, 4).map((run) => ({
-          id: `run:${run.session_id}`,
-          kind: "run" as const,
-          tone: "warn" as const,
-          title: run.issue_key ?? run.session_id,
-          detail: run.diagnostic_summary ?? run.status_message ?? "Suspect run needs inspection.",
-          sessionId: run.session_id,
-          projectId: run.project_id ?? null,
-        })),
-        ...notificationsPayload.notifications.slice(0, 4).map((item: NotificationItem) => ({
-          id: `notification:${item.notification_id}`,
-          kind: "notification" as const,
-          tone: item.status === "failed" ? ("danger" as const) : ("default" as const),
-          title: item.title,
-          detail: item.body,
-          notificationId: item.notification_id,
-          projectId: item.project_id ?? null,
-          resourceType: item.resource_type ?? null,
-          resourceId: item.resource_id ?? null,
-        })),
-      ];
-      setAttentionItems(nextItems);
+      if (!selectedProjectId) {
+        setOperatorWorkflow(null);
+        setOperatorWorkflowWarning(null);
+        announcedAttentionIds.current = new Set();
+        attentionInitialized.current = true;
+        return;
+      }
+      let fellBack = false;
+      const payload = await fetchOperatorInbox(controller.signal, () => {
+        fellBack = true;
+      });
+      const workflow = payload.workflow;
+      setOperatorWorkflow(workflow);
+      setOperatorWorkflowWarning(
+        fellBack ? "Showing the latest cached operator inbox because the live refresh failed." : null
+      );
 
       if (!desktopNotificationsEnabled || notificationPermission !== "granted" || !("Notification" in window)) {
-        announcedAttentionIds.current = new Set(nextItems.map((item) => item.id));
+        announcedAttentionIds.current = new Set(workflow.inbox.items.map((item) => item.id));
         attentionInitialized.current = true;
         return;
       }
 
-      const unseen = nextItems.filter((item) => !announcedAttentionIds.current.has(item.id));
+      const unseen = workflow.inbox.items.filter((item) => !announcedAttentionIds.current.has(item.id));
       if (attentionInitialized.current) {
         unseen.slice(0, 2).forEach((item) => {
           new window.Notification(item.title, {
@@ -324,12 +265,13 @@ function AppShell() {
           });
         });
       }
-      announcedAttentionIds.current = new Set(nextItems.map((item) => item.id));
+      announcedAttentionIds.current = new Set(workflow.inbox.items.map((item) => item.id));
       attentionInitialized.current = true;
     }
 
     void loadAttention().catch(() => {
-      setAttentionItems([]);
+      setOperatorWorkflow(null);
+      setOperatorWorkflowWarning("Operator inbox is unavailable right now.");
     });
     return () => controller.abort();
   }, [livePulse, desktopNotificationsEnabled, notificationPermission, selectedProjectId]);
@@ -447,40 +389,25 @@ function AppShell() {
     setSettingsNotice("Desktop notifications were not granted.");
   }
 
-  function handleAttentionItem(item: AttentionItem) {
-    if (item.kind === "issue") {
-      setPendingTaskFocus(item.taskId);
-      setActiveView(item.targetView);
-      setAttentionOpen(false);
-      return;
+  function handleAttentionItem(item: OperatorLoopItem) {
+    const route = item.route;
+    if (route.projectId) {
+      persistSelectedProjectId(route.projectId);
+      setSelectedProjectId(route.projectId);
     }
-    if (item.kind === "run") {
-      if (item.projectId) {
-        persistSelectedProjectId(item.projectId);
-        setSelectedProjectId(item.projectId);
-      }
-      setPendingRunFocus(item.sessionId);
-      setActiveView("runs");
-      setAttentionOpen(false);
-      return;
+    if (route.taskId) {
+      setPendingTaskFocus(route.taskId);
     }
-    if (item.projectId) {
-      persistSelectedProjectId(item.projectId);
-      setSelectedProjectId(item.projectId);
+    if (route.sessionId) {
+      setPendingRunFocus(route.sessionId);
     }
-    if (item.resourceType === "task" && item.resourceId) {
-      setPendingTaskFocus(item.resourceId);
-      setActiveView("issues");
-      setAttentionOpen(false);
-      return;
+    if (route.resourceType === "task" && route.resourceId) {
+      setPendingTaskFocus(route.resourceId);
     }
-    if (item.resourceType === "session" && item.resourceId) {
-      setPendingRunFocus(item.resourceId);
-      setActiveView("runs");
-      setAttentionOpen(false);
-      return;
+    if (route.resourceType === "session" && route.resourceId) {
+      setPendingRunFocus(route.resourceId);
     }
-    setActiveView("system");
+    setActiveView(route.view);
     setAttentionOpen(false);
   }
 
@@ -613,58 +540,99 @@ function AppShell() {
                 <span className={`status-dot status-dot--${liveTransportTone}`} />
                 {liveTransportLabel}
               </span>
-              <span className="codex-chip">{activeProject?.task_count ?? 0} tasks</span>
-              <span className="codex-chip">{activeProject?.agent_count ?? 0} agents</span>
-              <span className="codex-chip">{activeProject?.open_alert_count ?? 0} alerts</span>
+              <span className={`codex-chip codex-chip--tone-${operatorWorkflow?.autopilot.tone ?? "default"}`}>
+                {operatorWorkflow?.autopilot.label ?? "Autopilot"}
+              </span>
+              <span className="codex-chip">{operatorWorkflow?.inbox.reviewCount ?? 0} review</span>
+              <span className="codex-chip">{operatorWorkflow?.inbox.recoveryCount ?? 0} recovery</span>
+              <span className="codex-chip">{operatorWorkflow?.inbox.policyConflictCount ?? 0} conflicts</span>
+              <span className="codex-chip">{operatorWorkflow?.inbox.suspectRunCount ?? 0} runs</span>
               <button
                 type="button"
                 className={`codex-chip codex-chip--button ${attentionOpen ? "is-active" : ""}`}
                 onClick={() => setAttentionOpen((current) => !current)}
               >
-                Attention {attentionItems.length}
+                Attention {operatorWorkflow?.inbox.totalCount ?? 0}
               </button>
             </div>
           </div>
         </header>
 
         {attentionOpen ? (
-          <div className="codex-attention-popover codex-panel">
-            <div className="codex-panel__header">
-              <div>
-                <span className="codex-kicker">Attention inbox</span>
-                <h2>What just needs operator eyes</h2>
-              </div>
-            </div>
-            <div className="codex-stack-list">
-              {attentionItems.length ? (
-                attentionItems.map((item) => (
+          <div className="codex-attention-popover">
+            <OperatorLoopPanel
+              workflow={operatorWorkflow}
+              title="Attention inbox"
+              description="One operator queue across review, recovery, suspect runs, and delivery failures."
+              onSelectItem={handleAttentionItem}
+              maxItems={6}
+              footer={
+                <div className="codex-detail-actions">
                   <button
-                    key={item.id}
                     type="button"
-                    className={`codex-stack-item codex-stack-item--attention tone-${item.tone}`}
-                    onClick={() => handleAttentionItem(item)}
+                    className="codex-button codex-button--primary"
+                    onClick={() => {
+                      setActiveView(operatorWorkflow?.inbox.recommendedView ?? "command");
+                      setAttentionOpen(false);
+                    }}
                   >
-                    <div className="codex-stack-item__header">
-                      <strong>{item.title}</strong>
-                      <span>{item.kind}</span>
-                    </div>
-                    <p>{item.detail}</p>
+                    {operatorWorkflow?.inbox.recommendedLabel ?? "Open Command"}
                   </button>
-                ))
-              ) : (
-                <div className="codex-empty-copy">Nothing new requires attention right now.</div>
-              )}
-            </div>
+                  <button
+                    type="button"
+                    className="codex-button"
+                    onClick={() => {
+                      setActiveView("command");
+                      setAttentionOpen(false);
+                    }}
+                  >
+                    Open Command
+                  </button>
+                </div>
+              }
+            />
           </div>
         ) : null}
 
         <div className="codex-shell__content">
-          {activeView === "command" ? <CommandPage key={`command:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
+          {activeView === "command" ? (
+            <CommandPage
+              key={`command:${activeProject?.project_id ?? "none"}`}
+              onNavigate={setActiveView}
+              operatorWorkflow={operatorWorkflow}
+              operatorWorkflowWarning={operatorWorkflowWarning}
+              onOpenOperatorItem={handleAttentionItem}
+            />
+          ) : null}
           {activeView === "work" ? <CodexWorkPage key={`work:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
-          {activeView === "issues" ? <CodexIssuesPage key={`issues:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
+          {activeView === "issues" ? (
+            <CodexIssuesPage
+              key={`issues:${activeProject?.project_id ?? "none"}`}
+              onNavigate={setActiveView}
+              operatorWorkflow={operatorWorkflow}
+              operatorWorkflowWarning={operatorWorkflowWarning}
+              onOpenOperatorItem={handleAttentionItem}
+            />
+          ) : null}
           {activeView === "agents" ? <CodexAgentsPage key={`agents:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
-          {activeView === "runs" ? <CodexRunsPage key={`runs:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
-          {activeView === "system" ? <CodexSystemPage key={`system:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}
+          {activeView === "runs" ? (
+            <CodexRunsPage
+              key={`runs:${activeProject?.project_id ?? "none"}`}
+              onNavigate={setActiveView}
+              operatorWorkflow={operatorWorkflow}
+              operatorWorkflowWarning={operatorWorkflowWarning}
+              onOpenOperatorItem={handleAttentionItem}
+            />
+          ) : null}
+          {activeView === "system" ? (
+            <CodexSystemPage
+              key={`system:${activeProject?.project_id ?? "none"}`}
+              onNavigate={setActiveView}
+              operatorWorkflow={operatorWorkflow}
+              operatorWorkflowWarning={operatorWorkflowWarning}
+              onOpenOperatorItem={handleAttentionItem}
+            />
+          ) : null}
           {activeView === "projects" ? (
             <ProjectsPage
               projects={projects}
@@ -683,6 +651,9 @@ function AppShell() {
               onRestoreProject={handleRestoreProject}
               onDeleteProject={handleDeleteProject}
               onNavigate={setActiveView}
+              operatorWorkflow={operatorWorkflow}
+              operatorWorkflowWarning={operatorWorkflowWarning}
+              onOpenOperatorItem={handleAttentionItem}
             />
           ) : null}
           {activeView === "settings" ? (

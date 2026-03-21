@@ -524,6 +524,7 @@ def batch_review_tasks(connection, task_ids, actor_id, decision):
     if not resolved_ids:
         raise ValueError("No review tasks selected")
     results = []
+    review_packets = {}
     for task_id in resolved_ids:
         task = connection.execute(
             """
@@ -557,10 +558,33 @@ def batch_review_tasks(connection, task_ids, actor_id, decision):
             failure_count=failure_attempt_count(connection, task_id),
         )
         if not review_state.get("batch_review_eligible"):
-            raise ValueError(review_state.get("detail") or "Task is not eligible for batch review.")
+            raise ValueError(
+                review_state.get("why_not_batch_reviewed")
+                or review_state.get("detail")
+                or "Task is not eligible for batch review."
+            )
+        review_packet = review_state.get("grouped_review_packet") or {}
+        packet_key = review_packet.get("packet_key")
+        if packet_key:
+            review_packets.setdefault(
+                packet_key,
+                {
+                    "packet_key": packet_key,
+                    "family": review_packet.get("family"),
+                    "title": review_packet.get("title"),
+                    "summary": review_packet.get("summary"),
+                    "recommended_decision": review_packet.get("recommended_decision"),
+                    "eligible_task_ids": [],
+                },
+            )["eligible_task_ids"].append(task_id)
         results.append(apply_review_decision(connection, task_id, actor_id, decision, commit=False, automated=False))
     connection.commit()
-    return {"task_ids": resolved_ids, "decision": decision, "results": results}
+    return {
+        "task_ids": resolved_ids,
+        "decision": decision,
+        "results": results,
+        "review_packets": list(review_packets.values()),
+    }
 
 
 def halt_task(connection, task_id, actor_id):

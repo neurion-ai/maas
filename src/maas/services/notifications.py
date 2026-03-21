@@ -1,6 +1,9 @@
 """Notification policy, outbox storage, and delivery helpers."""
 
+from datetime import datetime, timezone
+import hashlib
 import json
+import sqlite3
 from urllib import error, request
 
 from maas.ids import generate_id
@@ -20,6 +23,9 @@ DEFAULT_NOTIFICATION_POLICY = {
 
 NOTIFICATION_SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
 SUPPORTED_NOTIFICATION_EVENTS = set(DEFAULT_NOTIFICATION_POLICY["enabled_events"])
+NOTIFICATION_RETRY_BASE_SECONDS = 60
+NOTIFICATION_RETRY_MAX_SECONDS = 3600
+NOTIFICATION_MAX_ATTEMPTS = 5
 
 
 def _load_project_config(raw_config):
@@ -79,6 +85,187 @@ def default_notification_policy():
         "minimum_severity": DEFAULT_NOTIFICATION_POLICY["minimum_severity"],
         "enabled_events": list(DEFAULT_NOTIFICATION_POLICY["enabled_events"]),
     }
+
+
+def _notification_dedupe_key(
+    project_id,
+    target_url,
+    event_type,
+    severity,
+    title,
+    body,
+    resource_type,
+    resource_id,
+    payload_json,
+):
+    digest = hashlib.sha256()
+    digest.update(
+        "||".join(
+            [
+                project_id or "",
+                target_url or "",
+                event_type or "",
+                severity or "",
+                title or "",
+                body or "",
+                resource_type or "",
+                resource_id or "",
+                payload_json or "{}",
+            ]
+        ).encode("utf-8")
+    )
+    return digest.hexdigest()
+
+
+def _notification_retry_delay_seconds(attempt_count):
+    attempt = max(1, int(attempt_count or 1))
+    delay = NOTIFICATION_RETRY_BASE_SECONDS * (2 ** max(0, attempt - 1))
+    return min(delay, NOTIFICATION_RETRY_MAX_SECONDS)
+
+
+def _parse_timestamp(value):
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                parsed = datetime.strptime(value, fmt)
+                break
+            except ValueError:
+                parsed = None
+        if parsed is None:
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _notification_retry_budget_remaining(attempts):
+    return max(0, NOTIFICATION_MAX_ATTEMPTS - max(0, int(attempts or 0)))
+
+
+def _notification_retry_exhausted(attempts):
+    return _notification_retry_budget_remaining(attempts) <= 0
+
+
+def _notification_delivery_state(status, attempts, next_attempt_at, now=None):
+    if status == "sent":
+        return "sent"
+    if status == "queued":
+        return "queued"
+    if status != "failed":
+        return status or "unknown"
+    if _notification_retry_exhausted(attempts):
+        return "retry_exhausted"
+    parsed_next_attempt_at = _parse_timestamp(next_attempt_at)
+    current_time = now or datetime.now(timezone.utc)
+    if parsed_next_attempt_at is None or parsed_next_attempt_at <= current_time:
+        return "retry_ready"
+    return "retry_scheduled"
+
+
+def _notification_digest_item(item):
+    return {
+        "dedupe_key": item.get("dedupe_key"),
+        "project_id": item.get("project_id"),
+        "project_name": item.get("project_name"),
+        "event_type": item.get("event_type"),
+        "severity": item.get("severity"),
+        "title": item.get("title"),
+        "resource_type": item.get("resource_type"),
+        "resource_id": item.get("resource_id"),
+        "delivery_state": item.get("delivery_state"),
+        "attempts": item.get("attempts"),
+        "retry_budget_remaining": item.get("retry_budget_remaining"),
+        "retry_budget_exhausted": item.get("retry_budget_exhausted"),
+        "next_attempt_at": item.get("next_attempt_at"),
+        "next_attempt_in_seconds": item.get("next_attempt_in_seconds"),
+        "last_attempt_at": item.get("last_attempt_at"),
+        "last_error": item.get("last_error"),
+        "last_response_code": item.get("last_response_code"),
+        "created_at": item.get("created_at"),
+        "notification_ids": [item.get("notification_id")] if item.get("notification_id") else [],
+        "count": 1,
+    }
+
+
+def build_notification_outbox_summary(items):
+    return {
+        "total": len(items),
+        "queued": len([item for item in items if item.get("status") == "queued"]),
+        "failed": len([item for item in items if item.get("status") == "failed"]),
+        "sent": len([item for item in items if item.get("status") == "sent"]),
+        "retry_ready": len([item for item in items if item.get("delivery_state") == "retry_ready"]),
+        "retry_scheduled": len([item for item in items if item.get("delivery_state") == "retry_scheduled"]),
+        "retry_exhausted": len([item for item in items if item.get("delivery_state") == "retry_exhausted"]),
+        "max_attempts": NOTIFICATION_MAX_ATTEMPTS,
+    }
+
+
+def build_notification_digests(items, limit=8):
+    grouped = {}
+    for item in items:
+        dedupe_key = item.get("dedupe_key") or item["notification_id"]
+        current = grouped.get(dedupe_key)
+        if current is None:
+            grouped[dedupe_key] = _notification_digest_item(item)
+            continue
+        notification_ids = list(current["notification_ids"])
+        if item.get("notification_id") and item["notification_id"] not in notification_ids:
+            notification_ids.append(item["notification_id"])
+        if item.get("created_at") and (current.get("created_at") or "") < item["created_at"]:
+            updated = _notification_digest_item(item)
+            updated["notification_ids"] = notification_ids
+            updated["count"] = len(notification_ids) or 1
+            grouped[dedupe_key] = updated
+            continue
+        current["notification_ids"] = notification_ids
+        current["count"] = len(notification_ids) or 1
+    ordered = sorted(
+        grouped.values(),
+        key=lambda item: (
+            0 if item["delivery_state"] == "retry_exhausted" else 1 if item["delivery_state"] == "retry_ready" else 2,
+            -NOTIFICATION_SEVERITY_ORDER.get(item.get("severity") or "info", 0),
+            item.get("next_attempt_in_seconds") if item.get("next_attempt_in_seconds") is not None else -1,
+            item.get("created_at") or "",
+        ),
+    )
+    return {
+        "attention": [
+            item
+            for item in ordered
+            if item["delivery_state"] in {"retry_exhausted", "retry_ready", "retry_scheduled"}
+        ][:limit],
+        "queued": [item for item in ordered if item["delivery_state"] == "queued"][:limit],
+    }
+
+
+def _decorate_notification_item(item, now=None):
+    current_time = now or datetime.now(timezone.utc)
+    parsed_next_attempt_at = _parse_timestamp(item.get("next_attempt_at"))
+    item["retry_budget_remaining"] = _notification_retry_budget_remaining(item.get("attempts"))
+    item["retry_budget_exhausted"] = _notification_retry_exhausted(item.get("attempts"))
+    item["delivery_state"] = _notification_delivery_state(
+        item.get("status"),
+        item.get("attempts"),
+        item.get("next_attempt_at"),
+        now=current_time,
+    )
+    item["next_attempt_due"] = bool(parsed_next_attempt_at and parsed_next_attempt_at <= current_time)
+    item["next_attempt_in_seconds"] = (
+        max(0, int((parsed_next_attempt_at - current_time).total_seconds()))
+        if parsed_next_attempt_at is not None
+        else None
+    )
+    item["retry_strategy"] = {
+        "base_delay_seconds": NOTIFICATION_RETRY_BASE_SECONDS,
+        "max_delay_seconds": NOTIFICATION_RETRY_MAX_SECONDS,
+        "max_attempts": NOTIFICATION_MAX_ATTEMPTS,
+    }
+    return item
 
 
 def normalize_notification_policy(policy=None):
@@ -203,15 +390,26 @@ def queue_notification_event(
     if not _should_emit_notification(policy, event_type, normalized_severity):
         return []
     queued_ids = []
-    payload_json = json.dumps(payload or {})
+    payload_json = json.dumps(payload or {}, sort_keys=True)
     for target_url in policy["webhook_urls"]:
+        dedupe_key = _notification_dedupe_key(
+            project_id,
+            target_url,
+            event_type,
+            normalized_severity,
+            title,
+            body,
+            resource_type,
+            resource_id,
+            payload_json,
+        )
         notification_id = generate_id("notif")
         connection.execute(
             """
-            INSERT INTO notification_outbox (
+            INSERT OR IGNORE INTO notification_outbox (
                 notification_id, project_id, target_url, event_type, severity, title, body,
-                payload_json, resource_type, resource_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payload_json, resource_type, resource_id, dedupe_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 notification_id,
@@ -224,9 +422,61 @@ def queue_notification_event(
                 payload_json,
                 resource_type,
                 resource_id,
+                dedupe_key,
             ),
         )
-        queued_ids.append(notification_id)
+        inserted = connection.execute(
+            "SELECT notification_id FROM notification_outbox WHERE notification_id = ?",
+            (notification_id,),
+        ).fetchone()
+        if inserted is not None:
+            queued_ids.append(notification_id)
+            continue
+        existing = connection.execute(
+            """
+            SELECT notification_id
+            FROM notification_outbox
+            WHERE dedupe_key = ?
+              AND status IN ('queued', 'failed')
+            LIMIT 1
+            """,
+            (dedupe_key,),
+        ).fetchone()
+        if existing is None:
+            raise sqlite3.IntegrityError(
+                "notification_outbox dedupe conflict without reusable active row for key {0}".format(dedupe_key)
+            )
+        connection.execute(
+            """
+            UPDATE notification_outbox
+            SET status = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN 'queued'
+                    ELSE status
+                END,
+                next_attempt_at = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN CURRENT_TIMESTAMP
+                    ELSE next_attempt_at
+                END,
+                last_error = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN NULL
+                    ELSE last_error
+                END,
+                last_response_code = CASE
+                    WHEN status = 'failed' AND attempts < ? THEN NULL
+                    ELSE last_response_code
+                END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = ?
+            """,
+            (
+                NOTIFICATION_MAX_ATTEMPTS,
+                NOTIFICATION_MAX_ATTEMPTS,
+                NOTIFICATION_MAX_ATTEMPTS,
+                NOTIFICATION_MAX_ATTEMPTS,
+                existing["notification_id"],
+            ),
+        )
+        queued_ids.append(existing["notification_id"])
     return queued_ids
 
 
@@ -264,6 +514,9 @@ def fetch_notification_outbox(connection, project_id=None, status=None, limit=20
             notification_outbox.attempts,
             notification_outbox.last_error,
             notification_outbox.last_response_code,
+            notification_outbox.dedupe_key,
+            notification_outbox.next_attempt_at,
+            notification_outbox.last_attempt_at,
             notification_outbox.created_at,
             notification_outbox.updated_at,
             notification_outbox.sent_at
@@ -278,13 +531,14 @@ def fetch_notification_outbox(connection, project_id=None, status=None, limit=20
         tuple(params + [limit]),
     ).fetchall()
     items = []
+    now = datetime.now(timezone.utc)
     for row in rows:
         item = dict(row)
         try:
             item["payload"] = json.loads(item.pop("payload_json") or "{}")
         except ValueError:
             item["payload"] = {}
-        items.append(item)
+        items.append(_decorate_notification_item(item, now=now))
     return items
 
 
@@ -356,6 +610,8 @@ def process_notification(connection, notification_id, actor_id):
                 attempts = attempts + 1,
                 last_error = NULL,
                 last_response_code = ?,
+                next_attempt_at = NULL,
+                last_attempt_at = CURRENT_TIMESTAMP,
                 sent_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE notification_id = ?
@@ -364,29 +620,49 @@ def process_notification(connection, notification_id, actor_id):
         )
         connection.commit()
     except error.URLError as exc:
+        next_attempts = (row["attempts"] or 0) + 1
+        next_attempt_at = None
+        if not _notification_retry_exhausted(next_attempts):
+            retry_delay_seconds = _notification_retry_delay_seconds(next_attempts)
+            next_attempt_at = "+{0} seconds".format(retry_delay_seconds)
         connection.execute(
             """
             UPDATE notification_outbox
             SET status = 'failed',
                 attempts = attempts + 1,
                 last_error = ?,
+                next_attempt_at = CASE
+                    WHEN ? IS NULL THEN NULL
+                    ELSE DATETIME('now', ?)
+                END,
+                last_attempt_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE notification_id = ?
             """,
-            (str(exc.reason or exc), notification_id),
+            (str(exc.reason or exc), next_attempt_at, next_attempt_at, notification_id),
         )
         connection.commit()
     except Exception as exc:
+        next_attempts = (row["attempts"] or 0) + 1
+        next_attempt_at = None
+        if not _notification_retry_exhausted(next_attempts):
+            retry_delay_seconds = _notification_retry_delay_seconds(next_attempts)
+            next_attempt_at = "+{0} seconds".format(retry_delay_seconds)
         connection.execute(
             """
             UPDATE notification_outbox
             SET status = 'failed',
                 attempts = attempts + 1,
                 last_error = ?,
+                next_attempt_at = CASE
+                    WHEN ? IS NULL THEN NULL
+                    ELSE DATETIME('now', ?)
+                END,
+                last_attempt_at = CURRENT_TIMESTAMP,
                 updated_at = CURRENT_TIMESTAMP
             WHERE notification_id = ?
             """,
-            (str(exc), notification_id),
+            (str(exc), next_attempt_at, next_attempt_at, notification_id),
         )
         connection.commit()
     refreshed = fetch_notification_outbox(connection, project_id=row["project_id"], limit=100, include_archived=True)
@@ -395,8 +671,10 @@ def process_notification(connection, notification_id, actor_id):
 
 def process_next_notification(connection, actor_id, project_id=None):
     resolved_project_id = resolve_project_id(connection, project_id, include_archived=False) if project_id else None
-    filters = ["status IN ('queued', 'failed')"]
-    params = []
+    filters = [
+        "(status = 'queued' OR (status = 'failed' AND attempts < ? AND (next_attempt_at IS NULL OR STRFTIME('%s', next_attempt_at) <= STRFTIME('%s', 'now'))))"
+    ]
+    params = [NOTIFICATION_MAX_ATTEMPTS]
     if resolved_project_id:
         filters.append("project_id = ?")
         params.append(resolved_project_id)
@@ -407,6 +685,7 @@ def process_next_notification(connection, actor_id, project_id=None):
         WHERE {where_clause}
         ORDER BY
             CASE status WHEN 'queued' THEN 0 ELSE 1 END,
+            COALESCE(next_attempt_at, created_at) ASC,
             created_at ASC
         LIMIT 1
         """.format(where_clause=" AND ".join(filters)),

@@ -33,6 +33,8 @@ For the current autonomy-scale follow-up batch, see [15-codex-mvp-autonomy-scale
 
 For the current autopilot-and-memory batch, see [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md).
 
+For the current control-loop hardening batch, see [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -97,6 +99,16 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#202` Fresh-start project templates and reset-adjacent lifecycle flows
 - [x] `#203` Better "why nothing is happening" diagnostics across Command/Issues/System
 - [x] `#204` Async operator notifications v2 and autopilot attention posture
+- [x] `#205` Durable autopilot ownership and lease model
+- [x] `#206` Lifecycle-safe project controls
+- [x] `#207` Canonical execution-state projection
+- [x] `#208` Unified review gate
+- [x] `#209` Recovery controller and playbooks
+- [x] `#210` Memory governance and attribution
+- [x] `#211` Review burden reduction v2
+- [x] `#212` Operator inbox
+- [x] `#213` Notification reliability and overdue decisions
+- [x] `#214` Autonomy correctness regression suite
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

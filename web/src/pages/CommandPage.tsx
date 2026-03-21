@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import {
   fetchAlerts,
   fetchAgentRoster,
@@ -18,6 +19,7 @@ import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { AlertItem, AutopilotStatusResponse, BoardTask, CodexRetrievalSearchResponse, OverviewResponse, PortfolioProject, TimelineEvent } from "../types";
+import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 
 type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects";
 
@@ -27,7 +29,17 @@ function issueLabel(task: BoardTask, fallbackKeys: Map<string, string>) {
   return task.issue_key ?? fallbackKeys.get(task.task_id) ?? task.task_id;
 }
 
-export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
+export function CommandPage({
+  onNavigate,
+  operatorWorkflow,
+  onOpenOperatorItem,
+  operatorWorkflowWarning,
+}: {
+  onNavigate: (view: ViewTarget) => void;
+  operatorWorkflow: OperatorWorkflowState | null;
+  onOpenOperatorItem: (item: OperatorLoopItem) => void;
+  operatorWorkflowWarning?: string | null;
+}) {
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [tasks, setTasks] = useState<BoardTask[]>([]);
   const [resolved, setResolved] = useState<BoardTask[]>([]);
@@ -318,79 +330,42 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
         </article>
       </div>
 
-      {autopilot ? (
-        <section className="codex-panel">
-          <div className="codex-panel__header">
-            <div>
-              <span className="codex-kicker">Autopilot</span>
-              <h2>Project execution loop</h2>
-            </div>
-            <div className="codex-detail-actions">
-              {autopilot.policy.enabled ? (
-                <button
-                  type="button"
-                  className="codex-button"
-                  disabled={pendingKey !== null || !project}
-                  onClick={() => void handleAutopilotToggle(false)}
-                >
-                  {pendingKey === "autopilot-disable" ? "Disabling..." : "Disable autopilot"}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="codex-button codex-button--primary"
-                  disabled={pendingKey !== null || !project}
-                  onClick={() => void handleAutopilotToggle(true)}
-                >
-                  {pendingKey === "autopilot-enable" ? "Enabling..." : "Enable autopilot"}
-                </button>
-              )}
-            </div>
+      <OperatorLoopPanel
+        workflow={operatorWorkflow}
+        title="Shared inbox and execution posture"
+        description="Command owns the loop posture. Use Issues for review or recovery decisions and Runs for live-session intervention."
+        onSelectItem={onOpenOperatorItem}
+        warning={operatorWorkflowWarning}
+        footer={
+          <div className="codex-detail-actions">
+            {autopilot?.policy.enabled ? (
+              <button
+                type="button"
+                className="codex-button"
+                disabled={pendingKey !== null || !project}
+                onClick={() => void handleAutopilotToggle(false)}
+              >
+                {pendingKey === "autopilot-disable" ? "Disabling..." : "Disable autopilot"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="codex-button codex-button--primary"
+                disabled={pendingKey !== null || !project}
+                onClick={() => void handleAutopilotToggle(true)}
+              >
+                {pendingKey === "autopilot-enable" ? "Enabling..." : "Enable autopilot"}
+              </button>
+            )}
+            <button type="button" className="codex-button" onClick={() => onNavigate("issues")}>
+              Open Issues
+            </button>
+            <button type="button" className="codex-button" onClick={() => onNavigate("runs")}>
+              Open Runs
+            </button>
           </div>
-          <div className="codex-review-callout">
-            <strong>
-              {autopilot.runtime.running
-                ? "Autopilot loop is running."
-                : autopilot.policy.enabled
-                  ? "Autopilot is enabled and waiting for the next cycle."
-                  : "Autopilot is off for this project."}
-            </strong>
-            <p>{autopilot.why_idle}</p>
-            <div className="codex-review-facts">
-              <div className="codex-review-fact">
-                <span>Interval</span>
-                <strong>{autopilot.policy.interval_seconds}s</strong>
-              </div>
-              <div className="codex-review-fact">
-                <span>Loop count</span>
-                <strong>{autopilot.runtime.loop_count}</strong>
-              </div>
-              <div className="codex-review-fact">
-                <span>Heartbeat</span>
-                <strong>{formatTimestamp(autopilot.runtime.last_heartbeat_at ?? null)}</strong>
-              </div>
-              <div className="codex-review-fact">
-                <span>Notifications</span>
-                <strong>{autopilot.policy.process_notifications ? "on" : "off"}</strong>
-              </div>
-            </div>
-            {autopilot.runtime.last_summary ? (
-              <div className="codex-review-note">
-                Last cycle: {autopilot.runtime.last_summary.assigned_count} assigned ·{" "}
-                {(autopilot.runtime.last_summary.provider_jobs_processed ?? 0) +
-                  (autopilot.runtime.last_summary.provider_jobs_dispatched ?? 0)}{" "}
-                started · {autopilot.runtime.last_summary.provider_jobs_queued} queued ·{" "}
-                {autopilot.runtime.last_summary.notifications_processed} notifications processed.
-              </div>
-            ) : null}
-            {autopilot.runtime.last_error ? (
-              <div className="codex-review-note">
-                Last error: {autopilot.runtime.last_error}
-              </div>
-            ) : null}
-          </div>
-        </section>
-      ) : null}
+        }
+      />
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
 
@@ -416,6 +391,7 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
             <span className="hero-meta__pill">{retrieval?.summary.run_hits ?? 0} runs</span>
             <span className="hero-meta__pill">{retrieval?.summary.artifact_hits ?? 0} artifacts</span>
             <span className="hero-meta__pill">{retrieval?.summary.event_hits ?? 0} events</span>
+            <span className="hero-meta__pill">{retrieval?.summary.memory_hits ?? 0} memory</span>
           </div>
         </div>
         {retrievalNotice ? <p className="field-hint">{retrievalNotice}</p> : null}
@@ -543,6 +519,43 @@ export function CommandPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                   </button>
                 ))}
                 {!retrieval?.events.length ? <div className="codex-empty-copy">No event matches.</div> : null}
+              </div>
+            </section>
+
+            <section className="codex-panel codex-panel--nested">
+              <div className="codex-panel__header">
+                <div>
+                  <span className="codex-kicker">Memory</span>
+                  <h3>Promoted guidance</h3>
+                </div>
+              </div>
+              <div className="codex-stack-list">
+                {(retrieval?.memory ?? []).map((item) => (
+                  <button
+                    key={item.artifact_id}
+                    type="button"
+                    className="codex-stack-item"
+                    onClick={() => {
+                      if (item.task_id) {
+                        setPendingTaskFocus(item.task_id);
+                        onNavigate("work");
+                        return;
+                      }
+                      if (item.session_id) {
+                        setPendingRunFocus(item.session_id);
+                        onNavigate("runs");
+                      }
+                    }}
+                  >
+                    <div className="codex-stack-item__header">
+                      <strong>{item.title || item.artifact_id}</strong>
+                      <span>{item.promoted_at ? formatTimestamp(item.promoted_at) : "memory"}</span>
+                    </div>
+                    <span>{item.summary || item.path || "Promoted project memory"}</span>
+                    <p>{item.preview?.content || item.tags?.join(" · ") || "Reusable context for future Codex runs."}</p>
+                  </button>
+                ))}
+                {!retrieval?.memory.length ? <div className="codex-empty-copy">No memory matches.</div> : null}
               </div>
             </section>
           </div>

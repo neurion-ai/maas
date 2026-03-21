@@ -383,6 +383,79 @@ lint = "imported:lint"
             self.assertIsNone(clone_onboarding["reviewed_by"])
             self.assertIsNone(clone_onboarding["reviewed_at"])
 
+    def test_clone_project_resets_live_control_posture(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            create_response = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Live Workspace",
+                    "description": "live posture",
+                    "project_type": "custom",
+                    "mode": "greenfield",
+                    "create_source_root": True,
+                },
+            )
+            self.assertEqual(create_response.status_code, 200)
+            source_project_id = create_response.json()["project"]["project_id"]
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                source_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (source_project_id,),
+                ).fetchone()
+                source_config = json.loads(source_row["config_json"] or "{}")
+                source_config["autopilot"] = {
+                    **(source_config.get("autopilot") or {}),
+                    "enabled": True,
+                    "process_notifications": True,
+                }
+                source_config["provider_capacity"] = {
+                    **(source_config.get("provider_capacity") or {}),
+                    "queue_mode": "running",
+                    "max_running_jobs": 3,
+                    "preferred_provider_id": "openai_codex",
+                }
+                source_config["notifications"] = {
+                    "webhook_urls": ["https://example.test/hooks/live"],
+                    "minimum_severity": "warning",
+                    "enabled_events": ["escalation_requested"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(source_config), source_project_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            clone_response = client.post(
+                f"/api/projects/{source_project_id}/actions/clone",
+                json={"actor_id": "agent_allocator", "name": "Live Workspace Clone"},
+            )
+            self.assertEqual(clone_response.status_code, 200)
+            clone_project_id = clone_response.json()["project"]["project_id"]
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                clone_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (clone_project_id,),
+                ).fetchone()
+                clone_config = json.loads(clone_row["config_json"] or "{}")
+            finally:
+                connection.close()
+
+            self.assertFalse((clone_config.get("autopilot") or {}).get("enabled"))
+            self.assertEqual((clone_config.get("provider_capacity") or {}).get("queue_mode"), "paused")
+            self.assertEqual((clone_config.get("provider_capacity") or {}).get("max_running_jobs"), 3)
+            self.assertEqual((clone_config.get("provider_capacity") or {}).get("preferred_provider_id"), "openai_codex")
+            self.assertEqual((clone_config.get("notifications") or {}).get("webhook_urls"), [])
+
     def test_delete_project_rejects_projects_with_queued_provider_jobs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

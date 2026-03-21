@@ -41,11 +41,14 @@ from maas.services.git_workspaces import capture_task_git_diff, fetch_task_git_w
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.live import build_live_snapshot, sse_stream, websocket_stream
 from maas.services.notifications import (
+    build_notification_digests,
+    build_notification_outbox_summary,
     fetch_notification_outbox,
     process_next_notification,
     process_notification,
     update_project_notification_policy,
 )
+from maas.services.operator_inbox import fetch_operator_inbox
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.provider_runtime import (
     process_next_provider_job,
@@ -833,15 +836,26 @@ def create_app(project_root="."):
         parsed_limit = _parse_limit(limit, 20)
         connection = connect(paths)
         try:
+            notifications_payload = fetch_notification_outbox(
+                connection,
+                project_id=_selected_project_id(connection, project_id) if project_id else None,
+                status=status,
+                limit=parsed_limit,
+                include_archived=False,
+            )
             return {
-                "notifications": fetch_notification_outbox(
-                    connection,
-                    project_id=_selected_project_id(connection, project_id) if project_id else None,
-                    status=status,
-                    limit=parsed_limit,
-                    include_archived=False,
-                )
+                "summary": build_notification_outbox_summary(notifications_payload),
+                "digests": build_notification_digests(notifications_payload),
+                "notifications": notifications_payload,
             }
+        finally:
+            connection.close()
+
+    @app.get("/api/operator-inbox")
+    def operator_inbox(project_id: str = None):
+        connection = connect(paths)
+        try:
+            return fetch_operator_inbox(connection, _selected_project_id(connection, project_id))
         finally:
             connection.close()
 

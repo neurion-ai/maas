@@ -14,6 +14,8 @@ from maas.services.security import ensure_board_action_allowed
 
 MEMORY_PREVIEW_MAX_CHARS = 2000
 MEMORY_CONTEXT_MAX_CHARS = 5000
+MEMORY_FRESH_AFTER_DAYS = 7
+MEMORY_STALE_AFTER_DAYS = 30
 
 
 def _load_json(value):
@@ -53,6 +55,39 @@ def _artifact_preview(path):
     if truncated:
         content = content[:MEMORY_PREVIEW_MAX_CHARS]
     return {"content": content.strip(), "truncated": truncated}
+
+
+def _age_days(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)
+    return max(0, int(delta.total_seconds() // 86400))
+
+
+def _freshness(age_days):
+    if age_days is None:
+        return "unknown"
+    if age_days >= MEMORY_STALE_AFTER_DAYS:
+        return "stale"
+    if age_days >= MEMORY_FRESH_AFTER_DAYS:
+        return "aging"
+    return "fresh"
+
+
+def _memory_freshness_fields(promoted_at):
+    age_days = _age_days(promoted_at)
+    freshness = _freshness(age_days)
+    return {
+        "age_days": age_days,
+        "freshness": freshness,
+        "stale": freshness == "stale",
+    }
 
 
 def _memory_summary_from_preview(preview):
@@ -164,6 +199,7 @@ def fetch_project_memory(connection, project_id, limit=40, search=None):
             "promoted_at": memory.get("promoted_at"),
             "promoted_by": memory.get("promoted_by"),
             "preview": _artifact_preview(row["path"]),
+            **_memory_freshness_fields(memory.get("promoted_at")),
         }
         if query_tokens:
             candidate = " ".join([entry["title"], entry["summary"], " ".join(entry["tags"] or [])])
@@ -272,6 +308,10 @@ def build_task_prompt(connection, task_id):
                 "summary": entry.get("summary"),
                 "tags": entry.get("tags") or [],
                 "score": entry.get("score", 0),
+                "promoted_at": entry.get("promoted_at"),
+                "age_days": entry.get("age_days"),
+                "freshness": entry.get("freshness"),
+                "stale": entry.get("stale"),
             }
             for entry in memory_entries
         ],

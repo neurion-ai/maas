@@ -8,6 +8,9 @@ from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
 
+LOW_RISK_REVIEW_PACKET_FAMILY = "low_risk_verified"
+
+
 def default_review_policy():
     return {
         "auto_approve_low_risk": True,
@@ -147,84 +150,205 @@ def _is_brownfield_onboarding_review_task(connection, task_row):
     return onboarding.get("mode") == "brownfield" and task_row["title"] == BROWNFIELD_REVIEW_TASK_TITLE
 
 
+def _review_reason(code, summary, detail, blocks_batch=True, blocks_auto=True):
+    return {
+        "code": code,
+        "summary": summary,
+        "detail": detail,
+        "blocks_batch_review": blocks_batch,
+        "blocks_auto_approve": blocks_auto,
+    }
+
+
+def _grouped_review_packet(project_policy):
+    auto_enabled = project_policy.get("auto_approve_low_risk", False)
+    return {
+        "packet_key": (
+            "low_risk_verified_auto"
+            if auto_enabled
+            else "low_risk_verified_manual"
+        ),
+        "family": LOW_RISK_REVIEW_PACKET_FAMILY,
+        "title": "Low-risk verified review packet",
+        "summary": (
+            "Verified low-risk issues that qualify for automatic approval."
+            if auto_enabled
+            else "Verified low-risk issues that can be approved together from one review packet."
+        ),
+        "recommended_decision": "approve",
+    }
+
+
+def _decision_mode(batch_review_eligible, auto_approve_eligible):
+    if auto_approve_eligible:
+        return "auto_approve"
+    if batch_review_eligible:
+        return "batch_review"
+    return "manual_review"
+
+
 def evaluate_review_decision_state(connection, task_row, project_policy, verification_runs=None, failure_count=0, onboarding_mode=None):
+    verification_runs = verification_runs or []
+    verification_required = project_policy.get("require_verification_pass", True)
+    verification_recorded = len(verification_runs)
+    verification_passed = bool(verification_runs) and all(run.get("status") == "passed" for run in verification_runs)
+
     if task_row is None:
         return {
             "status": "unavailable",
             "batch_review_eligible": False,
             "auto_approve_eligible": False,
+            "manual_review_required": True,
+            "decision_mode": "manual_review",
             "summary": "Task not found.",
             "detail": "The review policy could not be evaluated because the task record is missing.",
+            "why_not_batch_reviewed": "Task not found.",
+            "why_not_auto_approved": "Task not found.",
+            "reasons": [
+                _review_reason(
+                    "task_missing",
+                    "Task not found.",
+                    "The review policy could not be evaluated because the task record is missing.",
+                )
+            ],
+            "grouped_review_packet": None,
+            "verification": {
+                "required": verification_required,
+                "recorded_runs": verification_recorded,
+                "passed": verification_passed,
+            },
         }
     if task_row["status"] != "review":
         return {
             "status": "not_in_review",
             "batch_review_eligible": False,
             "auto_approve_eligible": False,
+            "manual_review_required": False,
+            "decision_mode": "manual_review",
             "summary": "This issue is not currently waiting in review.",
             "detail": "Review decisions only apply after Codex finishes a run and the issue moves into review.",
+            "why_not_batch_reviewed": "This issue is not currently in review.",
+            "why_not_auto_approved": "This issue is not currently in review.",
+            "reasons": [
+                _review_reason(
+                    "not_in_review",
+                    "This issue is not currently in review.",
+                    "Review decisions only apply after Codex finishes a run and the issue moves into review.",
+                )
+            ],
+            "grouped_review_packet": None,
+            "verification": {
+                "required": verification_required,
+                "recorded_runs": verification_recorded,
+                "passed": verification_passed,
+            },
         }
     is_brownfield_onboarding_review = False
     if onboarding_mode == "brownfield" and task_row["title"] == BROWNFIELD_REVIEW_TASK_TITLE:
         is_brownfield_onboarding_review = True
     elif connection is not None and "project_id" in task_row.keys() and task_row["project_id"]:
         is_brownfield_onboarding_review = _is_brownfield_onboarding_review_task(connection, task_row)
+    reasons = []
     if is_brownfield_onboarding_review:
-        return {
-            "status": "manual_required",
-            "batch_review_eligible": False,
-            "auto_approve_eligible": False,
-            "summary": "Manual review is required.",
-            "detail": "Brownfield onboarding reviews must stay manual so imported understanding is explicitly approved by an operator.",
-        }
+        reasons.append(
+            _review_reason(
+                "brownfield_onboarding_manual",
+                "Manual review is required.",
+                "Brownfield onboarding reviews must stay manual so imported understanding is explicitly approved by an operator.",
+            )
+        )
     if task_row["priority"] > project_policy["max_priority_for_auto_approve"]:
-        return {
-            "status": "manual_required",
-            "batch_review_eligible": False,
-            "auto_approve_eligible": False,
-            "summary": "Manual review is required.",
-            "detail": "Priority is above the low-risk review threshold for batch or automatic approval.",
-        }
+        reasons.append(
+            _review_reason(
+                "priority_above_low_risk_threshold",
+                "Manual review is required.",
+                "Priority is above the low-risk review threshold for batch or automatic approval.",
+            )
+        )
     if failure_count:
-        return {
-            "status": "manual_required",
-            "batch_review_eligible": False,
-            "auto_approve_eligible": False,
-            "summary": "Manual review is required.",
-            "detail": "Issues with recorded failures stay manual even if Codex produced output.",
-        }
-    if project_policy.get("require_verification_pass", True):
+        reasons.append(
+            _review_reason(
+                "failure_history_present",
+                "Manual review is required.",
+                "Issues with recorded failures stay manual even if Codex produced output.",
+            )
+        )
+    if verification_required:
         if not verification_runs:
-            return {
-                "status": "manual_required",
-                "batch_review_eligible": False,
-                "auto_approve_eligible": False,
-                "summary": "Manual review is required.",
-                "detail": "No verification evidence was recorded, so the issue cannot be batch-decided or auto-approved.",
-            }
-        if any(run.get("status") != "passed" for run in verification_runs):
-            return {
-                "status": "manual_required",
-                "batch_review_eligible": False,
-                "auto_approve_eligible": False,
-                "summary": "Manual review is required.",
-                "detail": "One or more verification runs did not pass.",
-            }
+            reasons.append(
+                _review_reason(
+                    "verification_missing",
+                    "Manual review is required.",
+                    "No verification evidence was recorded, so the issue cannot be batch-decided or auto-approved.",
+                )
+            )
+        elif not verification_passed:
+            reasons.append(
+                _review_reason(
+                    "verification_failed",
+                    "Manual review is required.",
+                    "One or more verification runs did not pass.",
+                )
+            )
+
+    batch_review_eligible = not any(reason["blocks_batch_review"] for reason in reasons)
     auto_approve_enabled = project_policy.get("auto_approve_low_risk", False)
+    if batch_review_eligible and not auto_approve_enabled:
+        reasons.append(
+            _review_reason(
+                "auto_approve_disabled_by_policy",
+                "Auto-approval is disabled by project policy.",
+                "This issue qualifies for the low-risk review packet, but project policy still requires a human or batch approval step.",
+                blocks_batch=False,
+                blocks_auto=True,
+            )
+        )
+
+    auto_approve_eligible = batch_review_eligible and auto_approve_enabled
+    grouped_review_packet = _grouped_review_packet(project_policy) if batch_review_eligible else None
+    blocking_batch_reasons = [reason for reason in reasons if reason["blocks_batch_review"]]
+    blocking_auto_reasons = [reason for reason in reasons if reason["blocks_auto_approve"]]
+    decision_mode = _decision_mode(batch_review_eligible, auto_approve_eligible)
+
+    if auto_approve_eligible:
+        status = "low_risk_review"
+        summary = "Low-risk verified work can auto-advance."
+        detail = "Project policy would auto-approve this issue after verification."
+    elif batch_review_eligible:
+        status = "low_risk_review"
+        summary = "Low-risk verified work can be batch-reviewed."
+        detail = "Project policy keeps this issue manual, but it still meets the low-risk batch-review rules."
+    else:
+        status = "manual_required"
+        primary_reason = blocking_batch_reasons[0] if blocking_batch_reasons else None
+        summary = primary_reason["summary"] if primary_reason else "Manual review is required."
+        detail = (
+            primary_reason["detail"]
+            if primary_reason
+            else "This issue does not meet the current low-risk review rules."
+        )
+
     return {
-        "status": "low_risk_review",
-        "batch_review_eligible": True,
-        "auto_approve_eligible": auto_approve_enabled,
-        "summary": (
-            "Low-risk verified work can auto-advance."
-            if auto_approve_enabled
-            else "Low-risk verified work can be batch-reviewed."
+        "status": status,
+        "decision_mode": decision_mode,
+        "batch_review_eligible": batch_review_eligible,
+        "auto_approve_eligible": auto_approve_eligible,
+        "manual_review_required": not batch_review_eligible,
+        "summary": summary,
+        "detail": detail,
+        "why_not_batch_reviewed": (
+            None if batch_review_eligible else blocking_batch_reasons[0]["detail"]
         ),
-        "detail": (
-            "Project policy would auto-approve this issue after verification."
-            if auto_approve_enabled
-            else "Project policy keeps this issue manual, but it still meets the low-risk batch-review rules."
+        "why_not_auto_approved": (
+            None if auto_approve_eligible else blocking_auto_reasons[0]["detail"]
         ),
+        "reasons": reasons,
+        "grouped_review_packet": grouped_review_packet,
+        "verification": {
+            "required": verification_required,
+            "recorded_runs": verification_recorded,
+            "passed": verification_passed,
+        },
     }
 
 
@@ -239,5 +363,5 @@ def should_auto_approve_after_verification(connection, task_row, verification_ru
     if not project_policy.get("auto_approve_low_risk", False):
         return False, "Auto-approve is disabled."
     if not state["auto_approve_eligible"]:
-        return False, state["detail"]
+        return False, state.get("why_not_auto_approved") or state["detail"]
     return True, state["summary"]

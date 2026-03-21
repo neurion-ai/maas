@@ -341,6 +341,8 @@ export function CodexIssueDetailPanel({
                 <span>
                   {(item.tags?.length ?? 0) ? item.tags?.join(", ") : "No tags"}
                   {item.score != null ? ` · score ${item.score}` : ""}
+                  {item.freshness ? ` · ${item.freshness}` : ""}
+                  {item.age_days != null ? ` · ${item.age_days}d old` : ""}
                 </span>
               </div>
             ))}
@@ -373,6 +375,9 @@ export function CodexIssueDetailPanel({
                         tags: payload.memory.tags ?? [],
                         promoted_at: payload.memory.promoted_at,
                         promoted_by: payload.memory.promoted_by,
+                        age_days: 0,
+                        freshness: "fresh" as const,
+                        stale: false,
                         preview: payload.preview,
                         score: undefined,
                       };

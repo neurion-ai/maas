@@ -10,7 +10,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
-from maas.services.delivery import _git_repo_snapshot
+from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview
 from maas.services.environment_doctor import _git_status, fetch_environment_doctor
 from maas.services.goal_planning import create_goal, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
@@ -1544,6 +1544,128 @@ class CodexMvpApiTest(unittest.TestCase):
             draft_payload = draft_response.json()
             self.assertTrue(draft_payload["gh_command"].startswith("gh pr create"))
             self.assertTrue(os.path.exists(draft_payload["body_path"]))
+
+    def test_delivery_overview_does_not_build_temp_bundles_on_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Refresh Test", description="delivery refresh", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-refresh.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('refresh')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.commit()
+
+                with mock.patch(
+                    "maas.services.delivery.build_artifact_export_bundle",
+                    side_effect=AssertionError("delivery overview should not create export bundles"),
+                ):
+                    payload = fetch_delivery_overview(connection, paths, task["project_id"])
+            finally:
+                connection.close()
+
+            item = next(entry for entry in payload["items"] if entry["task_id"] == task["task_id"])
+            self.assertTrue(item["bundle_ready"])
+
+    def test_board_review_eligibility_uses_full_verification_history(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Board Verification History Test", description="board verification history", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', priority = 50, review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                for index in range(11):
+                    status = "failed" if index == 0 else "passed"
+                    connection.execute(
+                        """
+                        INSERT INTO verification_runs (
+                            verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                            artifact_id, actor_id, started_at, finished_at
+                        ) VALUES (
+                            ?, ?, ?, ?, ?, ?, ?, NULL, 'agent_reviewer',
+                            DATETIME('now', ?), DATETIME('now', ?)
+                        )
+                        """,
+                        (
+                            generate_id("vrf"),
+                            task["project_id"],
+                            task["task_id"],
+                            "pytest tests/test_history.py",
+                            status,
+                            1 if status == "failed" else 0,
+                            status,
+                            "-{0} minutes".format(120 - index),
+                            "-{0} minutes".format(120 - index),
+                        ),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            board_payload = client.get("/api/board").json()
+            board_task = next(
+                item
+                for column in board_payload["columns"]
+                for item in column["tasks"]
+                if item["task_id"] == task["task_id"]
+            )
+
+            self.assertFalse(board_task["batch_review_eligible"])
+            self.assertEqual(
+                board_task["review_eligibility"]["why_not_batch_reviewed"],
+                "One or more verification runs did not pass.",
+            )
+            response = client.post(
+                "/api/issues/actions/batch-review",
+                json={
+                    "actor_id": "agent_allocator",
+                    "decision": "approve",
+                    "task_ids": [task["task_id"]],
+                },
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("did not pass", response.json()["detail"])
 
     def test_environment_doctor_does_not_block_on_nonpreferred_provider_failure(self):
         with tempfile.TemporaryDirectory() as tmpdir:

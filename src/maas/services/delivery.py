@@ -8,7 +8,7 @@ import shutil
 import subprocess
 
 from maas.ids import generate_id
-from maas.services.artifacts import build_artifact_export_bundle
+from maas.services.artifacts import artifact_export_bundle_available, build_artifact_export_bundle
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
@@ -180,7 +180,6 @@ def fetch_delivery_overview(connection, project_paths, project_id=None, limit=12
         artifacts = _latest_task_artifacts(connection, resolved_project_id, row["task_id"], limit=6)
         latest_artifact = artifacts[0] if artifacts else None
         preview = _artifact_preview(latest_artifact["path"]) if latest_artifact is not None else None
-        bundle = build_artifact_export_bundle(connection, project_paths, task_id=row["task_id"])
         items.append(
             {
                 "task_id": row["task_id"],
@@ -204,7 +203,7 @@ def fetch_delivery_overview(connection, project_paths, project_id=None, limit=12
                     }
                     for artifact in artifacts
                 ],
-                "bundle_ready": bundle is not None,
+                "bundle_ready": artifact_export_bundle_available(connection, task_id=row["task_id"]),
                 "github_ready": bool(git_snapshot["is_git_repo"] and git_snapshot["gh_installed"]),
             }
         )

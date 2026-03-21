@@ -123,7 +123,7 @@ def fetch_latest_verification_by_task(connection, project_id=None):
     return latest
 
 
-def fetch_verification_history_by_task(connection, project_id=None, limit_per_task=10):
+def fetch_verification_history_by_task(connection, project_id=None, limit_per_task=None):
     query = """
         SELECT
             verification_run_id,
@@ -151,7 +151,7 @@ def fetch_verification_history_by_task(connection, project_id=None, limit_per_ta
     history = {}
     for row in rows:
         bucket = history.setdefault(row["task_id"], [])
-        if len(bucket) >= limit_per_task:
+        if limit_per_task is not None and len(bucket) >= limit_per_task:
             continue
         bucket.append(
             {

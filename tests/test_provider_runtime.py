@@ -12,7 +12,7 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.projects import create_project
-from maas.services.provider_runtime import run_provider_task
+from maas.services.provider_runtime import ProviderRuntimeFailure, run_provider_task
 from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
 
@@ -1929,6 +1929,83 @@ class ProviderRuntimeTest(unittest.TestCase):
             self.assertIn("timed out", recent_run["failure_detail"])
             self.assertEqual(run_summary["timeout_failures"], 1)
             self.assertEqual(run_summary["latest_failure_kind"], "timeout")
+
+    def test_failed_codex_run_records_memory_failure_outcome(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Failure Test", description="Codex memory failure test", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = self._enable_openai_codex_cli(connection)
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Run timed out Codex CLI adapter")
+                artifact_id = generate_id("art")
+                artifact_path = os.path.join(paths.artifacts_dir, "memory-runtime.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("memory guidance\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?)
+                    """,
+                    (
+                        artifact_id,
+                        project_id,
+                        task_id,
+                        artifact_path,
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Useful memory",
+                                    "used_count": 0,
+                                    "success_count": 0,
+                                    "failure_count": 0,
+                                }
+                            }
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            connection = connect(paths)
+            try:
+                with self.assertRaises(ProviderRuntimeFailure):
+                    with mock.patch(
+                        "maas.services.provider_runtime.build_task_prompt",
+                        return_value={
+                            "prompt": "Use the promoted memory",
+                            "memory_context": [{"artifact_id": artifact_id, "title": "Useful memory"}],
+                        },
+                    ), mock.patch(
+                        "maas.services.provider_runtime.subprocess.run",
+                        side_effect=subprocess.TimeoutExpired(cmd=["codex", "exec"], timeout=120),
+                    ):
+                        run_provider_task(
+                            connection,
+                            project_paths=paths,
+                            project_id=project_id,
+                            agent_id="agent_reviewer",
+                            task_id=task_id,
+                            provider_type="openai_codex",
+                        )
+                metadata = json.loads(
+                    connection.execute(
+                        "SELECT metadata_json FROM artifacts WHERE artifact_id = ?",
+                        (artifact_id,),
+                    ).fetchone()["metadata_json"]
+                )
+            finally:
+                connection.close()
+
+            memory = metadata["memory"]
+            self.assertEqual(memory["used_count"], 1)
+            self.assertEqual(memory["failure_count"], 1)
+            self.assertEqual(memory["success_count"], 0)
+            self.assertEqual(memory["last_run_outcome"], "failed")
 
     def test_providers_endpoint_classifies_claude_nonzero_exit_failures(self):
         with tempfile.TemporaryDirectory() as tmpdir:

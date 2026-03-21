@@ -634,6 +634,24 @@ def artifact_scope_rows(connection, project_paths, task_id=None, session_id=None
     return _artifact_export_rows(connection, project_paths, task_id=task_id, session_id=session_id)
 
 
+def artifact_export_bundle_available(connection, task_id=None, session_id=None):
+    clauses = []
+    params = []
+    if task_id:
+        clauses.append("task_id = ?")
+        params.append(task_id)
+    if session_id:
+        clauses.append("session_id = ?")
+        params.append(session_id)
+    if len(clauses) != 1:
+        raise ValueError("exactly one export scope is required")
+    row = connection.execute(
+        "SELECT 1 AS present FROM artifacts WHERE {0} LIMIT 1".format(clauses[0]),
+        tuple(params),
+    ).fetchone()
+    return row is not None
+
+
 def build_artifact_export_bundle(connection, project_paths, task_id=None, session_id=None):
     rows, items = _artifact_export_rows(connection, project_paths, task_id=task_id, session_id=session_id)
     if not rows:

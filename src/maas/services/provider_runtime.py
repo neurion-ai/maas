@@ -879,6 +879,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     task_prompt = prompt_payload["prompt"] if prompt_payload else None
     memory_context = prompt_payload["memory_context"] if prompt_payload else []
     memory_artifact_ids = [item.get("artifact_id") for item in memory_context if item.get("artifact_id")]
+    memory_injection_recorded = False
 
     artifact_full_path = _resolve_artifact_path(project_paths, provider_type, task_id, artifact_path)
     artifact_existed_before_run = os.path.exists(artifact_full_path)
@@ -961,6 +962,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         )
         if memory_context:
             record_memory_injection(connection, memory_artifact_ids)
+            memory_injection_recorded = True
             log_activity(
                 connection,
                 project_id=project_id,
@@ -1071,6 +1073,11 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
         if memory_artifact_ids:
             record_memory_outcome(connection, memory_artifact_ids, "completed")
     except Exception as exc:
+        if memory_injection_recorded and memory_artifact_ids:
+            try:
+                record_memory_outcome(connection, memory_artifact_ids, "failed")
+            except Exception:
+                pass
         _rollback_untracked_artifact(
             artifact_full_path if artifact_id is None else None,
             artifact_existed_before_run=artifact_existed_before_run,

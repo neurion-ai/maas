@@ -304,7 +304,7 @@ export function ProjectsPage({
     setPendingActionKey("orchestrator");
     setNotice(null);
     try {
-      const payload = await runOrchestratorPass(4, 3);
+      const payload = await runOrchestratorPass(4, 3, true);
       setPortfolio(await fetchPortfolio());
       if (selectedProject) {
         setSelectedOverview(await fetchOverview());

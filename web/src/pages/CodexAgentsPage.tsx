@@ -82,7 +82,7 @@ export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget)
         }
       });
     return () => controller.abort();
-  }, [selectedRunId]);
+  }, [selectedRunId, livePulse]);
 
   const selectedAgent = agents.find((agent) => agent.agent_id === selectedAgentId) ?? agents[0] ?? null;
   const ownedIssues = detail?.owned_issues ?? [];

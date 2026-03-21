@@ -47,7 +47,15 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
       providers?.job_queue.find((job) => job.session_id && job.status === "running") ??
       providers?.job_queue.find((job) => job.session_id) ??
       null;
-    setSelectedRunId((current) => current ?? firstRunnableJob?.session_id ?? null);
+    const availableSessionIds = new Set(
+      (providers?.job_queue ?? []).map((job) => job.session_id).filter((sessionId): sessionId is string => Boolean(sessionId))
+    );
+    setSelectedRunId((current) => {
+      if (current && availableSessionIds.has(current)) {
+        return current;
+      }
+      return firstRunnableJob?.session_id ?? null;
+    });
   }, [providers?.job_queue]);
 
   useEffect(() => {
@@ -64,7 +72,7 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
         }
       });
     return () => controller.abort();
-  }, [selectedRunId]);
+  }, [selectedRunId, livePulse]);
 
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const providerSummary = useMemo(() => {

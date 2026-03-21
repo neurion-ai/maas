@@ -20,11 +20,6 @@ export type CodexSavedScope = {
   scope: CodexIssueScopeState;
 };
 
-type StoredIssueScopes = {
-  current: CodexIssueScopeState;
-  saved: CodexSavedScope[];
-};
-
 type AgentOption = {
   id: string;
   label: string;
@@ -40,8 +35,12 @@ export const DEFAULT_CODEX_ISSUE_SCOPE: CodexIssueScopeState = {
   queueFilter: "all",
 };
 
-function storageKey(projectId: string | null, namespace: string) {
-  return `${SCOPE_STORAGE_PREFIX}${namespace}:${projectId ?? "global"}`;
+function currentStorageKey(projectId: string | null, namespace: string) {
+  return `${SCOPE_STORAGE_PREFIX}current:${namespace}:${projectId ?? "global"}`;
+}
+
+function savedStorageKey(projectId: string | null) {
+  return `${SCOPE_STORAGE_PREFIX}saved:${projectId ?? "global"}`;
 }
 
 function normalizeScope(value?: Partial<CodexIssueScopeState> | null): CodexIssueScopeState {
@@ -58,60 +57,88 @@ function normalizeScope(value?: Partial<CodexIssueScopeState> | null): CodexIssu
   };
 }
 
-function readStoredScopes(projectId: string | null, namespace: string): StoredIssueScopes {
+function readCurrentScope(projectId: string | null, namespace: string): CodexIssueScopeState {
   try {
-    const raw = window.localStorage.getItem(storageKey(projectId, namespace));
+    const raw = window.localStorage.getItem(currentStorageKey(projectId, namespace));
     if (!raw) {
-      return { current: { ...DEFAULT_CODEX_ISSUE_SCOPE }, saved: [] };
+      return { ...DEFAULT_CODEX_ISSUE_SCOPE };
     }
-    const parsed = JSON.parse(raw) as Partial<StoredIssueScopes>;
-    return {
-      current: normalizeScope(parsed.current),
-      saved: Array.isArray(parsed.saved)
-        ? parsed.saved
-            .filter((item): item is CodexSavedScope => Boolean(item && typeof item.id === "string" && typeof item.label === "string"))
-            .map((item) => ({
-              id: item.id,
-              label: item.label,
-              scope: normalizeScope(item.scope),
-            }))
-        : [],
-    };
+    return normalizeScope(JSON.parse(raw) as Partial<CodexIssueScopeState>);
   } catch {
-    return { current: { ...DEFAULT_CODEX_ISSUE_SCOPE }, saved: [] };
+    return { ...DEFAULT_CODEX_ISSUE_SCOPE };
   }
 }
 
-function writeStoredScopes(projectId: string | null, namespace: string, value: StoredIssueScopes) {
-  const normalized: StoredIssueScopes = {
-    current: normalizeScope(value.current),
-    saved: value.saved.map((item) => ({
-      id: item.id,
-      label: item.label,
-      scope: normalizeScope(item.scope),
-    })),
-  };
-  window.localStorage.setItem(storageKey(projectId, namespace), JSON.stringify(normalized));
-  window.dispatchEvent(new CustomEvent(SCOPE_EVENT, { detail: { projectId, namespace, value: normalized } }));
+function readSavedScopes(projectId: string | null): CodexSavedScope[] {
+  try {
+    const raw = window.localStorage.getItem(savedStorageKey(projectId));
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed)
+      ? parsed
+          .filter((item): item is CodexSavedScope => Boolean(item && typeof item === "object" && typeof (item as CodexSavedScope).id === "string" && typeof (item as CodexSavedScope).label === "string"))
+          .map((item) => ({
+            id: item.id,
+            label: item.label,
+            scope: normalizeScope(item.scope),
+          }))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCurrentScope(projectId: string | null, namespace: string, value: CodexIssueScopeState) {
+  const normalized = normalizeScope(value);
+  window.localStorage.setItem(currentStorageKey(projectId, namespace), JSON.stringify(normalized));
+  window.dispatchEvent(new CustomEvent(SCOPE_EVENT, { detail: { projectId, namespace, kind: "current", value: normalized } }));
+}
+
+function writeSavedScopes(projectId: string | null, saved: CodexSavedScope[]) {
+  const normalized = saved.map((item) => ({
+    id: item.id,
+    label: item.label,
+    scope: normalizeScope(item.scope),
+  }));
+  window.localStorage.setItem(savedStorageKey(projectId), JSON.stringify(normalized));
+  window.dispatchEvent(new CustomEvent(SCOPE_EVENT, { detail: { projectId, kind: "saved", value: normalized } }));
 }
 
 export function useCodexIssueScope(projectId: string | null, namespace = "shared") {
-  const [stored, setStored] = useState<StoredIssueScopes>(() => readStoredScopes(projectId, namespace));
+  const [current, setCurrent] = useState<CodexIssueScopeState>(() => readCurrentScope(projectId, namespace));
+  const [saved, setSaved] = useState<CodexSavedScope[]>(() => readSavedScopes(projectId));
 
   useEffect(() => {
-    setStored(readStoredScopes(projectId, namespace));
+    setCurrent(readCurrentScope(projectId, namespace));
+    setSaved(readSavedScopes(projectId));
   }, [projectId, namespace]);
 
   useEffect(() => {
     function handleScopeChange(event: Event) {
-      const customEvent = event as CustomEvent<{ projectId: string | null; namespace: string; value: StoredIssueScopes }>;
-      if ((customEvent.detail?.projectId ?? null) === projectId && customEvent.detail?.namespace === namespace) {
-        setStored(customEvent.detail.value);
+      const customEvent = event as CustomEvent<{
+        projectId: string | null;
+        namespace?: string;
+        kind: "current" | "saved";
+        value: CodexIssueScopeState | CodexSavedScope[];
+      }>;
+      if ((customEvent.detail?.projectId ?? null) !== projectId) {
+        return;
+      }
+      if (customEvent.detail.kind === "current" && customEvent.detail.namespace === namespace) {
+        setCurrent(normalizeScope(customEvent.detail.value as CodexIssueScopeState));
+      }
+      if (customEvent.detail.kind === "saved") {
+        setSaved(readSavedScopes(projectId));
       }
     }
     function handleStorage(event: StorageEvent) {
-      if (event.key === storageKey(projectId, namespace)) {
-        setStored(readStoredScopes(projectId, namespace));
+      if (event.key === currentStorageKey(projectId, namespace)) {
+        setCurrent(readCurrentScope(projectId, namespace));
+      }
+      if (event.key === savedStorageKey(projectId)) {
+        setSaved(readSavedScopes(projectId));
       }
     }
     window.addEventListener(SCOPE_EVENT, handleScopeChange);
@@ -123,19 +150,19 @@ export function useCodexIssueScope(projectId: string | null, namespace = "shared
   }, [projectId, namespace]);
 
   const setScope = (next: Partial<CodexIssueScopeState>) => {
-    const updated = { ...stored, current: normalizeScope({ ...stored.current, ...next }) };
-    setStored(updated);
-    writeStoredScopes(projectId, namespace, updated);
+    const updated = normalizeScope({ ...current, ...next });
+    setCurrent(updated);
+    writeCurrentScope(projectId, namespace, updated);
   };
 
   const applySavedScope = (scopeId: string) => {
-    const selected = stored.saved.find((item) => item.id === scopeId);
+    const selected = saved.find((item) => item.id === scopeId);
     if (!selected) {
       return;
     }
-    const updated = { ...stored, current: normalizeScope(selected.scope) };
-    setStored(updated);
-    writeStoredScopes(projectId, namespace, updated);
+    const updated = normalizeScope(selected.scope);
+    setCurrent(updated);
+    writeCurrentScope(projectId, namespace, updated);
   };
 
   const saveCurrentScope = (label: string) => {
@@ -144,33 +171,27 @@ export function useCodexIssueScope(projectId: string | null, namespace = "shared
       return;
     }
     const id = cleanedLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || `scope-${Date.now()}`;
-    const existing = stored.saved.filter((item) => item.id !== id);
-    const updated = {
-      ...stored,
-      saved: [...existing, { id, label: cleanedLabel, scope: normalizeScope(stored.current) }],
-    };
-    setStored(updated);
-    writeStoredScopes(projectId, namespace, updated);
+    const existing = saved.filter((item) => item.id !== id);
+    const updated = [...existing, { id, label: cleanedLabel, scope: normalizeScope(current) }];
+    setSaved(updated);
+    writeSavedScopes(projectId, updated);
   };
 
   const deleteSavedScope = (scopeId: string) => {
-    const updated = {
-      ...stored,
-      saved: stored.saved.filter((item) => item.id !== scopeId),
-    };
-    setStored(updated);
-    writeStoredScopes(projectId, namespace, updated);
+    const updated = saved.filter((item) => item.id !== scopeId);
+    setSaved(updated);
+    writeSavedScopes(projectId, updated);
   };
 
   const resetScope = () => {
-    const updated = { ...stored, current: { ...DEFAULT_CODEX_ISSUE_SCOPE } };
-    setStored(updated);
-    writeStoredScopes(projectId, namespace, updated);
+    const updated = { ...DEFAULT_CODEX_ISSUE_SCOPE };
+    setCurrent(updated);
+    writeCurrentScope(projectId, namespace, updated);
   };
 
   return {
-    scope: stored.current,
-    savedScopes: stored.saved,
+    scope: current,
+    savedScopes: saved,
     setScope,
     applySavedScope,
     saveCurrentScope,

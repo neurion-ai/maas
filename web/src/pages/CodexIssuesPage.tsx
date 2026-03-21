@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexIssueScopeToolbar } from "../components/CodexIssueScopeToolbar";
 import { CodexIssueDetailPanel } from "../components/CodexIssueDetailPanel";
 import { boardCounts, formatTimestamp, issueKeyMap, priorityLabel, statusLabel } from "../lib/codexMvp";
 import { filterCodexTasks, useCodexIssueScope, useCodexScopeOptions } from "../lib/codexIssueScopes";
 import { batchReviewIssues, fetchCodexIssueDetail, fetchCodexIssueIndex } from "../lib/controlRoomApi";
+import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 import { haltTask, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
@@ -24,7 +26,17 @@ function nextVisibleTaskId(currentTaskId: string | null, openTasks: BoardTask[],
   return openTasks[0]?.task_id ?? resolvedTasks[0]?.task_id ?? null;
 }
 
-export function CodexIssuesPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
+export function CodexIssuesPage({
+  onNavigate,
+  operatorWorkflow,
+  operatorWorkflowWarning,
+  onOpenOperatorItem,
+}: {
+  onNavigate: (view: ViewTarget) => void;
+  operatorWorkflow: OperatorWorkflowState | null;
+  operatorWorkflowWarning?: string | null;
+  onOpenOperatorItem: (item: OperatorLoopItem) => void;
+}) {
   const [issuesTab, setIssuesTab] = useState<IssuesTab>("queue");
   const [issueIndex, setIssueIndex] = useState<CodexIssueIndexResponse | null>(null);
   const [tasks, setTasks] = useState<BoardTask[]>([]);
@@ -276,6 +288,26 @@ export function CodexIssuesPage({ onNavigate }: { onNavigate: (view: ViewTarget)
       </header>
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+
+      <OperatorLoopPanel
+        workflow={operatorWorkflow}
+        compact
+        maxItems={3}
+        title="Review and recovery desk"
+        description="Issues owns operator decisions and blocked-work recovery. Use Command for loop posture and Runs for live-session evidence."
+        onSelectItem={onOpenOperatorItem}
+        warning={operatorWorkflowWarning}
+        footer={
+          <div className="codex-detail-actions">
+            <button type="button" className="codex-button codex-button--primary" onClick={() => onNavigate("command")}>
+              Open Command
+            </button>
+            <button type="button" className="codex-button" onClick={() => onNavigate("runs")}>
+              Open Runs
+            </button>
+          </div>
+        }
+      />
 
       <div className="codex-work-layout">
         <div className="codex-work-main">

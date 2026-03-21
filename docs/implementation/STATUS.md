@@ -40,6 +40,7 @@ See:
 - [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md)
 - [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md)
 - [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md)
+- [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend
@@ -171,6 +172,16 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#202` is implemented on `codex/codex-mvp-autopilot-memory`
 - [x] `#203` is implemented on `codex/codex-mvp-autopilot-memory`
 - [x] `#204` is implemented on `codex/codex-mvp-autopilot-memory`
+- [x] `#205` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#206` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#207` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#208` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#209` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#210` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#211` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#212` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#213` is implemented on `codex/codex-mvp-control-loop-hardening`
+- [x] `#214` is implemented on `codex/codex-mvp-control-loop-hardening`
 
 ## Extended Numbered Roadmap
 

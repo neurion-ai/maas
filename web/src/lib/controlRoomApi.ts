@@ -23,6 +23,7 @@ import type {
   LiveSnapshot,
   NotificationItem,
   OverviewResponse,
+  OperatorInboxResponse,
   OrchestratorRunResponse,
   PortfolioResponse,
   ProjectActionResponse,
@@ -681,6 +682,58 @@ export function fetchAutopilotStatus(signal?: AbortSignal, onFallback?: () => vo
         loop_count: 0,
       },
       why_idle: "Autopilot status unavailable.",
+    },
+    signal,
+    onFallback
+  );
+}
+
+export function fetchOperatorInbox(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<OperatorInboxResponse>(
+    appendProjectScope("/api/operator-inbox"),
+    {
+      project_id: "",
+      generated_at: new Date().toISOString(),
+      summary: {
+        total_items: 0,
+        review: 0,
+        stale_runs: 0,
+        blocked_recovery: 0,
+        policy_conflicts: 0,
+        notification_failures: 0,
+        critical_items: 0,
+      },
+      buckets: {},
+      items: [],
+      workflow: {
+        inbox: {
+          headline: "Operator inbox is clear",
+          detail: "No review, recovery, stale-run, or notification pressure currently requires manual intervention.",
+          totalCount: 0,
+          reviewCount: 0,
+          recoveryCount: 0,
+          suspectRunCount: 0,
+          failedNotificationCount: 0,
+          policyConflictCount: 0,
+          recommendedView: "command",
+          recommendedLabel: "Open Command",
+          items: [],
+        },
+        autopilot: {
+          tone: "default",
+          label: "Loading posture...",
+          summary: "Refreshing project execution posture.",
+          detail: "The operator loop will appear here once project state loads.",
+          facts: [],
+        },
+      },
+      project: {
+        project_id: "",
+        name: "",
+        queue_mode: "running",
+        max_running_jobs: 0,
+        autopilot_enabled: false,
+      },
     },
     signal,
     onFallback

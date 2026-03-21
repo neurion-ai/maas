@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
+import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
 import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
 import { boardCounts, formatTimestamp, openBoardTasks, resolvedBoardTasks } from "../lib/codexMvp";
+import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -10,7 +12,17 @@ import type { ActivityItem, BoardTask, CodexRunDetailResponse, CodexSystemDiagno
 
 type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command";
 
-export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
+export function CodexSystemPage({
+  onNavigate,
+  operatorWorkflow,
+  operatorWorkflowWarning,
+  onOpenOperatorItem,
+}: {
+  onNavigate: (view: ViewTarget) => void;
+  operatorWorkflow: OperatorWorkflowState | null;
+  operatorWorkflowWarning?: string | null;
+  onOpenOperatorItem: (item: OperatorLoopItem) => void;
+}) {
   const [providers, setProviders] = useState<ProvidersResponse | null>(null);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
@@ -124,6 +136,29 @@ export function CodexSystemPage({ onNavigate }: { onNavigate: (view: ViewTarget)
           <span>{runtimeDiagnostics.execution_state.detail}</span>
         </div>
       ) : null}
+
+      <OperatorLoopPanel
+        workflow={operatorWorkflow}
+        compact
+        maxItems={3}
+        title="Runtime evidence only"
+        description="System is the deep evidence wall. Use Runs for live intervention and Issues for review or recovery actions."
+        onSelectItem={onOpenOperatorItem}
+        warning={operatorWorkflowWarning}
+        footer={
+          <div className="codex-detail-actions">
+            <button type="button" className="codex-button codex-button--primary" onClick={() => onNavigate("runs")}>
+              Open Runs
+            </button>
+            <button type="button" className="codex-button" onClick={() => onNavigate("issues")}>
+              Open Issues
+            </button>
+            <button type="button" className="codex-button" onClick={() => onNavigate("command")}>
+              Open Command
+            </button>
+          </div>
+        }
+      />
 
       <div className="codex-metric-grid">
         <article className="codex-panel codex-stat">

@@ -541,6 +541,18 @@ def clone_project(connection, project_paths, project_id, actor_id, name=None):
     cloned_project["cloned_from_project_id"] = project_id
     cloned_config["project"] = cloned_project
 
+    cloned_autopilot = dict(cloned_config.get("autopilot") or {})
+    cloned_autopilot["enabled"] = False
+    cloned_config["autopilot"] = cloned_autopilot
+
+    cloned_provider_capacity = dict(cloned_config.get("provider_capacity") or {})
+    cloned_provider_capacity["queue_mode"] = "paused"
+    cloned_config["provider_capacity"] = cloned_provider_capacity
+
+    cloned_notifications = dict(cloned_config.get("notifications") or {})
+    cloned_notifications["webhook_urls"] = []
+    cloned_config["notifications"] = cloned_notifications
+
     discovery = _load_project_discovery(project_paths, project_id) if source_mode == "brownfield" else None
     if source_mode == "brownfield" and discovery is None:
         discovery = discover_brownfield_project(resolved_source_root)

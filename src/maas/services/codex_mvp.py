@@ -214,14 +214,36 @@ def _run_memory_context(activity):
 
 def _issue_recovery_playbook(task_row, review_decision, failure_count, latest_run, verification_runs):
     if task_row["status"] == "review":
+        decision_mode = review_decision.get("decision_mode")
+        review_packet = review_decision.get("grouped_review_packet") or {}
+        if decision_mode == "auto_approve":
+            return {
+                "kind": "review",
+                "title": "Low-risk review should auto-advance",
+                "summary": review_decision["summary"],
+                "detail": review_decision["detail"],
+                "recommended_action": "Leave it alone if you trust the policy, or approve manually now if you need the unblock immediately.",
+                "actions": ["approve", "reject"],
+                "confidence": "high",
+            }
+        if decision_mode == "batch_review":
+            return {
+                "kind": "review",
+                "title": review_packet.get("title") or "Review the latest output",
+                "summary": review_decision["summary"],
+                "detail": review_decision["detail"],
+                "recommended_action": "Batch-approve it with the rest of the low-risk verified packet if the evidence looks consistent.",
+                "actions": ["approve", "reject"],
+                "confidence": "high",
+            }
         return {
             "kind": "review",
             "title": "Review the latest output",
             "summary": review_decision["summary"],
-            "detail": review_decision["detail"],
+            "detail": review_decision.get("why_not_batch_reviewed") or review_decision["detail"],
             "recommended_action": "Approve it if the output and checks look correct; request changes otherwise.",
             "actions": ["approve", "reject"],
-            "confidence": "high" if review_decision.get("batch_review_eligible") else "medium",
+            "confidence": "medium",
         }
     if task_row["status"] == "blocked":
         reason = task_row["review_state"] or "blocked"

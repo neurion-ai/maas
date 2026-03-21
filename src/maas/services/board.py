@@ -177,7 +177,7 @@ def _operator_bucket_for_card(card):
 
 
 def _batch_review_eligibility(card, project_operator_config):
-    state = evaluate_review_decision_state(
+    return evaluate_review_decision_state(
         None,
         {
             "status": card["status"],
@@ -189,7 +189,39 @@ def _batch_review_eligibility(card, project_operator_config):
         failure_count=card.get("failure_count", 0),
         onboarding_mode=project_operator_config.get("onboarding_mode"),
     )
-    return state["batch_review_eligible"], state["detail"]
+
+
+def _group_review_packets(review_items):
+    packets = {}
+    for task in review_items:
+        eligibility = task.get("review_eligibility") or {}
+        if not eligibility.get("batch_review_eligible"):
+            continue
+        packet = eligibility.get("grouped_review_packet") or {}
+        packet_key = packet.get("packet_key")
+        if not packet_key:
+            continue
+        bucket = packets.setdefault(
+            packet_key,
+            {
+                "packet_key": packet_key,
+                "family": packet.get("family"),
+                "title": packet.get("title"),
+                "summary": packet.get("summary"),
+                "recommended_decision": packet.get("recommended_decision"),
+                "eligible_count": 0,
+                "eligible_task_ids": [],
+                "eligible_issue_keys": [],
+                "auto_approve_eligible_count": 0,
+            },
+        )
+        bucket["eligible_count"] += 1
+        bucket["eligible_task_ids"].append(task["task_id"])
+        if task.get("issue_key"):
+            bucket["eligible_issue_keys"].append(task["issue_key"])
+        if eligibility.get("auto_approve_eligible"):
+            bucket["auto_approve_eligible_count"] += 1
+    return list(packets.values())
 
 
 def fetch_board(connection, filters=None, project_id=None):
@@ -367,13 +399,18 @@ def fetch_board(connection, filters=None, project_id=None):
             "git_workspace_diff_artifact_id": git_workspace.get("last_diff_artifact_id"),
         }
         bucket = _operator_bucket_for_card(card)
-        batch_review_eligible, batch_review_reason = _batch_review_eligibility(
+        review_eligibility = _batch_review_eligibility(
             card,
             operator_config_by_project[row["project_id"]],
         )
         card["operator_bucket"] = bucket
-        card["batch_review_eligible"] = batch_review_eligible
-        card["batch_review_reason"] = batch_review_reason
+        card["review_eligibility"] = review_eligibility
+        card["batch_review_eligible"] = review_eligibility["batch_review_eligible"]
+        card["batch_review_reason"] = (
+            None
+            if review_eligibility["batch_review_eligible"]
+            else review_eligibility.get("why_not_batch_reviewed") or review_eligibility["detail"]
+        )
         cards_by_status.setdefault(column_key, []).append(card)
 
     active_agents_query = "SELECT COUNT(*) AS count FROM agents WHERE status = 'running'"
@@ -450,6 +487,7 @@ def fetch_issue_index(connection, filters=None, project_id=None):
     blocked_failure_items = [task for task in open_tasks if task.get("operator_bucket") == "blocked_failures"]
     blocked_dependency_items = [task for task in open_tasks if task.get("operator_bucket") == "blocked_dependencies"]
     batch_review_items = [task for task in review_items if task.get("batch_review_eligible")]
+    review_packets = _group_review_packets(review_items)
 
     return {
         "generated_at": board["generated_at"],
@@ -469,6 +507,7 @@ def fetch_issue_index(connection, filters=None, project_id=None):
                 "batch_review": {
                     "eligible_count": len(batch_review_items),
                     "eligible_task_ids": [task["task_id"] for task in batch_review_items],
+                    "packets": review_packets,
                     "summary": (
                         "Low-risk review items with passing checks can be approved together."
                         if batch_review_items

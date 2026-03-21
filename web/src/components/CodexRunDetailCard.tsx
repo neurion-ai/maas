@@ -145,6 +145,10 @@ export function CodexRunDetailCard({
                 </div>
                 <strong>{entry.title ?? entry.artifact_id}</strong>
                 <span>{entry.summary ?? "No summary recorded."}</span>
+                <span>
+                  {entry.freshness ?? "unknown"}
+                  {entry.age_days != null ? ` · ${entry.age_days}d old` : ""}
+                </span>
               </div>
             ))}
           </div>

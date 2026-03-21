@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import json
+import os
+import socket
 import threading
 from typing import Dict, Optional
 
@@ -22,6 +24,8 @@ AUTOPILOT_ACTOR_ID = "agent_allocator"
 _AUTOPILOT_THREADS: Dict[tuple[str, str], "AutopilotLoop"] = {}
 _AUTOPILOT_LOCK = threading.Lock()
 AUTOPILOT_STOP_JOIN_SECONDS = 5
+AUTOPILOT_LEASE_MIN_SECONDS = 15
+AUTOPILOT_LEASE_MULTIPLIER = 3
 
 
 def _load_json(value):
@@ -30,6 +34,184 @@ def _load_json(value):
     except (TypeError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _runtime_summary_json(summary):
+    return json.dumps(summary or {})
+
+
+def _lease_duration_seconds(policy):
+    interval_seconds = max(5, int((policy or {}).get("interval_seconds") or DEFAULT_AUTOPILOT_SETTINGS["interval_seconds"]))
+    return max(AUTOPILOT_LEASE_MIN_SECONDS, interval_seconds * AUTOPILOT_LEASE_MULTIPLIER)
+
+
+def _ensure_runtime_row(connection, project_id):
+    connection.execute(
+        """
+        INSERT INTO autopilot_runtime (project_id, last_summary_json)
+        VALUES (?, '{}')
+        ON CONFLICT(project_id) DO NOTHING
+        """,
+        (project_id,),
+    )
+
+
+def fetch_autopilot_runtime(connection, project_id):
+    row = connection.execute(
+        """
+        SELECT
+            project_id,
+            lease_token,
+            lease_owner,
+            lease_acquired_at,
+            lease_expires_at,
+            last_heartbeat_at,
+            last_summary_json,
+            last_error,
+            loop_count,
+            status,
+            updated_at,
+            CASE
+                WHEN lease_token IS NOT NULL
+                 AND lease_expires_at IS NOT NULL
+                 AND STRFTIME('%s', lease_expires_at) > STRFTIME('%s', 'now')
+                THEN 1
+                ELSE 0
+            END AS lease_active
+        FROM autopilot_runtime
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    try:
+        item["last_summary"] = json.loads(item.pop("last_summary_json") or "{}")
+    except (TypeError, ValueError):
+        item["last_summary"] = {}
+    item["lease_active"] = bool(item.pop("lease_active"))
+    return item
+
+
+def claim_autopilot_runtime_lease(connection, project_id, lease_token, lease_owner, policy):
+    _ensure_runtime_row(connection, project_id)
+    lease_seconds = _lease_duration_seconds(policy)
+    cursor = connection.execute(
+        """
+        UPDATE autopilot_runtime
+        SET lease_token = ?,
+            lease_owner = ?,
+            lease_acquired_at = CASE
+                WHEN lease_token = ? THEN lease_acquired_at
+                ELSE CURRENT_TIMESTAMP
+            END,
+            lease_expires_at = DATETIME('now', ?),
+            status = 'running',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+          AND (
+            lease_token IS NULL
+            OR lease_token = ?
+            OR lease_expires_at IS NULL
+            OR STRFTIME('%s', lease_expires_at) <= STRFTIME('%s', 'now')
+          )
+        """,
+        (
+            lease_token,
+            lease_owner,
+            lease_token,
+            "+{0} seconds".format(lease_seconds),
+            project_id,
+            lease_token,
+        ),
+    )
+    connection.commit()
+    if cursor.rowcount <= 0:
+        return None
+    return fetch_autopilot_runtime(connection, project_id)
+
+
+def record_autopilot_runtime_result(connection, project_id, lease_token, policy, summary=None, error=None):
+    _ensure_runtime_row(connection, project_id)
+    lease_seconds = _lease_duration_seconds(policy)
+    cursor = connection.execute(
+        """
+        UPDATE autopilot_runtime
+        SET last_heartbeat_at = CURRENT_TIMESTAMP,
+            last_summary_json = COALESCE(?, last_summary_json),
+            last_error = ?,
+            loop_count = loop_count + 1,
+            status = ?,
+            lease_expires_at = DATETIME('now', ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+          AND lease_token = ?
+        """,
+        (
+            _runtime_summary_json(summary) if summary is not None else None,
+            error,
+            "error" if error else "running",
+            "+{0} seconds".format(lease_seconds),
+            project_id,
+            lease_token,
+        ),
+    )
+    connection.commit()
+    if cursor.rowcount <= 0:
+        return None
+    return fetch_autopilot_runtime(connection, project_id)
+
+
+def refresh_autopilot_runtime_lease(connection, project_id, lease_token, policy, status="running"):
+    _ensure_runtime_row(connection, project_id)
+    lease_seconds = _lease_duration_seconds(policy)
+    cursor = connection.execute(
+        """
+        UPDATE autopilot_runtime
+        SET last_heartbeat_at = CURRENT_TIMESTAMP,
+            lease_expires_at = DATETIME('now', ?),
+            status = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = ?
+          AND lease_token = ?
+        """,
+        (
+            "+{0} seconds".format(lease_seconds),
+            status,
+            project_id,
+            lease_token,
+        ),
+    )
+    connection.commit()
+    if cursor.rowcount <= 0:
+        return None
+    return fetch_autopilot_runtime(connection, project_id)
+
+
+def release_autopilot_runtime_lease(connection, project_id, lease_token=None, status="stopped", error=None):
+    _ensure_runtime_row(connection, project_id)
+    params = [status, error, project_id]
+    where_clause = "project_id = ?"
+    if lease_token is not None:
+        where_clause += " AND lease_token = ?"
+        params.append(lease_token)
+    connection.execute(
+        """
+        UPDATE autopilot_runtime
+        SET lease_token = NULL,
+            lease_owner = NULL,
+            lease_acquired_at = NULL,
+            lease_expires_at = NULL,
+            status = ?,
+            last_error = COALESCE(?, last_error),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE {where_clause}
+        """.format(where_clause=where_clause),
+        tuple(params),
+    )
+    connection.commit()
+    return fetch_autopilot_runtime(connection, project_id)
 
 
 def normalize_autopilot_policy(policy=None):
@@ -140,6 +322,15 @@ class AutopilotLoop:
     last_summary: Optional[dict] = None
     last_error: Optional[str] = None
     loop_count: int = 0
+    loop_token: str = field(default_factory=lambda: generate_id("autopilot"))
+    lease_owner: Optional[str] = None
+    lease_expires_at: Optional[str] = None
+    runtime_status: str = "idle"
+    owns_lease: bool = False
+
+    def __post_init__(self):
+        if self.lease_owner is None:
+            self.lease_owner = "{0}:{1}:{2}".format(socket.gethostname(), os.getpid(), self.loop_token)
 
     def update_policy(self, policy):
         with self.lock:
@@ -151,20 +342,45 @@ class AutopilotLoop:
             return {
                 "project_id": self.project_id,
                 "enabled": policy["enabled"],
-                "running": bool(self.thread and self.thread.is_alive() and not self.stop_event.is_set()),
+                "running": bool(
+                    self.thread and self.thread.is_alive() and not self.stop_event.is_set() and self.owns_lease
+                ),
                 "policy": policy,
                 "last_heartbeat_at": self.last_heartbeat_at,
                 "last_summary": self.last_summary,
                 "last_error": self.last_error,
                 "loop_count": self.loop_count,
+                "runtime_status": self.runtime_status,
+                "lease_owner": self.lease_owner,
+                "lease_expires_at": self.lease_expires_at,
+                "owns_lease": self.owns_lease,
             }
 
-    def mark_result(self, summary=None, error=None):
+    def mark_result(self, runtime_row, summary=None, error=None):
         with self.lock:
-            self.last_heartbeat_at = datetime.now(timezone.utc).isoformat()
-            self.last_summary = summary
+            self.last_heartbeat_at = runtime_row.get("last_heartbeat_at") if runtime_row else datetime.now(timezone.utc).isoformat()
+            if summary is not None:
+                self.last_summary = summary
+            elif runtime_row and runtime_row.get("last_summary") is not None:
+                self.last_summary = runtime_row.get("last_summary")
             self.last_error = error
-            self.loop_count += 1
+            self.loop_count = int(runtime_row.get("loop_count") or 0) if runtime_row else self.loop_count + 1
+            self.runtime_status = runtime_row.get("status") if runtime_row else ("error" if error else "waiting")
+            self.lease_expires_at = runtime_row.get("lease_expires_at") if runtime_row else None
+            self.owns_lease = bool(runtime_row and runtime_row.get("lease_active"))
+
+    def mark_waiting(self, error=None):
+        with self.lock:
+            self.last_error = error
+            self.runtime_status = "waiting"
+            self.lease_expires_at = None
+            self.owns_lease = False
+
+    def mark_stopped(self):
+        with self.lock:
+            self.runtime_status = "stopped"
+            self.lease_expires_at = None
+            self.owns_lease = False
 
     def run_forever(self):
         paths = ProjectPaths(self.project_root)
@@ -174,38 +390,79 @@ class AutopilotLoop:
             try:
                 connection = connect(paths)
                 try:
-                    result = run_orchestrator_once(
+                    runtime_row = claim_autopilot_runtime_lease(
                         connection,
-                        paths,
-                        allocate_limit=policy["allocate_limit"],
-                        provider_job_limit=policy["provider_job_limit"],
-                        project_id=self.project_id,
-                        auto_launch_assigned_work=policy["auto_launch_assigned_work"],
+                        self.project_id,
+                        self.loop_token,
+                        self.lease_owner,
+                        policy,
                     )
-                    notifications_processed = 0
-                    if policy.get("process_notifications"):
-                        for _ in range(policy["notification_batch_limit"]):
-                            processed = process_next_notification(
+                    if runtime_row is None:
+                        self.mark_waiting()
+                    else:
+                        try:
+                            runtime_row = refresh_autopilot_runtime_lease(
                                 connection,
-                                AUTOPILOT_ACTOR_ID,
-                                project_id=self.project_id,
+                                self.project_id,
+                                self.loop_token,
+                                policy,
+                                status="running",
                             )
-                            if not processed["processed"]:
-                                break
-                            notifications_processed += 1
-                    summary = {
-                        "assigned_count": result.get("assigned_count", 0),
-                        "provider_jobs_queued": result.get("provider_jobs_queued", 0),
-                        "provider_jobs_processed": result.get("provider_jobs_processed", 0),
-                        "provider_jobs_dispatched": result.get("provider_jobs_dispatched", 0),
-                        "notifications_processed": notifications_processed,
-                        "why_idle": _execution_explanation(connection, self.project_id),
-                    }
+                            result = run_orchestrator_once(
+                                connection,
+                                paths,
+                                allocate_limit=policy["allocate_limit"],
+                                provider_job_limit=policy["provider_job_limit"],
+                                project_id=self.project_id,
+                                auto_launch_assigned_work=policy["auto_launch_assigned_work"],
+                            )
+                            notifications_processed = 0
+                            if policy.get("process_notifications"):
+                                for _ in range(policy["notification_batch_limit"]):
+                                    processed = process_next_notification(
+                                        connection,
+                                        AUTOPILOT_ACTOR_ID,
+                                        project_id=self.project_id,
+                                    )
+                                    if not processed["processed"]:
+                                        break
+                                    notifications_processed += 1
+                                    runtime_row = refresh_autopilot_runtime_lease(
+                                        connection,
+                                        self.project_id,
+                                        self.loop_token,
+                                        policy,
+                                        status="running",
+                                    )
+                            summary = {
+                                "assigned_count": result.get("assigned_count", 0),
+                                "provider_jobs_queued": result.get("provider_jobs_queued", 0),
+                                "provider_jobs_processed": result.get("provider_jobs_processed", 0),
+                                "provider_jobs_dispatched": result.get("provider_jobs_dispatched", 0),
+                                "notifications_processed": notifications_processed,
+                                "why_idle": _execution_explanation(connection, self.project_id),
+                            }
+                            runtime_row = record_autopilot_runtime_result(
+                                connection,
+                                self.project_id,
+                                self.loop_token,
+                                policy,
+                                summary=summary,
+                            )
+                            self.mark_result(runtime_row, summary=summary, error=None)
+                        except Exception as exc:  # pragma: no cover - guardrail path
+                            runtime_row = record_autopilot_runtime_result(
+                                connection,
+                                self.project_id,
+                                self.loop_token,
+                                policy,
+                                error=str(exc),
+                            )
+                            self.mark_result(runtime_row, summary=None, error=str(exc))
                 finally:
                     connection.close()
-                self.mark_result(summary=summary, error=None)
             except Exception as exc:  # pragma: no cover - guardrail path
-                self.mark_result(summary=None, error=str(exc))
+                self.mark_waiting(error=str(exc))
             if self.stop_event.wait(policy["interval_seconds"]):
                 break
 
@@ -224,6 +481,21 @@ class AutopilotLoop:
         self.stop_event.set()
         if self.thread and self.thread.is_alive():
             self.thread.join(AUTOPILOT_STOP_JOIN_SECONDS)
+        if not self.thread or not self.thread.is_alive():
+            connection = connect(ProjectPaths(self.project_root))
+            try:
+                release_autopilot_runtime_lease(
+                    connection,
+                    self.project_id,
+                    lease_token=self.loop_token,
+                    status="stopped",
+                    error=self.last_error if self.runtime_status == "error" else None,
+                )
+            finally:
+                connection.close()
+            self.mark_stopped()
+            return True
+        return False
 
 
 def stop_project_autopilot(project_paths, project_id):
@@ -232,8 +504,8 @@ def stop_project_autopilot(project_paths, project_id):
         current = _AUTOPILOT_THREADS.get(key)
         if current is None:
             return False
-        current.stop()
-        if not current.thread or not current.thread.is_alive():
+        stopped = current.stop()
+        if stopped:
             del _AUTOPILOT_THREADS[key]
             return True
         return False
@@ -250,8 +522,11 @@ def sync_project_autopilot(connection, project_paths, project_id):
         current = _AUTOPILOT_THREADS.get(key)
         if not policy["enabled"]:
             if current is not None:
-                current.stop()
-                del _AUTOPILOT_THREADS[key]
+                stopped = current.stop()
+                if stopped:
+                    del _AUTOPILOT_THREADS[key]
+            else:
+                release_autopilot_runtime_lease(connection, project_id, status="idle")
             return None
         if current is None:
             current = AutopilotLoop(project_root=project_paths.root, project_id=project_id, policy=policy)
@@ -309,6 +584,24 @@ def fetch_autopilot_status(connection, project_paths, project_id=None):
     with _AUTOPILOT_LOCK:
         loop = _AUTOPILOT_THREADS.get(key)
         runtime = loop.snapshot() if loop is not None else None
+    durable_runtime = fetch_autopilot_runtime(connection, resolved_project_id)
+    if durable_runtime is not None:
+        holder_is_local = bool(runtime and runtime.get("lease_owner") == durable_runtime.get("lease_owner") and runtime.get("owns_lease"))
+        runtime = {
+            "project_id": resolved_project_id,
+            "enabled": policy["enabled"],
+            "running": bool(durable_runtime.get("lease_active") and durable_runtime.get("status") in {"running", "error"}),
+            "policy": policy,
+            "last_heartbeat_at": durable_runtime.get("last_heartbeat_at"),
+            "last_summary": durable_runtime.get("last_summary") or {},
+            "last_error": durable_runtime.get("last_error"),
+            "loop_count": durable_runtime.get("loop_count") or 0,
+            "runtime_status": durable_runtime.get("status"),
+            "lease_owner": durable_runtime.get("lease_owner"),
+            "lease_expires_at": durable_runtime.get("lease_expires_at"),
+            "owns_lease": holder_is_local,
+            "holder_is_local": holder_is_local,
+        }
     return {
         "project_id": resolved_project_id,
         "policy": policy,
@@ -322,6 +615,11 @@ def fetch_autopilot_status(connection, project_paths, project_id=None):
             "last_summary": None,
             "last_error": None,
             "loop_count": 0,
+            "runtime_status": "idle",
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "owns_lease": False,
+            "holder_is_local": False,
         },
         "why_idle": _execution_explanation(connection, resolved_project_id),
     }

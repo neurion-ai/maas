@@ -474,6 +474,24 @@ lint = "imported:lint"
             self.assertEqual(project_row["review_policy"]["max_priority_for_auto_approve"], 55)
             self.assertEqual(project_row["review_policy"]["require_verification_pass"], True)
 
+    def test_update_review_policy_returns_403_for_unauthorized_actor(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/update-review-policy",
+                json={
+                    "actor_id": "not_a_real_actor",
+                    "auto_approve_low_risk": False,
+                    "max_priority_for_auto_approve": 55,
+                    "require_verification_pass": True,
+                },
+            )
+
+            self.assertEqual(response.status_code, 403)
+
     def test_update_risk_policy_persists_and_is_visible_in_portfolio(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")

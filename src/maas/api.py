@@ -530,6 +530,8 @@ def create_app(project_root="."):
                     "require_verification_pass": payload.require_verification_pass,
                 },
             )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

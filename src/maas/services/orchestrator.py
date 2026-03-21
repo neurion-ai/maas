@@ -75,7 +75,6 @@ def _preferred_launch_provider_id(provider_statuses, preferred_provider_id=None)
         preferred = statuses_by_id.get(preferred_provider_id)
         if preferred is not None and _provider_is_launch_ready(preferred):
             return preferred_provider_id
-        return None
 
     fallback_order = ["openai_codex", "python_script", "claude_code"]
     for provider_id in fallback_order:

@@ -90,6 +90,47 @@ def _memory_freshness_fields(promoted_at):
     }
 
 
+def _memory_usage_fields(memory_payload):
+    used_count = int(memory_payload.get("used_count") or 0)
+    success_count = int(memory_payload.get("success_count") or 0)
+    failure_count = int(memory_payload.get("failure_count") or 0)
+    attempts = success_count + failure_count
+    success_ratio = (success_count / attempts) if attempts else None
+    usefulness_score = success_count * 2 - failure_count
+    if attempts and success_ratio is not None:
+        usefulness_score += success_ratio
+    if usefulness_score >= 3:
+        usefulness = "high"
+    elif usefulness_score >= 1:
+        usefulness = "medium"
+    elif failure_count and usefulness_score < 0:
+        usefulness = "low"
+    else:
+        usefulness = "unknown"
+    return {
+        "used_count": used_count,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "success_ratio": success_ratio,
+        "usefulness_score": usefulness_score,
+        "usefulness": usefulness,
+        "last_used_at": memory_payload.get("last_used_at"),
+        "last_run_outcome": memory_payload.get("last_run_outcome"),
+    }
+
+
+def _memory_recency_sort_key(value):
+    if not value:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).timestamp()
+
+
 def _memory_summary_from_preview(preview):
     if not preview or not preview.get("content"):
         return "Promoted artifact with no inline preview available."
@@ -125,6 +166,11 @@ def promote_artifact_to_memory(connection, artifact_id, actor_id, title=None, su
         "artifact_type": artifact["artifact_type"],
         "task_id": artifact["task_id"],
         "session_id": artifact["session_id"],
+        "used_count": int((metadata.get("memory") or {}).get("used_count") or 0),
+        "success_count": int((metadata.get("memory") or {}).get("success_count") or 0),
+        "failure_count": int((metadata.get("memory") or {}).get("failure_count") or 0),
+        "last_used_at": (metadata.get("memory") or {}).get("last_used_at"),
+        "last_run_outcome": (metadata.get("memory") or {}).get("last_run_outcome"),
     }
     metadata["memory"] = memory_payload
     connection.execute(
@@ -169,6 +215,105 @@ def promote_artifact_to_memory(connection, artifact_id, actor_id, title=None, su
     }
 
 
+def _update_memory_usage(connection, artifact_ids, usage_update):
+    resolved_ids = [artifact_id for artifact_id in (artifact_ids or []) if artifact_id]
+    if not resolved_ids:
+        return 0
+    updated = 0
+    for artifact_id in resolved_ids:
+        row = connection.execute(
+            """
+            SELECT metadata_json
+            FROM artifacts
+            WHERE artifact_id = ?
+            """,
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            continue
+        metadata = _load_json(row["metadata_json"])
+        memory = metadata.get("memory") or {}
+        if not memory.get("promoted"):
+            continue
+        merged = dict(memory)
+        merged.update({key: value for key, value in usage_update.items() if value is not None})
+        metadata["memory"] = merged
+        connection.execute(
+            "UPDATE artifacts SET metadata_json = ? WHERE artifact_id = ?",
+            (_dump_json(metadata), artifact_id),
+        )
+        updated += 1
+    return updated
+
+
+def record_memory_injection(connection, artifact_ids):
+    now = datetime.now(timezone.utc).isoformat()
+    resolved_ids = [artifact_id for artifact_id in (artifact_ids or []) if artifact_id]
+    if not resolved_ids:
+        return 0
+    updated = 0
+    for artifact_id in resolved_ids:
+        row = connection.execute(
+            """
+            SELECT metadata_json
+            FROM artifacts
+            WHERE artifact_id = ?
+            """,
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            continue
+        metadata = _load_json(row["metadata_json"])
+        memory = metadata.get("memory") or {}
+        if not memory.get("promoted"):
+            continue
+        memory["used_count"] = int(memory.get("used_count") or 0) + 1
+        memory["last_used_at"] = now
+        metadata["memory"] = memory
+        connection.execute(
+            "UPDATE artifacts SET metadata_json = ? WHERE artifact_id = ?",
+            (_dump_json(metadata), artifact_id),
+        )
+        updated += 1
+    return updated
+
+
+def record_memory_outcome(connection, artifact_ids, outcome):
+    now = datetime.now(timezone.utc).isoformat()
+    resolved_ids = [artifact_id for artifact_id in (artifact_ids or []) if artifact_id]
+    if not resolved_ids:
+        return 0
+    updated = 0
+    for artifact_id in resolved_ids:
+        row = connection.execute(
+            """
+            SELECT metadata_json
+            FROM artifacts
+            WHERE artifact_id = ?
+            """,
+            (artifact_id,),
+        ).fetchone()
+        if row is None:
+            continue
+        metadata = _load_json(row["metadata_json"])
+        memory = metadata.get("memory") or {}
+        if not memory.get("promoted"):
+            continue
+        if outcome == "completed":
+            memory["success_count"] = int(memory.get("success_count") or 0) + 1
+        else:
+            memory["failure_count"] = int(memory.get("failure_count") or 0) + 1
+        memory["last_run_outcome"] = outcome
+        memory["last_used_at"] = now
+        metadata["memory"] = memory
+        connection.execute(
+            "UPDATE artifacts SET metadata_json = ? WHERE artifact_id = ?",
+            (_dump_json(metadata), artifact_id),
+        )
+        updated += 1
+    return updated
+
+
 def fetch_project_memory(connection, project_id, limit=40, search=None):
     rows = connection.execute(
         """
@@ -200,6 +345,7 @@ def fetch_project_memory(connection, project_id, limit=40, search=None):
             "promoted_by": memory.get("promoted_by"),
             "preview": _artifact_preview(row["path"]),
             **_memory_freshness_fields(memory.get("promoted_at")),
+            **_memory_usage_fields(memory),
         }
         if query_tokens:
             candidate = " ".join([entry["title"], entry["summary"], " ".join(entry["tags"] or [])])
@@ -211,10 +357,24 @@ def fetch_project_memory(connection, project_id, limit=40, search=None):
             entry["score"] = 0
         entries.append(entry)
     if query_tokens:
-        entries.sort(key=lambda item: (-item["score"], item.get("promoted_at") or "", item["created_at"]), reverse=False)
         entries = sorted(
             entries,
-            key=lambda item: (-item["score"], item.get("promoted_at") or item["created_at"] or ""),
+            key=lambda item: (
+                -item["score"],
+                -float(item.get("usefulness_score") or 0),
+                item.get("freshness") == "stale",
+                -(item.get("success_ratio") or 0),
+                -_memory_recency_sort_key(item.get("promoted_at") or item["created_at"]),
+            ),
+        )
+    else:
+        entries = sorted(
+            entries,
+            key=lambda item: (
+                -float(item.get("usefulness_score") or 0),
+                item.get("freshness") == "stale",
+                -_memory_recency_sort_key(item.get("promoted_at") or item["created_at"]),
+            ),
         )
     return entries[:limit]
 
@@ -244,6 +404,9 @@ def retrieve_relevant_memory(connection, project_id, task_title, task_descriptio
     scored.sort(
         key=lambda item: (
             item["score"],
+            float(item.get("usefulness_score") or 0),
+            item.get("success_ratio") or 0,
+            -(item.get("age_days") or 0),
             item.get("promoted_at") or item["created_at"] or "",
         ),
         reverse=True,
@@ -312,6 +475,12 @@ def build_task_prompt(connection, task_id):
                 "age_days": entry.get("age_days"),
                 "freshness": entry.get("freshness"),
                 "stale": entry.get("stale"),
+                "used_count": entry.get("used_count"),
+                "success_count": entry.get("success_count"),
+                "failure_count": entry.get("failure_count"),
+                "success_ratio": entry.get("success_ratio"),
+                "usefulness_score": entry.get("usefulness_score"),
+                "usefulness": entry.get("usefulness"),
             }
             for entry in memory_entries
         ],

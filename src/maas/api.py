@@ -33,6 +33,9 @@ from maas.services.codex_mvp import (
     fetch_runs,
     fetch_system_diagnostics,
 )
+from maas.services.delivery import fetch_delivery_overview, prepare_github_pr_draft
+from maas.services.environment_doctor import fetch_environment_doctor
+from maas.services.goal_planning import create_goal, fetch_goal_planning, synthesize_goal_issues
 from maas.services.memory import fetch_project_memory, promote_artifact_to_memory
 from maas.services.dashboard import fetch_agent_roster, fetch_goal_tree, fetch_overview
 from maas.services.escalations import approve_escalation, fetch_escalations, reject_escalation, request_escalation
@@ -310,6 +313,30 @@ class ProjectAutopilotRequest(BaseModel):
     auto_launch_assigned_work: bool = True
     process_notifications: bool = True
     notification_batch_limit: int = 5
+    schedule_window_start_hour_utc: Optional[int] = None
+    schedule_window_end_hour_utc: Optional[int] = None
+    stop_when_doctor_blocked: bool = True
+    max_review_queue: int = 0
+    max_blocked_queue: int = 0
+    max_idle_cycles_before_alert: int = 6
+
+
+class GoalCreateRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    title: str
+    description: str = ""
+    goal_type: str = "initiative"
+    priority: int = 75
+    parent_goal_id: Optional[str] = None
+
+
+class GoalSynthesizeRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    refresh: bool = True
+
+
+class DeliveryDraftRequest(BaseModel):
+    actor_id: str = "agent_allocator"
 
 
 class MemoryPromotionRequest(BaseModel):
@@ -638,6 +665,12 @@ def create_app(project_root="."):
                     "auto_launch_assigned_work": payload.auto_launch_assigned_work,
                     "process_notifications": payload.process_notifications,
                     "notification_batch_limit": payload.notification_batch_limit,
+                    "schedule_window_start_hour_utc": payload.schedule_window_start_hour_utc,
+                    "schedule_window_end_hour_utc": payload.schedule_window_end_hour_utc,
+                    "stop_when_doctor_blocked": payload.stop_when_doctor_blocked,
+                    "max_review_queue": payload.max_review_queue,
+                    "max_blocked_queue": payload.max_blocked_queue,
+                    "max_idle_cycles_before_alert": payload.max_idle_cycles_before_alert,
                 },
             )
         except PermissionError as exc:
@@ -791,6 +824,58 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/goals/planning")
+    def goals_planning(project_id: str = None, goal_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_goal_planning(connection, project_id=scoped_project_id, goal_id=goal_id)
+        finally:
+            connection.close()
+
+    @app.post("/api/goals")
+    def goals_create(payload: GoalCreateRequest, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return {
+                "goal": create_goal(
+                    connection,
+                    actor_id=payload.actor_id,
+                    project_id=scoped_project_id,
+                    title=payload.title,
+                    description=payload.description,
+                    goal_type=payload.goal_type,
+                    priority=payload.priority,
+                    parent_goal_id=payload.parent_goal_id,
+                )
+            }
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/goals/{goal_id}/actions/synthesize")
+    def goals_synthesize(goal_id: str, payload: GoalSynthesizeRequest, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return synthesize_goal_issues(
+                connection,
+                project_id=scoped_project_id,
+                goal_id=goal_id,
+                actor_id=payload.actor_id,
+                refresh=payload.refresh,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.get("/api/tasks/ready")
     def tasks_ready(project_id: str = None):
         connection = connect(paths)
@@ -820,6 +905,24 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
+        finally:
+            connection.close()
+
+    @app.get("/api/environment/doctor")
+    def environment_doctor(project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_environment_doctor(connection, paths, scoped_project_id)
+        finally:
+            connection.close()
+
+    @app.get("/api/delivery")
+    def delivery_overview(project_id: str = None, limit: int = 12):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_delivery_overview(connection, paths, scoped_project_id, limit=int(limit))
         finally:
             connection.close()
 
@@ -1141,6 +1244,25 @@ def create_app(project_root="."):
         connection = connect(paths)
         try:
             return cancel_run(connection, session_id, payload.actor_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/prepare-pr-draft")
+    def task_prepare_pr_draft(task_id: str, payload: DeliveryDraftRequest, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return prepare_github_pr_draft(
+                connection,
+                paths,
+                task_id=task_id,
+                actor_id=payload.actor_id,
+                project_id=scoped_project_id,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:

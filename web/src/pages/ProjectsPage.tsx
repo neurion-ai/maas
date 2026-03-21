@@ -2,6 +2,7 @@ import type { DragEvent, FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import {
+  fetchEnvironmentDoctor,
   fetchOverview,
   fetchPortfolio,
   fetchProjectTemplates,
@@ -14,7 +15,7 @@ import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoo
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { OverviewResponse, PortfolioProject, PortfolioResponse, ProjectSummary, ProjectTemplate } from "../types";
+import type { EnvironmentDoctorResponse, OverviewResponse, PortfolioProject, PortfolioResponse, ProjectSummary, ProjectTemplate } from "../types";
 
 export interface ProjectFormState {
   name: string;
@@ -288,6 +289,7 @@ export function ProjectsPage({
 }: ProjectsPageProps) {
   const [portfolio, setPortfolio] = useState<PortfolioResponse | null>(null);
   const [selectedOverview, setSelectedOverview] = useState<OverviewResponse | null>(null);
+  const [selectedDoctor, setSelectedDoctor] = useState<EnvironmentDoctorResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
   const [pickingSourceRoot, setPickingSourceRoot] = useState(false);
@@ -314,15 +316,28 @@ export function ProjectsPage({
 
     async function loadPageState() {
       try {
-        const [portfolioPayload, templatePayload] = await Promise.all([fetchPortfolio(), fetchProjectTemplates()]);
-        const overviewPayload = selectedProject ? await fetchOverview() : null;
+        let usedFallback = false;
+        const markFallback = () => {
+          usedFallback = true;
+        };
+        const [portfolioPayload, templatePayload] = await Promise.all([
+          fetchPortfolio(undefined, markFallback),
+          fetchProjectTemplates(undefined, markFallback),
+        ]);
+        const [overviewPayload, doctorPayload] = selectedProject
+          ? await Promise.all([
+              fetchOverview(selectedProject.project_id, undefined, markFallback),
+              fetchEnvironmentDoctor(undefined, markFallback, selectedProject.project_id),
+            ])
+          : [null, null];
         if (!mounted) {
           return;
         }
         setPortfolio(portfolioPayload);
         setTemplates(templatePayload.templates);
         setSelectedOverview(overviewPayload);
-        setNotice(null);
+        setSelectedDoctor(doctorPayload);
+        setNotice(usedFallback ? "Projects refresh used cached data for one or more panels." : null);
       } catch {
         if (!mounted) {
           return;
@@ -365,7 +380,12 @@ export function ProjectsPage({
       const payload = await runOrchestratorPass(4, 3, true);
       setPortfolio(await fetchPortfolio());
       if (selectedProject) {
-        setSelectedOverview(await fetchOverview());
+        const [overviewPayload, doctorPayload] = await Promise.all([
+          fetchOverview(selectedProject.project_id),
+          fetchEnvironmentDoctor(undefined, undefined, selectedProject.project_id),
+        ]);
+        setSelectedOverview(overviewPayload);
+        setSelectedDoctor(doctorPayload);
       }
       const launched = (payload.provider_jobs_processed ?? 0) + (payload.provider_jobs_dispatched ?? 0);
       setNotice(
@@ -574,6 +594,20 @@ export function ProjectsPage({
                   </strong>
                 </div>
               </div>
+              {selectedDoctor ? (
+                <div className="list-row">
+                  <div>
+                    <span className="eyebrow">Environment doctor</span>
+                    <strong>{selectedDoctor.summary.summary}</strong>
+                    <p>{selectedDoctor.progress.detail}</p>
+                  </div>
+                  <div className="list-row__meta">
+                    <span className={`status-pill status-pill--${selectedDoctor.summary.status === "blocked" ? "danger" : selectedDoctor.summary.status === "ready" ? "default" : "warn"}`}>
+                      {selectedDoctor.summary.label}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
               <div className="surface-card__actions">
                 {onNavigate ? (
                   <button
@@ -748,7 +782,7 @@ export function ProjectsPage({
                       setNotice(null);
                       try {
                         await runSupervisorPass(3);
-                        setSelectedOverview(await fetchOverview());
+                        setSelectedOverview(await fetchOverview(selectedProject.project_id));
                         setNotice("Supervisor pass completed. The import review task is ready for inspection.");
                         onNavigate?.("command");
                       } catch {

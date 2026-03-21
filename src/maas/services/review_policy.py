@@ -160,13 +160,49 @@ def _review_reason(code, summary, detail, blocks_batch=True, blocks_auto=True):
     }
 
 
-def _grouped_review_packet(project_policy):
+def _task_value(task_row, key, default=None):
+    if task_row is None:
+        return default
+    try:
+        return task_row[key]
+    except (KeyError, IndexError, TypeError):
+        if hasattr(task_row, "get"):
+            return task_row.get(key, default)
+        return default
+
+
+def _review_packet_scope(task_row):
+    goal_id = _task_value(task_row, "goal_id")
+    if goal_id:
+        return {
+            "packet_scope": "goal",
+            "packet_scope_id": goal_id,
+            "packet_scope_label": _task_value(task_row, "goal_title") or "Shared goal",
+        }
+    review_state = _task_value(task_row, "review_state")
+    if review_state:
+        return {
+            "packet_scope": "review_state",
+            "packet_scope_id": review_state,
+            "packet_scope_label": review_state.replace("_", " "),
+        }
+    return {
+        "packet_scope": "project",
+        "packet_scope_id": _task_value(task_row, "project_id", "project"),
+        "packet_scope_label": "Project",
+    }
+
+
+def _grouped_review_packet(task_row, project_policy):
     auto_enabled = project_policy.get("auto_approve_low_risk", False)
+    scope = _review_packet_scope(task_row or {})
     return {
         "packet_key": (
-            "low_risk_verified_auto"
-            if auto_enabled
-            else "low_risk_verified_manual"
+            "low_risk_verified_{mode}:{scope}:{scope_id}".format(
+                mode="auto" if auto_enabled else "manual",
+                scope=scope["packet_scope"],
+                scope_id=scope["packet_scope_id"],
+            )
         ),
         "family": LOW_RISK_REVIEW_PACKET_FAMILY,
         "title": "Low-risk verified review packet",
@@ -176,6 +212,7 @@ def _grouped_review_packet(project_policy):
             else "Verified low-risk issues that can be approved together from one review packet."
         ),
         "recommended_decision": "approve",
+        **scope,
     }
 
 
@@ -305,7 +342,7 @@ def evaluate_review_decision_state(connection, task_row, project_policy, verific
         )
 
     auto_approve_eligible = batch_review_eligible and auto_approve_enabled
-    grouped_review_packet = _grouped_review_packet(project_policy) if batch_review_eligible else None
+    grouped_review_packet = _grouped_review_packet(task_row, project_policy) if batch_review_eligible else None
     blocking_batch_reasons = [reason for reason in reasons if reason["blocks_batch_review"]]
     blocking_auto_reasons = [reason for reason in reasons if reason["blocks_auto_approve"]]
     decision_mode = _decision_mode(batch_review_eligible, auto_approve_eligible)

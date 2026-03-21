@@ -43,6 +43,7 @@ export interface BoardTask {
   next_retry_reason?: string | null;
   heartbeat_age_seconds?: number | null;
   age_hours?: number | null;
+  review_age_hours?: number | null;
   review_state?: string | null;
   goal?: BoardGoal | null;
   agent?: BoardAgent | null;
@@ -62,6 +63,13 @@ export interface BoardTask {
   latest_verification_status?: string | null;
   latest_verification_at?: string | null;
   latest_verification_command?: string | null;
+  verification_runs?: Array<{
+    status: string;
+    finished_at?: string | null;
+    started_at?: string | null;
+    command?: string | null;
+    verification_run_id?: string;
+  }>;
   git_workspace_supported?: boolean;
   git_workspace_prepared?: boolean;
   git_workspace_branch?: string | null;
@@ -328,6 +336,144 @@ export interface ProjectTemplatesResponse {
   templates: ProjectTemplate[];
 }
 
+export interface EnvironmentDoctorCheck {
+  code: string;
+  label: string;
+  status: "passed" | "warning" | "failed" | "simulation";
+  severity: "info" | "warning" | "critical";
+  summary: string;
+  detail: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface EnvironmentDoctorResponse {
+  generated_at: string;
+  project_id: string;
+  project_name: string;
+  source_root: string;
+  preferred_provider_id?: string | null;
+  summary: {
+    status: "ready" | "attention" | "simulation_only" | "blocked";
+    label: string;
+    summary: string;
+    detail: string;
+  };
+  checks: EnvironmentDoctorCheck[];
+  progress: {
+    status:
+      | "running"
+      | "waiting_for_review"
+      | "waiting_for_launch"
+      | "waiting_for_assignment"
+      | "blocked"
+      | "planned_only"
+      | "idle";
+    summary: string;
+    detail: string;
+    recommended_action: string;
+    reasons: Array<{
+      code: string;
+      severity: string;
+      summary: string;
+      detail: string;
+      recommended_action?: string | null;
+    }>;
+    facts: Record<string, number | string | boolean | null>;
+  };
+  recommended_actions: string[];
+}
+
+export interface GoalPlanningItem {
+  goal_id: string;
+  parent_goal_id?: string | null;
+  title: string;
+  description?: string | null;
+  status: string;
+  goal_type: string;
+  priority: number;
+  task_counts: Record<string, number>;
+  open_issue_count: number;
+  synthesized_tasks: number;
+  supports_synthesis: boolean;
+  next_step: string;
+}
+
+export interface GoalPlanningResponse {
+  summary: {
+    total_goals: number;
+    active_goals: number;
+    open_issue_count: number;
+    synthesized_tasks: number;
+  };
+  items: GoalPlanningItem[];
+}
+
+export interface GoalCreateResponse {
+  goal: GoalPlanningItem;
+}
+
+export interface GoalSynthesisResponse {
+  project_id: string;
+  goal_id: string;
+  refreshed: boolean;
+  created_count: number;
+  updated_count: number;
+  cancelled_count: number;
+  task_ids: string[];
+}
+
+export interface DeliveryOverviewItem {
+  task_id: string;
+  issue_key?: string | null;
+  title: string;
+  task_status: string;
+  goal_title?: string | null;
+  latest_artifact_type?: string | null;
+  artifact_count: number;
+  created_at?: string | null;
+  bundle_ready: boolean;
+  github_ready: boolean;
+  delivery_kind: "diff" | "bundle" | "report" | "artifact";
+  latest_artifacts: Array<{
+    artifact_id: string;
+    artifact_type: string;
+    file_name: string;
+    path: string;
+    created_at: string;
+    preview?: string | null;
+  }>;
+}
+
+export interface DeliveryOverviewResponse {
+  project_id: string;
+  project_name: string;
+  summary: {
+    candidate_count: number;
+    bundle_ready_count: number;
+    github_ready_count: number;
+    diff_count: number;
+    report_count: number;
+    bundle_count: number;
+  };
+  git: {
+    is_git_repo: boolean;
+    branch?: string | null;
+    default_branch?: string | null;
+    dirty: boolean;
+  };
+  items: DeliveryOverviewItem[];
+}
+
+export interface DeliveryDraftResponse {
+  task_id: string;
+  artifact_id: string;
+  title: string;
+  body_path: string;
+  bundle_file_name: string;
+  gh_command: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface AutopilotStatusResponse {
   project_id: string;
   policy: {
@@ -338,6 +484,12 @@ export interface AutopilotStatusResponse {
     auto_launch_assigned_work: boolean;
     process_notifications: boolean;
     notification_batch_limit: number;
+    schedule_window_start_hour_utc?: number | null;
+    schedule_window_end_hour_utc?: number | null;
+    stop_when_doctor_blocked?: boolean;
+    max_review_queue?: number;
+    max_blocked_queue?: number;
+    max_idle_cycles_before_alert?: number;
   };
   runtime: {
     project_id: string;
@@ -352,11 +504,26 @@ export interface AutopilotStatusResponse {
       provider_jobs_dispatched: number;
       notifications_processed: number;
       why_idle?: string | null;
+      governance_gate?: {
+        blocked: boolean;
+        reason?: string | null;
+        detail?: string | null;
+      } | null;
     } | null;
     last_error?: string | null;
     loop_count: number;
   };
   why_idle: string;
+  governance_gate?: {
+    blocked: boolean;
+    reason?: string | null;
+    detail?: string | null;
+    review_queue?: number;
+    blocked_queue?: number;
+    schedule_window_open?: boolean;
+    doctor_summary?: EnvironmentDoctorResponse["summary"] | null;
+    doctor_state?: string | null;
+  };
 }
 
 export interface ProjectActionResponse {
@@ -1744,10 +1911,23 @@ export interface CodexIssueDetailResponse {
   verification_runs: VerificationRun[];
   review_decision?: {
     status: string;
+    decision_mode?: string;
     batch_review_eligible: boolean;
     auto_approve_eligible: boolean;
     summary: string;
     detail: string;
+    why_not_batch_reviewed?: string | null;
+    why_not_auto_approved?: string | null;
+    grouped_review_packet?: {
+      packet_key: string;
+      family?: string | null;
+      title?: string | null;
+      summary?: string | null;
+      recommended_decision?: string | null;
+      packet_scope?: string | null;
+      packet_scope_id?: string | null;
+      packet_scope_label?: string | null;
+    } | null;
   };
   recovery_playbook?: {
     kind: string;
@@ -1773,6 +1953,12 @@ export interface CodexIssueDetailResponse {
     age_days?: number | null;
     freshness?: "fresh" | "aging" | "stale" | "unknown";
     stale?: boolean;
+    used_count?: number;
+    success_count?: number;
+    failure_count?: number;
+    success_ratio?: number | null;
+    usefulness_score?: number;
+    usefulness?: "high" | "medium" | "low" | "unknown";
     preview?: {
       content?: string;
       truncated?: boolean;
@@ -1801,6 +1987,17 @@ export interface CodexIssueQueueBucket {
   batch_review?: {
     eligible_count: number;
     eligible_task_ids: string[];
+    packets?: Array<{
+      packet_key: string;
+      family?: string | null;
+      title?: string | null;
+      summary?: string | null;
+      recommended_decision?: string | null;
+      eligible_count?: number;
+      eligible_task_ids?: string[];
+      eligible_issue_keys?: string[];
+      auto_approve_eligible_count?: number;
+    }>;
     summary: string;
   };
 }

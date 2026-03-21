@@ -525,10 +525,11 @@ def batch_review_tasks(connection, task_ids, actor_id, decision):
         raise ValueError("No review tasks selected")
     results = []
     review_packets = {}
+    packet_key_in_use = None
     for task_id in resolved_ids:
         task = connection.execute(
             """
-            SELECT task_id, project_id, title, status, priority, review_state
+            SELECT task_id, project_id, goal_id, title, status, priority, review_state
             FROM tasks
             WHERE task_id = ?
             """,
@@ -565,6 +566,12 @@ def batch_review_tasks(connection, task_ids, actor_id, decision):
             )
         review_packet = review_state.get("grouped_review_packet") or {}
         packet_key = review_packet.get("packet_key")
+        if not packet_key:
+            raise ValueError("Task is not part of a valid grouped review packet.")
+        if packet_key_in_use is None:
+            packet_key_in_use = packet_key
+        elif packet_key != packet_key_in_use:
+            raise ValueError("Batch review must target tasks from the same grouped review packet.")
         if packet_key:
             review_packets.setdefault(
                 packet_key,

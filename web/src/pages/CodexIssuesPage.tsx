@@ -113,7 +113,19 @@ export function CodexIssuesPage({
     () => boardCounts([{ key: "ready", title: "Ready", tasks: filteredOpenTasks }, { key: "done", title: "Done", tasks: filteredResolved }]),
     [filteredOpenTasks, filteredResolved]
   );
-  const batchReviewItems = useMemo(() => filteredReviewItems.filter((task) => task.batch_review_eligible), [filteredReviewItems]);
+  const filteredBatchReviewPackets = useMemo(() => {
+    const visibleTaskIds = new Set(filteredReviewItems.map((task) => task.task_id));
+    return (issueIndex?.queue.review.batch_review?.packets ?? [])
+      .map((packet) => {
+        const eligibleTaskIds = (packet.eligible_task_ids ?? []).filter((taskId) => visibleTaskIds.has(taskId));
+        return {
+          ...packet,
+          eligible_task_ids: eligibleTaskIds,
+          eligible_count: eligibleTaskIds.length,
+        };
+      })
+      .filter((packet) => (packet.eligible_count ?? 0) > 0);
+  }, [filteredReviewItems, issueIndex]);
   const visibleItems = issuesTab === "queue" ? filteredOpenTasks : filteredResolved;
   const selectedTask = useMemo(() => {
     const allItems = [...filteredOpenTasks, ...filteredResolved];
@@ -153,23 +165,20 @@ export function CodexIssuesPage({
     }
   }
 
-  async function handleBatchReview(decision: "approve" | "reject") {
-    if (!batchReviewItems.length) {
+  async function handleBatchReview(packetTaskIds: string[], decision: "approve" | "reject", packetTitle?: string | null) {
+    if (!packetTaskIds.length) {
       return;
     }
-    setPendingKey(`batch-review:${decision}`);
+    setPendingKey(`batch-review:${decision}:${packetTaskIds[0]}`);
     setNotice(null);
     try {
-      await batchReviewIssues(
-        batchReviewItems.map((task) => task.task_id),
-        decision
-      );
+      await batchReviewIssues(packetTaskIds, decision);
       const refresh = await loadIssues();
       if (refresh.nextTaskId) {
         setDetail(await fetchCodexIssueDetail(refresh.nextTaskId));
       }
       setNotice(
-        `${decision === "approve" ? "Approved" : "Requested changes for"} ${batchReviewItems.length} low-risk review issue${batchReviewItems.length === 1 ? "" : "s"}.`
+        `${decision === "approve" ? "Approved" : "Requested changes for"} ${packetTaskIds.length} issue${packetTaskIds.length === 1 ? "" : "s"} from ${packetTitle ?? "the low-risk review packet"}.`
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Batch review failed.");
@@ -348,24 +357,52 @@ export function CodexIssuesPage({
                   <strong>Review queue</strong>
                   <span>{filteredReviewItems.length}</span>
                 </div>
-                {batchReviewItems.length ? (
-                  <div className="codex-detail-actions">
-                    <button
-                      type="button"
-                      className="codex-button codex-button--primary"
-                      disabled={pendingKey === "batch-review:approve"}
-                      onClick={() => void handleBatchReview("approve")}
-                    >
-                      {pendingKey === "batch-review:approve" ? "Approving..." : `Approve ${batchReviewItems.length} low-risk`}
-                    </button>
-                    <button
-                      type="button"
-                      className="codex-button"
-                      disabled={pendingKey === "batch-review:reject"}
-                      onClick={() => void handleBatchReview("reject")}
-                    >
-                      {pendingKey === "batch-review:reject" ? "Updating..." : `Request changes for ${batchReviewItems.length} low-risk`}
-                    </button>
+                {filteredBatchReviewPackets.length ? (
+                  <div className="codex-run-list">
+                    {filteredBatchReviewPackets.map((packet) => (
+                      <div key={packet.packet_key} className="codex-output-item">
+                        <strong>{packet.title ?? "Low-risk review packet"}</strong>
+                        <span>{packet.summary ?? "Eligible review issues can be decided together."}</span>
+                        <span>
+                          {(packet.eligible_count ?? packet.eligible_task_ids?.length ?? 0)} issue
+                          {(packet.eligible_count ?? packet.eligible_task_ids?.length ?? 0) === 1 ? "" : "s"}
+                        </span>
+                        <div className="codex-detail-actions">
+                          <button
+                            type="button"
+                            className="codex-button codex-button--primary"
+                            disabled={pendingKey === `batch-review:approve:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`}
+                            onClick={() =>
+                              void handleBatchReview(
+                                packet.eligible_task_ids ?? [],
+                                "approve",
+                                packet.title ?? "the low-risk review packet"
+                              )
+                            }
+                          >
+                            {pendingKey === `batch-review:approve:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`
+                              ? "Approving..."
+                              : `Approve ${packet.eligible_count ?? packet.eligible_task_ids?.length ?? 0}`}
+                          </button>
+                          <button
+                            type="button"
+                            className="codex-button"
+                            disabled={pendingKey === `batch-review:reject:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`}
+                            onClick={() =>
+                              void handleBatchReview(
+                                packet.eligible_task_ids ?? [],
+                                "reject",
+                                packet.title ?? "the low-risk review packet"
+                              )
+                            }
+                          >
+                            {pendingKey === `batch-review:reject:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`
+                              ? "Updating..."
+                              : "Request changes"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="codex-empty-copy">{issueIndex?.queue.review.batch_review?.summary ?? "No current review items meet the low-risk batch-review rules."}</div>

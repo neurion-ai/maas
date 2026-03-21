@@ -2074,6 +2074,7 @@ textarea {
 }
 
 .field-control input,
+.field-control textarea,
 .field-control select,
 .task-inline-control select,
 .command-palette__input {
@@ -5035,6 +5036,92 @@ body {
   display: grid;
   gap: 12px;
   padding: 14px 18px 0;
+}
+
+.codex-inline-form {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.codex-inline-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 18px;
+}
+
+.codex-muted-copy {
+  margin: 0;
+  padding: 0 18px;
+  color: var(--muted);
+}
+
+.codex-check-list {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+.codex-check-list__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 88%, transparent 12%);
+}
+
+.codex-check-list__item p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+.codex-check-list__state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 84px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.codex-check-list__state.is-passed {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--line) 62%);
+  color: var(--accent-strong);
+}
+
+.codex-check-list__state.is-warning,
+.codex-check-list__state.is-simulation {
+  border-color: color-mix(in srgb, var(--warn) 38%, var(--line) 62%);
+  color: var(--warn);
+}
+
+.codex-check-list__state.is-failed {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line) 62%);
+  color: var(--danger);
+}
+
+.codex-list-block {
+  display: grid;
+  gap: 8px;
+  padding: 0 18px 18px;
+}
+
+.codex-list-block ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.codex-stack-item--static {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent 10%);
 }
 
 .codex-run-item--interactive,

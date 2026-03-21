@@ -123,6 +123,48 @@ def fetch_latest_verification_by_task(connection, project_id=None):
     return latest
 
 
+def fetch_verification_history_by_task(connection, project_id=None, limit_per_task=10):
+    query = """
+        SELECT
+            verification_run_id,
+            project_id,
+            task_id,
+            command,
+            status,
+            exit_code,
+            output_excerpt,
+            artifact_id,
+            actor_id,
+            started_at,
+            finished_at
+        FROM verification_runs
+    """
+    params = []
+    if project_id is not None:
+        resolved_project_id = resolve_project_id(connection, project_id)
+        if resolved_project_id is None:
+            return {}
+        query += "\nWHERE project_id = ?"
+        params.append(resolved_project_id)
+    query += "\nORDER BY finished_at DESC, verification_run_id DESC"
+    rows = connection.execute(query, tuple(params)).fetchall()
+    history = {}
+    for row in rows:
+        bucket = history.setdefault(row["task_id"], [])
+        if len(bucket) >= limit_per_task:
+            continue
+        bucket.append(
+            {
+                "status": row["status"],
+                "finished_at": row["finished_at"],
+                "started_at": row["started_at"],
+                "command": row["command"],
+                "verification_run_id": row["verification_run_id"],
+            }
+        )
+    return history
+
+
 def run_task_verification(connection, project_paths, task_id, actor_id, commit=True):
     task_row = connection.execute(
         """

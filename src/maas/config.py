@@ -43,6 +43,12 @@ DEFAULT_AUTOPILOT_SETTINGS = {
     "auto_launch_assigned_work": True,
     "process_notifications": True,
     "notification_batch_limit": 5,
+    "schedule_window_start_hour_utc": None,
+    "schedule_window_end_hour_utc": None,
+    "stop_when_doctor_blocked": True,
+    "max_review_queue": 0,
+    "max_blocked_queue": 0,
+    "max_idle_cycles_before_alert": 6,
 }
 
 

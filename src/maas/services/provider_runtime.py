@@ -26,7 +26,7 @@ from maas.services.provider_jobs import (
     start_provider_job,
 )
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
-from maas.services.memory import build_task_prompt
+from maas.services.memory import build_task_prompt, record_memory_injection, record_memory_outcome
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.queue_capacity import can_start_provider_jobs
 from maas.services.runtime_quotas import ensure_runtime_quotas_allow_provider_run
@@ -878,6 +878,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
     prompt_payload = build_task_prompt(connection, task_id) if (claude_cli_enabled or codex_cli_enabled) else None
     task_prompt = prompt_payload["prompt"] if prompt_payload else None
     memory_context = prompt_payload["memory_context"] if prompt_payload else []
+    memory_artifact_ids = [item.get("artifact_id") for item in memory_context if item.get("artifact_id")]
 
     artifact_full_path = _resolve_artifact_path(project_paths, provider_type, task_id, artifact_path)
     artifact_existed_before_run = os.path.exists(artifact_full_path)
@@ -959,6 +960,7 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             **extra_activity_details
         )
         if memory_context:
+            record_memory_injection(connection, memory_artifact_ids)
             log_activity(
                 connection,
                 project_id=project_id,
@@ -1066,6 +1068,8 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             **extra_activity_details
         )
         end_session(connection, session_id, "completed", artifact_payload["status_message"], project_paths=project_paths)
+        if memory_artifact_ids:
+            record_memory_outcome(connection, memory_artifact_ids, "completed")
     except Exception as exc:
         _rollback_untracked_artifact(
             artifact_full_path if artifact_id is None else None,

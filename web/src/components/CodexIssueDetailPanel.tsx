@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchArtifactDetail, fetchCodexRunDetail, promoteArtifactToMemory } from "../lib/controlRoomApi";
+import { fetchArtifactDetail, fetchCodexRunDetail, prepareTaskPrDraft, promoteArtifactToMemory } from "../lib/controlRoomApi";
 import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview, CodexRunDetailResponse } from "../types";
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
@@ -128,7 +128,9 @@ export function CodexIssueDetailPanel({
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [memoryNotice, setMemoryNotice] = useState<string | null>(null);
+  const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
   const [promotingMemory, setPromotingMemory] = useState(false);
+  const [preparingDelivery, setPreparingDelivery] = useState(false);
   const [artifactLoadFailed, setArtifactLoadFailed] = useState(false);
   const [promotedMemoryItems, setPromotedMemoryItems] = useState<
     NonNullable<CodexIssueDetailResponse["memory_context"]>
@@ -150,6 +152,7 @@ export function CodexIssueDetailPanel({
     setSelectedArtifactId(latestArtifactSummary?.artifact_id ?? null);
     setSelectedRunId(latestRun?.session_id ?? null);
     setMemoryNotice(null);
+    setDeliveryNotice(null);
     setArtifactLoadFailed(false);
     setPromotedMemoryItems([]);
   }, [latestArtifactSummary?.artifact_id, latestRun?.session_id, task?.task_id]);
@@ -227,6 +230,7 @@ export function CodexIssueDetailPanel({
   const externalRuntime = runConsole?.external_runtime ?? latestRun?.external_runtime ?? null;
   const isSimulationRun = executionMode === "local_simulation";
   const reviewDecision = detail?.review_decision ?? null;
+  const reviewPacket = reviewDecision?.grouped_review_packet ?? null;
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
   const selectedRunRecord = selectedRunDetail;
@@ -343,6 +347,8 @@ export function CodexIssueDetailPanel({
                   {item.score != null ? ` · score ${item.score}` : ""}
                   {item.freshness ? ` · ${item.freshness}` : ""}
                   {item.age_days != null ? ` · ${item.age_days}d old` : ""}
+                  {item.usefulness ? ` · usefulness ${item.usefulness}` : ""}
+                  {item.used_count != null ? ` · used ${item.used_count}x` : ""}
                 </span>
               </div>
             ))}
@@ -352,8 +358,8 @@ export function CodexIssueDetailPanel({
             No promoted memory is influencing this issue yet. Promote a useful output when you want future runs to reuse it.
           </div>
         )}
-        {primaryArtifactId ? (
-          <div className="codex-detail-actions">
+        <div className="codex-detail-actions">
+          {primaryArtifactId ? (
             <button
               type="button"
               className="codex-button"
@@ -378,6 +384,12 @@ export function CodexIssueDetailPanel({
                         age_days: 0,
                         freshness: "fresh" as const,
                         stale: false,
+                        usefulness: "unknown" as const,
+                        used_count: 0,
+                        success_count: 0,
+                        failure_count: 0,
+                        success_ratio: null,
+                        usefulness_score: 0,
                         preview: payload.preview,
                         score: undefined,
                       };
@@ -391,8 +403,26 @@ export function CodexIssueDetailPanel({
             >
               {promotingMemory ? "Promoting..." : "Promote selected output"}
             </button>
-          </div>
-        ) : null}
+          ) : null}
+          {task.status === "review" || task.status === "done" ? (
+            <button
+              type="button"
+              className="codex-button"
+              disabled={preparingDelivery}
+              onClick={() => {
+                setPreparingDelivery(true);
+                setDeliveryNotice(null);
+                void prepareTaskPrDraft(task.task_id)
+                  .then((payload) => setDeliveryNotice(`Prepared PR draft "${payload.title}".`))
+                  .catch((error) => setDeliveryNotice(error instanceof Error ? error.message : "Could not prepare PR draft."))
+                  .finally(() => setPreparingDelivery(false));
+              }}
+            >
+              {preparingDelivery ? "Preparing..." : "Prepare PR draft"}
+            </button>
+          ) : null}
+        </div>
+        {deliveryNotice ? <div className="codex-review-note">{deliveryNotice}</div> : null}
       </section>
       {issueActions}
     </>
@@ -430,6 +460,18 @@ export function CodexIssueDetailPanel({
             <div className="codex-review-note">
               {reviewDecision.summary} {reviewDecision.detail}
             </div>
+          ) : null}
+          {reviewPacket ? (
+            <div className="codex-review-note">
+              Review packet: {reviewPacket.title ?? "Grouped review"} ·{" "}
+              {reviewPacket.packet_scope_label ?? reviewPacket.packet_scope ?? "shared scope"}
+            </div>
+          ) : null}
+          {reviewDecision?.why_not_auto_approved ? (
+            <div className="codex-review-note">Why this did not auto-approve: {reviewDecision.why_not_auto_approved}</div>
+          ) : null}
+          {!reviewDecision?.batch_review_eligible && reviewDecision?.why_not_batch_reviewed ? (
+            <div className="codex-review-note">Why this stayed manual: {reviewDecision.why_not_batch_reviewed}</div>
           ) : null}
           <div className="codex-review-facts">
             <div className="codex-review-fact">

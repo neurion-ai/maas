@@ -40,20 +40,53 @@ def _inbox_item(bucket, subtype, severity, title, summary, resource_type, resour
 
 def _review_items(issue_index):
     items = []
-    for task in issue_index["queue"]["review"]["items"]:
+    review_queue = issue_index["queue"]["review"]
+    batch_review = review_queue.get("batch_review") or {}
+    packet_task_ids = set()
+    for packet in batch_review.get("packets", []):
+        eligible_task_ids = list(packet.get("eligible_task_ids") or [])
+        packet_task_ids.update(eligible_task_ids)
         items.append(
             _inbox_item(
                 "review",
-                "review_requested",
-                "critical" if task.get("priority", 0) >= 90 else "warning",
+                "review_packet",
+                "warning",
+                packet.get("title") or "Low-risk review packet",
+                "{0} issue(s) can be reviewed together. {1}".format(
+                    packet.get("eligible_count") or len(eligible_task_ids),
+                    packet.get("summary") or "Batch review can clear repetitive low-risk work faster.",
+                ),
+                "review_packet",
+                packet.get("packet_key"),
+                "Open Issues and batch-approve the eligible packet if the evidence looks consistent.",
+                metadata=dict(packet),
+            )
+        )
+    for task in review_queue["items"]:
+        review_age_value = task.get("review_age_hours")
+        if review_age_value is None:
+            review_age_value = task.get("age_hours")
+        review_age_hours = float(review_age_value or 0)
+        overdue = review_age_hours >= 1
+        if task.get("batch_review_eligible") and task["task_id"] in packet_task_ids and not overdue and task.get("priority", 0) < 90:
+            continue
+        items.append(
+            _inbox_item(
+                "review",
+                "overdue_review" if overdue else "review_requested",
+                "critical" if overdue or task.get("priority", 0) >= 90 else "warning",
                 task.get("title") or "Issue waiting for review",
-                task.get("review_eligibility", {}).get("summary")
-                or "Codex completed work and this issue is waiting for an operator decision.",
+                (
+                    "This issue has been waiting in review for {0:.1f}h.".format(review_age_hours)
+                    if overdue
+                    else task.get("review_eligibility", {}).get("summary")
+                    or "Codex completed work and this issue is waiting for an operator decision."
+                ),
                 "task",
                 task["task_id"],
                 (
                     "Batch approve from the low-risk packet."
-                    if task.get("batch_review_eligible")
+                    if task.get("batch_review_eligible") and task["task_id"] in packet_task_ids
                     else "Inspect the issue and decide approve or request changes."
                 ),
                 metadata={
@@ -64,6 +97,8 @@ def _review_items(issue_index):
                     "review_state": task.get("review_state"),
                     "batch_review_eligible": task.get("batch_review_eligible"),
                     "decision_mode": task.get("review_eligibility", {}).get("decision_mode"),
+                    "age_hours": review_age_hours,
+                    "overdue": overdue,
                 },
             )
         )
@@ -228,11 +263,15 @@ def _notification_failure_items(connection, project_id):
     digests = build_notification_digests(notifications, limit=12)
     items = []
     for digest in digests["attention"]:
+        if digest.get("delivery_state") == "retry_scheduled":
+            continue
+        event_severity = digest.get("severity") or "warning"
+        severity = "critical" if digest.get("retry_budget_exhausted") or event_severity == "critical" else "warning"
         items.append(
             _inbox_item(
                 "notification_failures",
                 digest.get("delivery_state"),
-                "critical" if digest.get("retry_budget_exhausted") else "warning",
+                severity,
                 digest.get("title") or "Notification delivery needs attention",
                 digest.get("last_error")
                 or "Notification delivery is delayed or exhausted and needs operator review.",
@@ -279,7 +318,7 @@ def _workflow_item(item):
             "sessionId": resource_id,
             "projectId": item.get("metadata", {}).get("project_id"),
         }
-    elif resource_type in {"notification", "project", "dead_letter_entry", "failure_incident"}:
+    elif resource_type in {"notification", "project", "dead_letter_entry", "failure_incident", "review_packet"}:
         target_view = "issues" if item.get("bucket") in {"review", "blocked_recovery"} else "command" if item.get("bucket") == "policy_conflicts" else "system"
         route = {
             "view": target_view,
@@ -487,7 +526,7 @@ def fetch_operator_inbox(connection, project_id):
     workflow_items = [_workflow_item(item) for item in items[:12]]
     inbox_summary = {
         "total_items": len(items),
-        "review": len(buckets["review"]),
+        "review": issue_index["summary"]["review"],
         "stale_runs": len(buckets["stale_runs"]),
         "blocked_recovery": len(buckets["blocked_recovery"]),
         "policy_conflicts": len(buckets["policy_conflicts"]),

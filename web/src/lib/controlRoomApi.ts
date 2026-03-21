@@ -20,6 +20,9 @@ import type {
   FailureOperatorAction,
   FailuresResponse,
   GoalTreeResponse,
+  GoalPlanningResponse,
+  GoalCreateResponse,
+  GoalSynthesisResponse,
   LiveSnapshot,
   NotificationItem,
   OverviewResponse,
@@ -41,6 +44,9 @@ import type {
   RestoreAndRequeueQuarantineEntryResponse,
   RestoreFailureArtifactsResponse,
   RestoreQuarantineEntryResponse,
+  DeliveryDraftResponse,
+  DeliveryOverviewResponse,
+  EnvironmentDoctorResponse,
   SupervisorRunResponse,
   TimelineResponse
 } from "../types";
@@ -583,9 +589,10 @@ async function fetchJson<T>(
   path: string,
   fallback: T,
   signal?: AbortSignal,
-  onFallback?: () => void
+  onFallback?: () => void,
+  projectId?: string | null
 ): Promise<T> {
-  const scopedPath = appendProjectScope(path);
+  const scopedPath = appendProjectScope(path, projectId);
   try {
     const response = await fetch(scopedPath, { signal });
     if (!response.ok) {
@@ -640,8 +647,8 @@ export function fetchProjectTemplates(signal?: AbortSignal, onFallback?: () => v
   return fetchJson<ProjectTemplatesResponse>("/api/projects/templates", { templates: [] }, signal, onFallback);
 }
 
-export function fetchPortfolio() {
-  return fetchGlobalJson<PortfolioResponse>("/api/portfolio", PORTFOLIO_FALLBACK);
+export function fetchPortfolio(signal?: AbortSignal, onFallback?: () => void) {
+  return fetchGlobalJson<PortfolioResponse>("/api/portfolio", PORTFOLIO_FALLBACK, signal, onFallback);
 }
 
 export async function createProject(payload: ProjectCreateRequest) {
@@ -649,9 +656,13 @@ export async function createProject(payload: ProjectCreateRequest) {
   return response as ProjectCreateResponse;
 }
 
-export function fetchAutopilotStatus(signal?: AbortSignal, onFallback?: () => void) {
+export function fetchAutopilotStatus(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
   return fetchJson<AutopilotStatusResponse>(
-    appendProjectScope("/api/autopilot/status"),
+    "/api/autopilot/status",
     {
       project_id: "",
       policy: {
@@ -662,6 +673,12 @@ export function fetchAutopilotStatus(signal?: AbortSignal, onFallback?: () => vo
         auto_launch_assigned_work: true,
         process_notifications: true,
         notification_batch_limit: 5,
+        schedule_window_start_hour_utc: null,
+        schedule_window_end_hour_utc: null,
+        stop_when_doctor_blocked: true,
+        max_review_queue: 0,
+        max_blocked_queue: 0,
+        max_idle_cycles_before_alert: 6,
       },
       runtime: {
         project_id: "",
@@ -675,6 +692,12 @@ export function fetchAutopilotStatus(signal?: AbortSignal, onFallback?: () => vo
           auto_launch_assigned_work: true,
           process_notifications: true,
           notification_batch_limit: 5,
+          schedule_window_start_hour_utc: null,
+          schedule_window_end_hour_utc: null,
+          stop_when_doctor_blocked: true,
+          max_review_queue: 0,
+          max_blocked_queue: 0,
+          max_idle_cycles_before_alert: 6,
         },
         last_heartbeat_at: null,
         last_summary: null,
@@ -682,9 +705,20 @@ export function fetchAutopilotStatus(signal?: AbortSignal, onFallback?: () => vo
         loop_count: 0,
       },
       why_idle: "Autopilot status unavailable.",
+      governance_gate: {
+        blocked: false,
+        reason: null,
+        detail: null,
+        review_queue: 0,
+        blocked_queue: 0,
+        schedule_window_open: true,
+        doctor_summary: null,
+        doctor_state: null,
+      },
     },
     signal,
-    onFallback
+    onFallback,
+    projectId
   );
 }
 
@@ -750,11 +784,133 @@ export async function updateProjectAutopilot(
     auto_launch_assigned_work: boolean;
     process_notifications: boolean;
     notification_batch_limit: number;
+    schedule_window_start_hour_utc?: number | null;
+    schedule_window_end_hour_utc?: number | null;
+    stop_when_doctor_blocked?: boolean;
+    max_review_queue?: number;
+    max_blocked_queue?: number;
+    max_idle_cycles_before_alert?: number;
   }
 ) {
   return postJson(`/api/projects/${projectId}/actions/update-autopilot`, {
     actor_id: DEFAULT_ACTOR_ID,
     ...payload,
+  });
+}
+
+export function fetchEnvironmentDoctor(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<EnvironmentDoctorResponse>(
+    "/api/environment/doctor",
+    {
+      generated_at: new Date().toISOString(),
+      project_id: "",
+      project_name: "",
+      source_root: "",
+      preferred_provider_id: null,
+      summary: {
+        status: "attention",
+        label: "Attention needed",
+        summary: "Environment doctor unavailable.",
+        detail: "The doctor panel is using fallback data until the API responds again.",
+      },
+      checks: [],
+      progress: {
+        status: "idle",
+        summary: "Progress diagnosis unavailable.",
+        detail: "The current no-progress diagnosis could not be loaded.",
+        recommended_action: "Refresh the page or inspect System for more detail.",
+        reasons: [],
+        facts: {},
+      },
+      recommended_actions: [],
+    },
+    signal,
+    onFallback,
+    projectId
+  );
+}
+
+export function fetchGoalPlanning(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<GoalPlanningResponse>(
+    "/api/goals/planning",
+    {
+      summary: {
+        total_goals: 0,
+        active_goals: 0,
+        open_issue_count: 0,
+        synthesized_tasks: 0,
+      },
+      items: [],
+    },
+    signal,
+    onFallback,
+    projectId
+  );
+}
+
+export async function createGoal(payload: {
+  title: string;
+  description?: string;
+  goal_type?: string;
+  priority?: number;
+  parent_goal_id?: string | null;
+}) {
+  return postJson<GoalCreateResponse>(appendProjectScope("/api/goals"), {
+    actor_id: DEFAULT_ACTOR_ID,
+    ...payload,
+  });
+}
+
+export async function synthesizeGoal(goalId: string, refresh = true) {
+  return postJson<GoalSynthesisResponse>(appendProjectScope(`/api/goals/${goalId}/actions/synthesize`), {
+    actor_id: DEFAULT_ACTOR_ID,
+    refresh,
+  });
+}
+
+export function fetchDeliveryOverview(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<DeliveryOverviewResponse>(
+    "/api/delivery",
+    {
+      project_id: "",
+      project_name: "",
+      summary: {
+        candidate_count: 0,
+        bundle_ready_count: 0,
+        github_ready_count: 0,
+        diff_count: 0,
+        report_count: 0,
+        bundle_count: 0,
+      },
+      git: {
+        is_git_repo: false,
+        branch: null,
+        default_branch: null,
+        dirty: false,
+      },
+      items: [],
+    },
+    signal,
+    onFallback,
+    projectId
+  );
+}
+
+export async function prepareTaskPrDraft(taskId: string) {
+  return postJson<DeliveryDraftResponse>(appendProjectScope(`/api/tasks/${taskId}/actions/prepare-pr-draft`), {
+    actor_id: DEFAULT_ACTOR_ID,
   });
 }
 
@@ -920,8 +1076,8 @@ export async function refreshRepoPlan(projectId: string) {
   });
 }
 
-export function fetchOverview() {
-  return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK);
+export function fetchOverview(projectId?: string | null, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK, signal, onFallback, projectId);
 }
 
 export function fetchRepoTree(path = "", signal?: AbortSignal, onFallback?: () => void) {
@@ -939,8 +1095,12 @@ export function fetchGoalTree() {
   return fetchJson<GoalTreeResponse>("/api/goals/tree", GOAL_TREE_FALLBACK);
 }
 
-export function fetchAgentRoster() {
-  return fetchJson<AgentRosterResponse>("/api/agents", ROSTER_FALLBACK);
+export function fetchAgentRoster(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<AgentRosterResponse>("/api/agents", ROSTER_FALLBACK, signal, onFallback, projectId);
 }
 
 export function fetchActivity() {
@@ -958,7 +1118,8 @@ export function fetchIncidentTimeline(
     limit?: number;
   },
   signal?: AbortSignal,
-  onFallback?: () => void
+  onFallback?: () => void,
+  projectId?: string | null
 ) {
   const query = new URLSearchParams();
   if (params?.taskId) query.set("task_id", params.taskId);
@@ -969,7 +1130,7 @@ export function fetchIncidentTimeline(
   if (params?.order) query.set("order", params.order);
   if (params?.limit) query.set("limit", String(params.limit));
   const path = query.size ? `/api/timeline?${query.toString()}` : "/api/timeline";
-  return fetchJson<TimelineResponse>(path, TIMELINE_FALLBACK, signal, onFallback);
+  return fetchJson<TimelineResponse>(path, TIMELINE_FALLBACK, signal, onFallback, projectId);
 }
 
 export function fetchArtifacts(
@@ -1040,8 +1201,12 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
         status: "unavailable",
         batch_review_eligible: false,
         auto_approve_eligible: false,
+        decision_mode: "manual_review",
         summary: "Issue review policy is unavailable.",
         detail: "Review guidance could not be loaded from the backend.",
+        why_not_batch_reviewed: "Review guidance could not be loaded from the backend.",
+        why_not_auto_approved: "Review guidance could not be loaded from the backend.",
+        grouped_review_packet: null,
       },
       recovery_playbook: {
         kind: "idle",
@@ -1081,6 +1246,7 @@ export function fetchCodexIssueIndex(signal?: AbortSignal, onFallback?: () => vo
           batch_review: {
             eligible_count: 0,
             eligible_task_ids: [],
+            packets: [],
             summary: "",
           },
         },
@@ -1200,7 +1366,8 @@ export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: (
 export function fetchCodexRetrievalSearch(
   filters: { search: string; goalId?: string | null; agentId?: string | null; priorityMin?: number | null },
   signal?: AbortSignal,
-  onFallback?: () => void
+  onFallback?: () => void,
+  projectId?: string | null
 ) {
   const params = new URLSearchParams();
   params.set("search", filters.search);
@@ -1214,7 +1381,7 @@ export function fetchCodexRetrievalSearch(
     params.set("priority_min", String(filters.priorityMin));
   }
   return fetchJson<CodexRetrievalSearchResponse>(
-    appendProjectScope(`/api/retrieval/search?${params.toString()}`),
+    `/api/retrieval/search?${params.toString()}`,
     {
       query: {
         search: filters.search,
@@ -1237,7 +1404,8 @@ export function fetchCodexRetrievalSearch(
       memory: [],
     },
     signal,
-    onFallback
+    onFallback,
+    projectId
   );
 }
 
@@ -1315,8 +1483,12 @@ export async function purgeSessionArtifacts(sessionId: string) {
   return payload as ArtifactPurgeResponse;
 }
 
-export function fetchAlerts() {
-  return fetchJson<AlertsResponse>("/api/alerts", ALERTS_FALLBACK);
+export function fetchAlerts(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<AlertsResponse>("/api/alerts", ALERTS_FALLBACK, signal, onFallback, projectId);
 }
 
 export function fetchEscalations() {

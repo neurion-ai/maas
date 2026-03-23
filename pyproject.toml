@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maas"
 version = "0.1.0"
-description = "Multi-Agent Agentic System with a board-first operating model."
+description = "Codex-first control plane for supervising autonomous work."
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [
@@ -23,4 +23,3 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

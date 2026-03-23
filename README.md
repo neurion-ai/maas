@@ -1,77 +1,111 @@
 # MAAS
 
-MAAS is pivoting toward a Codex-first autonomous-work control plane.
+MAAS is a Codex-first control plane for supervising autonomous work.
 
-The product goal is no longer "software delivery dashboard plus agent runtime controls." The new near-term target is a system that lets one human operator supervise Codex-driven autonomous work: steer goals, monitor issues, review runs, inspect agent execution threads and ownership, clear incidents, and trust the machine because every meaningful action is logged and replayable.
+It exists for the gap between “an agent can do work” and “an operator can safely trust an always-on system.” MAAS turns goals into issue inventories, runs Codex inside a governed execution loop, keeps review and recovery explicit, promotes reusable memory, and makes the entire control flow observable through runs, logs, traces, and incidents.
 
-Today this repository still contains a large amount of implementation from the earlier board-first software-delivery phase, including:
+## What It Is
 
-- a Python core with SQLite-backed state
-- a greenfield bootstrap flow
-- a FastAPI API exposing Kanban board read models
-- a task scheduler surface with ready-queue refresh and acceptance evaluation
-- an allocator surface for assigning ready tasks to idle agents
-- a supervisor pass for readiness refresh, allocation, and stale-session recovery
-- a lightweight supervisor/lifecycle foundation
-- task-scoped capability grants for execution, heartbeats, activity, artifacts, and session completion
-- failure-memory logging with repeated-failure alerting and dashboard visibility
-- operator recovery for failure-blocked tasks
-- operator recovery for error-state agents
-- concrete simulated runtime adapters for Python Script, Claude Code, and OpenAI Codex, plus optional local Claude/Codex CLI modes
-- a React control room with operator actions for supervisor runs, idle-agent assignment, provider visibility, provider runs, provider mode switching, and provider settings updates
-- board-side operator controls for review, reprioritize, reassign, pause/resume, and halt
-- role-baseline permission enforcement for steering and alert actions
-- an escalation queue for risky steering approvals
-- implementation specs for the planned roadmap
+MAAS is not a generic dashboard and not a thin Codex wrapper. The current product direction is:
 
-## Product Pivot
+- `Codex` as the MVP execution runtime
+- `Goal`, `Issue`, `Run`, `Agent`, `Event`, and `Incident` as the core control objects
+- one human operator supervising execution instead of manually driving every task
+- explicit review, recovery, memory, and delivery loops around autonomous work
 
-The new MAAS direction is:
+## Why It Exists
 
-- `Goal`, `Issue`, `Run`, `Agent`, `Event`, and `Incident` as the main operator-facing control objects
-- `Codex` as the sole MVP execution runtime
-- MAAS itself owning orchestration, state transitions, review gates, history, logs, metrics, and recovery
-- issue inventory plus kanban flow as two views of the same work instead of separate products
+Autonomous execution only becomes useful when the surrounding control loop is trustworthy. MAAS is designed to answer:
 
-The corrected MVP UI is shaped around five primary surfaces:
+- what is the system doing right now?
+- what needs operator judgment?
+- why is progress blocked?
+- what output did Codex actually produce?
+- what memory, checks, and recovery rules changed the result?
 
-- `Command`: what needs operator judgment now
+## Core Objects
+
+- `Goal`
+- `Issue`
+- `Run`
+- `Agent`
+- `Event`
+- `Incident`
+
+## Operator Surfaces
+
+- `Command`: what needs judgment now
 - `Work`: shared `List | Board` view of issues plus detail and execution history
-- `Issues`: approvals, blocked work, failed runs, and recovery recommendations
-- `Agents`: active ownership, execution threads, current work, and health
-- `System`: logs, metrics, traces, queue pressure, and machine health
+- `Issues`: approvals, blocked work, failed runs, grouped review, and recovery actions
+- `Agents`: active ownership, execution threads, spawned work, and health
+- `Runs`: live and historical execution truth
+- `System`: logs, metrics, queue posture, and machine health
+- `Projects`: create, import, clone, archive, delete, and posture management
 
-What MAAS should *not* be:
+## What Makes It Different
 
-- a generic dashboard with random metrics
-- a provider-zoo admin console
-- a fake AI company org chart
-- a generic PM tool with AI garnish
-- a Codex wrapper with no operator control value
+- project-level autopilot instead of manual “run cycle” babysitting
+- first-class run history, traces, and live execution truth
+- explicit review policy and grouped review packets
+- recovery playbooks instead of raw failure queues
+- retrieval-backed project memory with promotion, attribution, and usefulness tracking
+- delivery prep for artifacts, bundles, and GitHub PR drafts
 
-The broader pivot context is documented in [docs/implementation/09-autonomous-organization-pivot.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/09-autonomous-organization-pivot.md).
+## Current Status
 
-The corrected Codex-first MVP shape is documented in [docs/implementation/11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md).
+Today MAAS is a substantial local prototype built around:
 
-The integration sequence for moving the standalone mockup into the real backend/frontend stack is documented in [docs/implementation/12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md).
+- a Python/FastAPI backend with SQLite-backed state
+- a React control plane for Command, Work, Issues, Agents, Runs, System, and Projects
+- goal intake, issue synthesis, autopilot, review, recovery, retrieval, and delivery-prep flows
+- live and simulated Codex execution paths with operator-visible logs, traces, and artifacts
 
-The current hardening and truthfulness pass for the integrated Codex MVP is documented in [docs/implementation/13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md).
+The implementation history is long because the product has pivoted several times. The public direction above is the one that matters now; the detailed historical roadmap is still preserved below for implementation tracking.
 
-The next operator-value and capability batch is documented in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md).
+## Quick Start
 
-The current autonomy-scale follow-up batch is documented in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md).
+Install the backend and frontend dependencies, then launch the API and web app locally:
 
-The current autopilot-and-memory batch is documented in [docs/implementation/16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md).
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 
-The current control-loop hardening batch is documented in [docs/implementation/17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md).
+cd web
+npm install
+cd ..
 
-The current doctor, planning, and delivery-loop batch is documented in [docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md).
+PYTHONPATH=src python3 -m maas api --project-root .
+cd web && npm run dev
+```
 
-The current integration branch replaces the old shell with real `Command`, `Work`, `Issues`, `Agents`, `System`, and `Projects` surfaces in the React app, backed by stable issue identity, issue detail read models, agent detail read models, and Codex-oriented system views.
+You can also bootstrap a fresh workspace from the CLI:
 
-The frontend reset document for rebuilding the product from scratch is in [docs/implementation/10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
+```bash
+PYTHONPATH=src python3 -m maas init --project-root .
+PYTHONPATH=src python3 -m maas db migrate --project-root .
+```
 
-There is also a separate standalone mockup for the corrected MVP direction in [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md). It is intentionally disconnected from the current `web/` frontend.
+## Product Direction
+
+Relevant design and roadmap documents:
+
+- [Autonomous Organization Pivot](docs/implementation/09-autonomous-organization-pivot.md)
+- [UI Reset](docs/implementation/10-ui-reset.md)
+- [Codex MVP Shape](docs/implementation/11-codex-mvp-shape.md)
+- [Codex MVP Integration Plan](docs/implementation/12-codex-mvp-integration-plan.md)
+- [Codex MVP Hardening Plan](docs/implementation/13-codex-mvp-hardening-plan.md)
+- [Codex MVP Next Batch Plan](docs/implementation/14-codex-mvp-next-batch-plan.md)
+- [Codex MVP Autonomy-Scale Plan](docs/implementation/15-codex-mvp-autonomy-scale-plan.md)
+- [Codex MVP Autopilot and Memory Plan](docs/implementation/16-codex-mvp-autopilot-memory-plan.md)
+- [Codex MVP Control-Loop Hardening Plan](docs/implementation/17-codex-mvp-control-loop-hardening-plan.md)
+- [Codex MVP Doctor, Planning, and Delivery Loop Plan](docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md)
+
+There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
+
+## Roadmap and Implementation History
+
+The rest of this README tracks the shipped implementation and numbered delivery history in detail.
 
 ## Implementation Snapshot
 
@@ -173,15 +207,15 @@ Current stacked development chain above `main`:
 - `#177` exists on `codex/codex-mvp-hardening`
 - `#178` exists on `codex/codex-mvp-hardening`
 
-The current operator-value and capability sequence in [docs/implementation/14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md) is now implemented on `codex/codex-mvp-operator-scale`. It adds truthful queue posture, readiness-aware launch strategy, shared `Work`/`Issues` scopes, first-class run detail reads, stronger agent/system execution diagnostics, verification-driven auto-approval, and cleaner fresh-project lifecycle controls.
+The current operator-value and capability sequence in [docs/implementation/14-codex-mvp-next-batch-plan.md](docs/implementation/14-codex-mvp-next-batch-plan.md) is now implemented on `codex/codex-mvp-operator-scale`. It adds truthful queue posture, readiness-aware launch strategy, shared `Work`/`Issues` scopes, first-class run detail reads, stronger agent/system execution diagnostics, verification-driven auto-approval, and cleaner fresh-project lifecycle controls.
 
-The current autonomy-scale sequence in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md) is now implemented on `codex/codex-mvp-autonomy-scale`. It adds first-class `Runs`, backend-owned exception grouping, retrieval across issues/runs/artifacts/events, clone-for-fresh-run project lifecycle, stronger stale-run diagnostics, cross-project supervision in `Projects`, and an async attention loop with optional desktop notifications.
+The current autonomy-scale sequence in [docs/implementation/15-codex-mvp-autonomy-scale-plan.md](docs/implementation/15-codex-mvp-autonomy-scale-plan.md) is now implemented on `codex/codex-mvp-autonomy-scale`. It adds first-class `Runs`, backend-owned exception grouping, retrieval across issues/runs/artifacts/events, clone-for-fresh-run project lifecycle, stronger stale-run diagnostics, cross-project supervision in `Projects`, and an async attention loop with optional desktop notifications.
 
-The current autopilot-and-memory sequence in [docs/implementation/16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md) is now implemented on `codex/codex-mvp-autopilot-memory`. It adds project templates, project-level autopilot, memory promotion and retrieval-backed Codex prompts, backend-owned batch review, and stronger execution-state truth across `Command`, `Issues`, `System`, and issue detail.
+The current autopilot-and-memory sequence in [docs/implementation/16-codex-mvp-autopilot-memory-plan.md](docs/implementation/16-codex-mvp-autopilot-memory-plan.md) is now implemented on `codex/codex-mvp-autopilot-memory`. It adds project templates, project-level autopilot, memory promotion and retrieval-backed Codex prompts, backend-owned batch review, and stronger execution-state truth across `Command`, `Issues`, `System`, and issue detail.
 
-The current control-loop hardening sequence in [docs/implementation/17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md) is now implemented on `codex/codex-mvp-control-loop-hardening`. It adds durable autopilot lease state, a backend-owned operator inbox, lifecycle-safe clone posture resets, grouped review packet truth, notification failure integration, and fresher execution-memory attribution.
+The current control-loop hardening sequence in [docs/implementation/17-codex-mvp-control-loop-hardening-plan.md](docs/implementation/17-codex-mvp-control-loop-hardening-plan.md) is now implemented on `codex/codex-mvp-control-loop-hardening`. It adds durable autopilot lease state, a backend-owned operator inbox, lifecycle-safe clone posture resets, grouped review packet truth, notification failure integration, and fresher execution-memory attribution.
 
-The current doctor, planning, and delivery-loop sequence in [docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md) is now implemented on `codex/codex-mvp-doctor-delivery-loop`. It adds an environment doctor, first-class goal creation and synthesis, delivery candidate reads plus PR-draft preparation, stronger autopilot governance gates, goal-scoped review packets, and usefulness-aware execution memory.
+The current doctor, planning, and delivery-loop sequence in [docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md](docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md) is now implemented on `codex/codex-mvp-doctor-delivery-loop`. It adds an environment doctor, first-class goal creation and synthesis, delivery candidate reads plus PR-draft preparation, stronger autopilot governance gates, goal-scoped review packets, and usefulness-aware execution memory.
 
 The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now covers the cockpit pivot (`#127-#136`), the Linear/Vibekanban-inspired workflow cleanup (`#137-#146`), and the clarified Cockpit/Board role split (`#147-#151`).
 

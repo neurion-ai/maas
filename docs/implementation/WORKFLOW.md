@@ -70,12 +70,24 @@ Track queue/status changes on the GitHub Project, not in this document.
 
 ## Project Views
 
-GitHub CLI and API support field creation and item mutation cleanly, but saved-view creation is still easier in the GitHub UI. Create these views manually if they are not already present:
+GitHub CLI and API support field creation and item mutation cleanly, but the available GraphQL mutations in this environment do not expose `ProjectV2View` create or update operations. Saved-view setup therefore remains a manual GitHub UI step.
+
+Create these views manually if they are not already present:
 
 1. `Planning`: group by `Queue`
 2. `Execution`: group by `Status`
 3. `PR`: group by `PR`
 4. `Code Review`: group by `Code Review`
+
+Recommended UI steps:
+
+1. Open <https://github.com/orgs/neurion-ai/projects/4>.
+2. Rename the default `View 1` to `Planning`.
+3. Switch `Planning` to `Board` layout and set `Group by -> Queue`.
+4. Create a new `Board` view named `Execution` and set `Group by -> Status`.
+5. Create a new `Board` view named `PR` and set `Group by -> PR`.
+6. Create a new `Board` view named `Code Review` and set `Group by -> Code Review`.
+7. In each view, keep `Lane`, `Priority`, `Size`, and linked PR details visible so issue posture stays readable without opening every card.
 
 ## Repo Update Rules
 

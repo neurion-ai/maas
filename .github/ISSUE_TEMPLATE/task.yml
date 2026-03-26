@@ -1,0 +1,142 @@
+name: Task
+description: Structured tracked work for MAAS execution
+title: "[task] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for tracked MAAS execution work.
+
+        GitHub project contract:
+        - `Queue`: Now / Next / Background / Blocked
+        - `Status`: Todo / In Progress / Done
+        - `Lane`: Delivery / Planning / Review & Memory / Autonomy & Recovery / Observability / Brownfield / Workflow
+        - `Priority`: P0 / P1 / P2
+        - `Size`: S / M / L
+        - `Code Review`: Not Ready / Pending / Running / Passed / Changes Requested
+        - `PR`: Not Ready / Open / Merged
+
+        Repo docs contract:
+        - product and orientation: `README.md`
+        - current truth and shipped posture: `docs/implementation/STATUS.md`
+        - execution workflow: `docs/implementation/WORKFLOW.md`
+        - historical roadmap and implementation detail: `docs/implementation/00-master-roadmap.md` plus numbered implementation docs
+
+        If this issue maps to a numbered roadmap item, include that identifier in the title and body.
+
+  - type: input
+    id: roadmap_ids
+    attributes:
+      label: Roadmap ID(s)
+      description: Numbered roadmap item(s) if applicable.
+      placeholder: "#226" or "#225, #230"
+
+  - type: dropdown
+    id: lane
+    attributes:
+      label: Lane
+      options:
+        - Delivery
+        - Planning
+        - Review & Memory
+        - Autonomy & Recovery
+        - Observability
+        - Brownfield
+        - Workflow
+    validations:
+      required: true
+
+  - type: dropdown
+    id: queue
+    attributes:
+      label: Queue
+      options:
+        - Now
+        - Next
+        - Background
+        - Blocked
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - P0
+        - P1
+        - P2
+    validations:
+      required: true
+
+  - type: dropdown
+    id: size
+    attributes:
+      label: Size
+      options:
+        - S
+        - M
+        - L
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: One concrete outcome, not a general topic.
+      placeholder: Make goal-derived issues explain the critical path in issue detail and planning surfaces.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why It Matters
+      description: Explain the operator or system impact.
+      placeholder: This makes synthesized work auditable and helps the operator understand what is blocking delivery.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done_when
+    attributes:
+      label: Done When
+      description: Explicit, testable acceptance criteria.
+      placeholder: |
+        - issue detail shows goal lineage and dependency explanation
+        - critical-path truth is available in the relevant API
+        - tests cover the new explainability path
+    validations:
+      required: true
+
+  - type: textarea
+    id: commands
+    attributes:
+      label: Validation Commands
+      description: Exact commands to run, if known.
+      placeholder: |
+        pytest tests/...
+        cd web && npm run build
+      render: bash
+
+  - type: textarea
+    id: docs_to_update
+    attributes:
+      label: Docs To Update On Completion
+      description: List only the docs that should change if this work succeeds.
+      placeholder: |
+        - README.md
+        - docs/implementation/STATUS.md
+        - docs/implementation/WORKFLOW.md
+    validations:
+      required: true
+
+  - type: textarea
+    id: related_context
+    attributes:
+      label: Related Context
+      description: Links to docs, code, issues, or PRs.
+      placeholder: |
+        - docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md
+        - docs/implementation/00-master-roadmap.md

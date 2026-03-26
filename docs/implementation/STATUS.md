@@ -29,29 +29,68 @@ The intended primary surfaces are:
 
 This matters because a large amount of code below still reflects the earlier software-delivery phase. The historical implementation checklist remains useful as implementation history, but it should not be mistaken for the current MVP shape.
 
+## Current Truth and Execution Contract
+
+Use the MAAS docs and GitHub project with a strict split:
+
+- current truth: [README.md](../../README.md), [STATUS.md](STATUS.md), and [WORKFLOW.md](WORKFLOW.md)
+- active execution: [MAAS Delivery & Execution](https://github.com/orgs/neurion-ai/projects/4)
+- history/reference: [00-master-roadmap.md](00-master-roadmap.md) and the numbered implementation docs in this directory
+
+Rules:
+
+- do not use the numbered implementation docs as the active queue
+- do not create competing active roadmap, status, queue, or runbook files
+- keep roadmap identifiers in GitHub issue titles when work maps to numbered items, for example `Roadmap #226: Goal-to-issue explainability and critical path view`
+
+`main` is implemented through numbered roadmap item `#224`. Post-`#224` execution now lives in GitHub issues and the project board instead of new active-plan docs.
+
 See:
 
-- [README.md](/Users/bigcube/Desktop/repos/maas/README.md)
-- [09-autonomous-organization-pivot.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/09-autonomous-organization-pivot.md)
-- [10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md)
-- [11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md)
-- [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md)
-- [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md)
-- [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md)
-- [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md)
-- [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md)
-- [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md)
-- [18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md)
-- [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
+- [README.md](../../README.md)
+- [09-autonomous-organization-pivot.md](09-autonomous-organization-pivot.md)
+- [10-ui-reset.md](10-ui-reset.md)
+- [11-codex-mvp-shape.md](11-codex-mvp-shape.md)
+- [12-codex-mvp-integration-plan.md](12-codex-mvp-integration-plan.md)
+- [13-codex-mvp-hardening-plan.md](13-codex-mvp-hardening-plan.md)
+- [14-codex-mvp-next-batch-plan.md](14-codex-mvp-next-batch-plan.md)
+- [15-codex-mvp-autonomy-scale-plan.md](15-codex-mvp-autonomy-scale-plan.md)
+- [16-codex-mvp-autopilot-memory-plan.md](16-codex-mvp-autopilot-memory-plan.md)
+- [17-codex-mvp-control-loop-hardening-plan.md](17-codex-mvp-control-loop-hardening-plan.md)
+- [18-codex-mvp-doctor-delivery-loop-plan.md](18-codex-mvp-doctor-delivery-loop-plan.md)
+- [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
+
+## GitHub Project Contract
+
+The project board is the execution layer. Each tracked task should have one GitHub issue, one truthful project item, and a linked PR once implementation starts.
+
+Project fields:
+
+- `Queue`: `Now`, `Next`, `Background`, `Blocked`
+- `Status`: `Todo`, `In Progress`, `Done`
+- `Lane`: `Delivery`, `Planning`, `Review & Memory`, `Autonomy & Recovery`, `Observability`, `Brownfield`, `Workflow`
+- `Priority`: `P0`, `P1`, `P2`
+- `Size`: `S`, `M`, `L`
+- `Code Review`: `Not Ready`, `Pending`, `Running`, `Passed`, `Changes Requested`
+- `PR`: `Not Ready`, `Open`, `Merged`
+- `Linked pull requests`: actual GitHub linkage
+
+Board flow:
+
+- issue created or refined: set `Queue`, `Lane`, `Priority`, `Size`, `Code Review = Not Ready`, and `PR = Not Ready`
+- work starts: set `Status = In Progress`
+- PR opens: link the PR to the issue, set `PR = Open`, and set `Code Review = Pending`
+- review or validation runs: set `Code Review = Running`, then either `Passed` or `Changes Requested`
+- merge: set `PR = Merged` and `Status = Done`
 
 ## Legend
 
 - `[x]` completed in the current numbered delivery sequence
 - `[ ]` not yet completed in the current numbered delivery sequence
 
-The "Current Development Sequence" section below shows whether a completed item is already on `main` or still only exists on stacked branches.
+The historical sequence below shows whether a completed item is already on `main` or still only exists on stacked branches.
 
-## Current Development Sequence
+## Historical Development Sequence Through `#224`
 
 - [x] `#81` is shipped on `main`
 - [x] `#82` is implemented on the stacked branch `codex/project-aware-supervisor-orchestration`
@@ -194,7 +233,7 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#223` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#224` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 
-## Extended Numbered Roadmap
+## Historical Numbered Roadmap
 
 - [x] `#81` Multi-project write path and project lifecycle
 - [x] `#82` Project-aware supervisor and background orchestration

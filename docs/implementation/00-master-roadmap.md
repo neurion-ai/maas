@@ -1,10 +1,12 @@
-# MAAS Master Roadmap
+# MAAS Master Roadmap Archive
 
 ## Summary
 
 MAAS is pivoting toward a Codex-first autonomous-work control plane.
 
 The original shipped slices in this repository centered a single-project, board-first, software-delivery-oriented operating model. That implementation history still matters, but it no longer defines the intended product surface.
+
+This file is archive/reference for the numbered delivery history. Active execution after `#224` now lives in GitHub issues and the [MAAS Delivery & Execution](https://github.com/orgs/neurion-ai/projects/4) project board, with the current workflow contract in [STATUS.md](STATUS.md) and [WORKFLOW.md](WORKFLOW.md).
 
 The corrected near-term roadmap direction is:
 
@@ -15,34 +17,34 @@ The corrected near-term roadmap direction is:
 
 ## Current Status
 
-This roadmap now needs to be read alongside the actual implementation status in `docs/implementation/STATUS.md`.
+This roadmap now needs to be read alongside the current implementation status in [STATUS.md](STATUS.md).
 
-For the broader pivot spec, see [09-autonomous-organization-pivot.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/09-autonomous-organization-pivot.md).
+For the broader pivot spec, see [09-autonomous-organization-pivot.md](09-autonomous-organization-pivot.md).
 
-For the clean-sheet frontend reset, see [10-ui-reset.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/10-ui-reset.md).
+For the clean-sheet frontend reset, see [10-ui-reset.md](10-ui-reset.md).
 
-For the corrected Codex MVP product shape, see [11-codex-mvp-shape.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/11-codex-mvp-shape.md).
+For the corrected Codex MVP product shape, see [11-codex-mvp-shape.md](11-codex-mvp-shape.md).
 
-For the concrete backend/frontend integration sequence, see [12-codex-mvp-integration-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/12-codex-mvp-integration-plan.md).
+For the concrete backend/frontend integration sequence, see [12-codex-mvp-integration-plan.md](12-codex-mvp-integration-plan.md).
 
-For the current Codex MVP hardening sequence, see [13-codex-mvp-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/13-codex-mvp-hardening-plan.md).
+For the current Codex MVP hardening sequence, see [13-codex-mvp-hardening-plan.md](13-codex-mvp-hardening-plan.md).
 
-For the next operator-value and capability batch, see [14-codex-mvp-next-batch-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/14-codex-mvp-next-batch-plan.md).
+For the next operator-value and capability batch, see [14-codex-mvp-next-batch-plan.md](14-codex-mvp-next-batch-plan.md).
 
-For the current autonomy-scale follow-up batch, see [15-codex-mvp-autonomy-scale-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/15-codex-mvp-autonomy-scale-plan.md).
+For the current autonomy-scale follow-up batch, see [15-codex-mvp-autonomy-scale-plan.md](15-codex-mvp-autonomy-scale-plan.md).
 
-For the current autopilot-and-memory batch, see [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md).
+For the current autopilot-and-memory batch, see [16-codex-mvp-autopilot-memory-plan.md](16-codex-mvp-autopilot-memory-plan.md).
 
-For the current control-loop hardening batch, see [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md).
+For the current control-loop hardening batch, see [17-codex-mvp-control-loop-hardening-plan.md](17-codex-mvp-control-loop-hardening-plan.md).
 
-For the current doctor, planning, and delivery-loop batch, see [18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md).
+For the current doctor, planning, and delivery-loop batch, see [18-codex-mvp-doctor-delivery-loop-plan.md](18-codex-mvp-doctor-delivery-loop-plan.md).
 
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
 - `[ ]` not yet completed in the current numbered delivery sequence
 
-Use "Current stacked development chain above `main`" to see which completed items are on `main` versus stacked branches.
+Use the stacked-development references below to see which completed items are on `main` versus stacked branches. Do not use this file as the active queue.
 
 ## Pivot Sequence
 

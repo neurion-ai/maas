@@ -13,7 +13,7 @@ The corrected near-term roadmap direction is:
 - one human supervising Codex-driven autonomous work
 - MAAS as the control plane for goals, issues, runs, agents, events, and incidents
 - `Codex` as the only execution runtime in the MVP
-- a product surface centered on `Command`, `Work`, `Issues`, `Agents`, and `System`
+- a product surface centered on `Command`, `Work`, `Issues`, `Agents`, `Runs`, `System`, and `Projects`
 
 ## Current Status
 

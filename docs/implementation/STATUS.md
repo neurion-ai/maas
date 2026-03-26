@@ -25,7 +25,9 @@ The intended primary surfaces are:
 - `Work`
 - `Issues`
 - `Agents`
+- `Runs`
 - `System`
+- `Projects`
 
 This matters because a large amount of code below still reflects the earlier software-delivery phase. The historical implementation checklist remains useful as implementation history, but it should not be mistaken for the current MVP shape.
 

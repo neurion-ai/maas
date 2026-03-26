@@ -1779,6 +1779,265 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("not ready for delivery", response.json()["detail"])
 
+    def test_delivery_reads_include_gate_and_issue_detail_delivery_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Reads Test", description="delivery reads", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-read.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('delivery reads')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            git_snapshot = {
+                "is_git_repo": True,
+                "branch": "feature/delivery-reads",
+                "default_branch": "main",
+                "dirty": False,
+                "gh_installed": True,
+            }
+            with mock.patch("maas.services.delivery._git_repo_snapshot", return_value=git_snapshot):
+                delivery_response = client.get("/api/delivery")
+                self.assertEqual(delivery_response.status_code, 200)
+                delivery_payload = delivery_response.json()
+                item = next(entry for entry in delivery_payload["items"] if entry["task_id"] == task["task_id"])
+                self.assertEqual(item["delivery_gate"]["status"], "attention")
+                self.assertIn("No explicit delivery verification commands", item["delivery_gate"]["summary"])
+
+                task_delivery_response = client.get(f"/api/tasks/{task['task_id']}/delivery")
+                self.assertEqual(task_delivery_response.status_code, 200)
+                self.assertEqual(task_delivery_response.json()["delivery_gate"]["status"], "attention")
+
+                issue_detail_response = client.get(f"/api/issues/{task['task_id']}")
+                self.assertEqual(issue_detail_response.status_code, 200)
+                issue_delivery = issue_detail_response.json()["delivery"]
+                self.assertEqual(issue_delivery["delivery_gate"]["status"], "attention")
+                self.assertIsNone(issue_delivery["github_pr"])
+
+    def test_sync_github_pr_creates_draft_and_persists_sync_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Sync Test", description="delivery sync", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review',
+                        review_state = 'review_requested',
+                        acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps([{"type": "test_passes", "command": "pytest tests/test_delivery.py"}]),
+                        task["task_id"],
+                    ),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-sync.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('delivery sync')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_delivery.py', 'passed', 0, 'delivery ok',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            git_snapshot = {
+                "is_git_repo": True,
+                "branch": "feature/delivery-sync",
+                "default_branch": "main",
+                "dirty": False,
+                "gh_installed": True,
+            }
+            list_calls = {"count": 0}
+
+            def fake_run(command, **kwargs):
+                args = tuple(command)
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = ""
+                completed.stderr = ""
+                if args[:3] == ("gh", "pr", "list"):
+                    list_calls["count"] += 1
+                    if list_calls["count"] == 1:
+                        completed.stdout = "[]"
+                    else:
+                        completed.stdout = json.dumps(
+                            [
+                                {
+                                    "number": 17,
+                                    "url": "https://example.test/pr/17",
+                                    "state": "OPEN",
+                                    "isDraft": True,
+                                    "title": "[MAAS] Delivery Sync",
+                                    "headRefName": "feature/delivery-sync",
+                                    "baseRefName": "main",
+                                }
+                            ]
+                        )
+                elif args[:3] == ("gh", "pr", "create"):
+                    completed.stdout = "https://example.test/pr/17\n"
+                elif args[:3] == ("gh", "pr", "view"):
+                    completed.stdout = json.dumps(
+                        {
+                            "number": 17,
+                            "url": "https://example.test/pr/17",
+                            "state": "OPEN",
+                            "isDraft": True,
+                            "title": "[MAAS] Delivery Sync",
+                            "headRefName": "feature/delivery-sync",
+                            "baseRefName": "main",
+                        }
+                    )
+                else:  # pragma: no cover - guards the expected call set
+                    raise AssertionError(f"unexpected command: {command}")
+                return completed
+
+            with mock.patch("maas.services.delivery._git_repo_snapshot", return_value=git_snapshot), mock.patch(
+                "maas.services.delivery.subprocess.run", side_effect=fake_run
+            ):
+                response = client.post(
+                    f"/api/tasks/{task['task_id']}/actions/sync-github-pr",
+                    json={"actor_id": "agent_allocator"},
+                )
+                self.assertEqual(response.status_code, 200)
+                payload = response.json()
+                self.assertEqual(payload["mode"], "created")
+                self.assertEqual(payload["github_pr"]["number"], 17)
+                self.assertEqual(payload["delivery_gate"]["status"], "ready")
+
+                delivery_response = client.get(f"/api/tasks/{task['task_id']}/delivery")
+                self.assertEqual(delivery_response.status_code, 200)
+                self.assertEqual(delivery_response.json()["github_pr"]["number"], 17)
+
+    def test_sync_github_pr_rejects_failed_delivery_gate(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Gate Test", description="delivery gate", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review',
+                        review_state = 'review_requested',
+                        acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps([{"type": "test_passes", "command": "pytest tests/test_delivery.py"}]),
+                        task["task_id"],
+                    ),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-gate.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('delivery gate')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_delivery.py', 'failed', 1, 'delivery failed',
+                        NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            git_snapshot = {
+                "is_git_repo": True,
+                "branch": "feature/delivery-gate",
+                "default_branch": "main",
+                "dirty": False,
+                "gh_installed": True,
+            }
+            with mock.patch("maas.services.delivery._git_repo_snapshot", return_value=git_snapshot):
+                response = client.post(
+                    f"/api/tasks/{task['task_id']}/actions/sync-github-pr",
+                    json={"actor_id": "agent_allocator"},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("verification", response.json()["detail"].lower())
+
     def test_git_helpers_accept_worktree_style_git_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, ".git"), "w", encoding="utf-8") as handle:

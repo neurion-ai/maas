@@ -37,6 +37,8 @@ For the current control-loop hardening batch, see [17-codex-mvp-control-loop-har
 
 For the current doctor, planning, and delivery-loop batch, see [18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md).
 
+For the current delivery execution and verification batch, see [19-codex-mvp-delivery-execution-verification-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/19-codex-mvp-delivery-execution-verification-plan.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -121,6 +123,23 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#222` Review packets v3 and grouped approval
 - [x] `#223` Memory feedback, decay, and usefulness scoring
 - [x] `#224` Async supervision v3 and overdue decision posture
+- [x] `#225` GitHub delivery execution and PR sync
+- [ ] `#226` Goal-to-issue explainability and critical path view
+- [ ] `#227` No-progress diagnosis with one-click remediation
+- [ ] `#228` Review packets v4 and bulk decision UX
+- [ ] `#229` Memory usefulness by item, not just by run
+- [x] `#230` Delivery verification gates
+- [ ] `#231` Live run observability v2
+- [ ] `#232` Autopilot governance v2
+- [ ] `#233` Self-healing and repeated-failure suppression v3
+- [ ] `#234` Brownfield depth pass
+
+Proposed post-`#224` PR split:
+
+1. `#225 + #230` GitHub delivery execution, PR sync, and delivery verification gates
+2. `#226 + #228 + #229` Goal explainability, critical path, review packets v4, and memory usefulness by item
+3. `#227 + #231 + #232 + #233` No-progress remediation, live run observability v2, autopilot governance v2, and self-healing / repeated-failure suppression v3
+4. `#234` Brownfield depth pass
 
 These items represent the intended product reboot. The large historical checklist below should now be read as implementation inventory, not final product shape.
 

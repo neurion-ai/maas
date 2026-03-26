@@ -427,6 +427,7 @@ export interface DeliveryOverviewItem {
   issue_key?: string | null;
   title: string;
   task_status: string;
+  review_state?: string | null;
   goal_title?: string | null;
   latest_artifact_type?: string | null;
   artifact_count: number;
@@ -434,6 +435,39 @@ export interface DeliveryOverviewItem {
   bundle_ready: boolean;
   github_ready: boolean;
   delivery_kind: "diff" | "bundle" | "report" | "artifact";
+  delivery_gate: {
+    status: "ready" | "attention" | "blocked";
+    summary: string;
+    detail: string;
+    checks: Array<{
+      code: string;
+      label: string;
+      status: "passed" | "warning" | "failed";
+      summary: string;
+      detail: string;
+      metadata?: Record<string, unknown>;
+    }>;
+  };
+  latest_draft?: {
+    artifact_id: string;
+    prepared_at: string;
+    title?: string | null;
+    issue_key?: string | null;
+    body_path: string;
+    gh_command: string;
+  } | null;
+  github_pr?: {
+    artifact_id: string;
+    synced_at: string;
+    mode?: string | null;
+    number?: number | null;
+    url?: string | null;
+    state?: string | null;
+    is_draft: boolean;
+    title?: string | null;
+    head_branch?: string | null;
+    base_branch?: string | null;
+  } | null;
   latest_artifacts: Array<{
     artifact_id: string;
     artifact_type: string;
@@ -454,6 +488,10 @@ export interface DeliveryOverviewResponse {
     diff_count: number;
     report_count: number;
     bundle_count: number;
+    ready_count: number;
+    attention_count: number;
+    blocked_count: number;
+    synced_count: number;
   };
   git: {
     is_git_repo: boolean;
@@ -466,12 +504,30 @@ export interface DeliveryOverviewResponse {
 
 export interface DeliveryDraftResponse {
   task_id: string;
+  issue_key?: string | null;
   artifact_id: string;
   title: string;
   body_path: string;
   bundle_file_name: string;
   gh_command: string;
   metadata: Record<string, unknown>;
+  delivery_gate: DeliveryOverviewItem["delivery_gate"];
+}
+
+export interface DeliverySyncResponse {
+  task_id: string;
+  issue_key?: string | null;
+  mode: "created" | "updated";
+  artifact_id: string;
+  draft_artifact_id: string;
+  title: string;
+  body_path: string;
+  delivery_gate: DeliveryOverviewItem["delivery_gate"];
+  github_pr: NonNullable<DeliveryOverviewItem["github_pr"]>;
+}
+
+export interface TaskDeliveryStatusResponse extends DeliveryOverviewItem {
+  git: DeliveryOverviewResponse["git"];
 }
 
 export interface AutopilotStatusResponse {
@@ -1965,6 +2021,7 @@ export interface CodexIssueDetailResponse {
     } | null;
     score?: number;
   }>;
+  delivery?: TaskDeliveryStatusResponse;
   git_workspace?: {
     workspace_id: string;
     task_id: string;

@@ -42,6 +42,7 @@ See:
 - [16-codex-mvp-autopilot-memory-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/16-codex-mvp-autopilot-memory-plan.md)
 - [17-codex-mvp-control-loop-hardening-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/17-codex-mvp-control-loop-hardening-plan.md)
 - [18-codex-mvp-doctor-delivery-loop-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md)
+- [19-codex-mvp-delivery-execution-verification-plan.md](/Users/bigcube/Desktop/repos/maas/docs/implementation/19-codex-mvp-delivery-execution-verification-plan.md)
 - [mockups/maas-codex-mvp/README.md](/Users/bigcube/Desktop/repos/maas/mockups/maas-codex-mvp/README.md)
 
 ## Legend
@@ -193,6 +194,23 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#222` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#223` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#224` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#225` is implemented on `codex/github-delivery-execution-and-verification-gates`
+- [ ] `#226` is proposed for the next split
+- [ ] `#227` is proposed for the next split
+- [ ] `#228` is proposed for the next split
+- [ ] `#229` is proposed for the next split
+- [x] `#230` is implemented on `codex/github-delivery-execution-and-verification-gates`
+- [ ] `#231` is proposed for the next split
+- [ ] `#232` is proposed for the next split
+- [ ] `#233` is proposed for the next split
+- [ ] `#234` is proposed for the next split
+
+### Proposed post-`#224` PR split
+
+1. `#225 + #230` GitHub delivery execution, PR sync, and delivery verification gates
+2. `#226 + #228 + #229` Goal explainability, critical path, review packets v4, and memory usefulness by item
+3. `#227 + #231 + #232 + #233` No-progress remediation, live run observability v2, autopilot governance v2, and self-healing / repeated-failure suppression v3
+4. `#234` Brownfield depth pass
 
 ## Extended Numbered Roadmap
 

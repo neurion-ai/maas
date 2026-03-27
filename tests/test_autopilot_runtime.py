@@ -379,6 +379,64 @@ class AutopilotRuntimeTest(unittest.TestCase):
             self.assertEqual(gate["thresholds"]["max_stale_runs"], 1)
             self.assertEqual(gate["thresholds"]["max_repeated_failure_incidents"], 1)
 
+    def test_autopilot_governance_thresholds_do_not_emit_zero_count_pressure(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Autopilot Quiet Governance Test", description="quiet governance", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = self._project_id(connection)
+                row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(row["config_json"] or "{}")
+                config["autopilot"] = normalize_autopilot_policy(
+                    {
+                        "enabled": True,
+                        "interval_seconds": 9,
+                        "stop_when_doctor_blocked": False,
+                        "max_review_queue": 2,
+                        "max_blocked_queue": 2,
+                        "max_stale_runs": 1,
+                        "max_repeated_failure_incidents": 1,
+                        "max_notification_failures": 1,
+                    }
+                )
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'ready',
+                        assigned_agent_id = NULL
+                    WHERE project_id = ?
+                    """,
+                    (project_id,),
+                )
+                connection.commit()
+
+                with mock.patch(
+                    "maas.services.environment_doctor.fetch_environment_doctor",
+                    return_value={
+                        "summary": {
+                            "status": "ready",
+                            "detail": "Doctor is ready.",
+                        },
+                        "progress": {"status": "running"},
+                    },
+                ):
+                    payload = fetch_autopilot_status(connection, paths, project_id)
+            finally:
+                connection.close()
+
+            gate = payload["governance_gate"]
+            self.assertFalse(gate["blocked"])
+            self.assertEqual(gate["signals"], [])
+            self.assertEqual(gate["summary"], "Autopilot governance thresholds are clear.")
+
 
 if __name__ == "__main__":
     unittest.main()

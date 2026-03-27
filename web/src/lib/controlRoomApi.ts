@@ -1179,7 +1179,13 @@ export function fetchActivity(
   onFallback?: () => void,
   projectId?: string | null
 ) {
-  return fetchJson<ActivityItem[]>(appendProjectScope("/api/activity", projectId), ACTIVITY_FALLBACK, signal, onFallback);
+  return fetchJson<ActivityItem[]>(
+    appendProjectScope("/api/activity", projectId),
+    ACTIVITY_FALLBACK,
+    signal,
+    onFallback,
+    projectId
+  );
 }
 
 export function fetchIncidentTimeline(
@@ -1673,7 +1679,13 @@ export function fetchProviders(
   onFallback?: () => void,
   projectId?: string | null
 ) {
-  return fetchJson<ProvidersResponse>(appendProjectScope("/api/providers", projectId), PROVIDERS_FALLBACK, signal, onFallback);
+  return fetchJson<ProvidersResponse>(
+    appendProjectScope("/api/providers", projectId),
+    PROVIDERS_FALLBACK,
+    signal,
+    onFallback,
+    projectId
+  );
 }
 
 export function fetchRecoveryPolicy(
@@ -1681,7 +1693,13 @@ export function fetchRecoveryPolicy(
   onFallback?: () => void,
   projectId?: string | null
 ) {
-  return fetchJson<RecoveryPolicyResponse>(appendProjectScope("/api/recovery-policy", projectId), RECOVERY_POLICY_FALLBACK, signal, onFallback);
+  return fetchJson<RecoveryPolicyResponse>(
+    appendProjectScope("/api/recovery-policy", projectId),
+    RECOVERY_POLICY_FALLBACK,
+    signal,
+    onFallback,
+    projectId
+  );
 }
 
 export async function runProviderTask(providerId: string, projectId: string, agentId: string, taskId: string) {

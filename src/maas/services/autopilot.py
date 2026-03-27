@@ -585,12 +585,12 @@ def _governance_gate(connection, project_paths, project_id, policy):
             )
         )
     max_review_queue = int(policy.get("max_review_queue") or 0)
-    if gate["review_queue"] > 0 or max_review_queue > 0:
+    if gate["review_queue"] > 0:
         signals.append(
             _signal(
                 "review_queue_limit",
                 "Review queue pressure",
-                "warning" if gate["review_queue"] else "info",
+                "warning",
                 (
                     "Review queue reached the configured threshold."
                     if max_review_queue > 0 and gate["review_queue"] >= max_review_queue
@@ -603,12 +603,12 @@ def _governance_gate(connection, project_paths, project_id, policy):
             )
         )
     max_blocked_queue = int(policy.get("max_blocked_queue") or 0)
-    if gate["blocked_queue"] > 0 or max_blocked_queue > 0:
+    if gate["blocked_queue"] > 0:
         signals.append(
             _signal(
                 "blocked_queue_limit",
                 "Blocked queue pressure",
-                "warning" if gate["blocked_queue"] else "info",
+                "warning",
                 (
                     "Blocked queue reached the configured threshold."
                     if max_blocked_queue > 0 and gate["blocked_queue"] >= max_blocked_queue
@@ -621,12 +621,12 @@ def _governance_gate(connection, project_paths, project_id, policy):
             )
         )
     max_stale_runs = int(policy.get("max_stale_runs") or 0)
-    if gate["stale_runs"] > 0 or max_stale_runs > 0:
+    if gate["stale_runs"] > 0:
         signals.append(
             _signal(
                 "stale_run_limit",
                 "Stale run pressure",
-                "critical" if gate["stale_runs"] else "info",
+                "critical",
                 (
                     "Stale or suspect live runs reached the configured threshold."
                     if max_stale_runs > 0 and gate["stale_runs"] >= max_stale_runs
@@ -648,12 +648,12 @@ def _governance_gate(connection, project_paths, project_id, policy):
                 repeated_failure_items[0]["task_id"],
             )
         )
-    if gate["repeated_failure_incidents"] > 0 or max_repeated_failures > 0:
+    if gate["repeated_failure_incidents"] > 0:
         signals.append(
             _signal(
                 "repeated_failure_limit",
                 "Repeated failure pressure",
-                "critical" if gate["repeated_failure_incidents"] else "info",
+                "critical",
                 (
                     "Repeated-failure incidents reached the configured threshold."
                     if max_repeated_failures > 0 and gate["repeated_failure_incidents"] >= max_repeated_failures
@@ -667,12 +667,12 @@ def _governance_gate(connection, project_paths, project_id, policy):
             )
         )
     max_notification_failures = int(policy.get("max_notification_failures") or 0)
-    if gate["notification_failures"] > 0 or max_notification_failures > 0:
+    if gate["notification_failures"] > 0:
         signals.append(
             _signal(
                 "notification_failure_limit",
                 "Notification delivery failures",
-                "warning" if gate["notification_failures"] else "info",
+                "warning",
                 (
                     "Failed outbound notifications reached the configured threshold."
                     if max_notification_failures > 0 and gate["notification_failures"] >= max_notification_failures

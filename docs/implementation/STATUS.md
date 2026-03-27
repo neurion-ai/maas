@@ -45,7 +45,7 @@ Rules:
 - do not create competing active roadmap, status, queue, or runbook files
 - keep roadmap identifiers in GitHub issue titles when work maps to numbered items, for example `Roadmap #226: Goal-to-issue explainability and critical path view`
 
-`main` is implemented through numbered roadmap item `#224`. Post-`#224` execution now lives in GitHub issues and the project board instead of new active-plan docs.
+`main` now includes the shipped post-`#224` delivery slice (`#225` and `#230`). Remaining post-`#224` execution now lives in GitHub issues and the project board instead of new active-plan docs.
 
 See:
 
@@ -60,6 +60,7 @@ See:
 - [16-codex-mvp-autopilot-memory-plan.md](16-codex-mvp-autopilot-memory-plan.md)
 - [17-codex-mvp-control-loop-hardening-plan.md](17-codex-mvp-control-loop-hardening-plan.md)
 - [18-codex-mvp-doctor-delivery-loop-plan.md](18-codex-mvp-doctor-delivery-loop-plan.md)
+- [19-codex-mvp-delivery-execution-verification-plan.md](19-codex-mvp-delivery-execution-verification-plan.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract
@@ -90,9 +91,9 @@ Board flow:
 - `[x]` completed in the current numbered delivery sequence
 - `[ ]` not yet completed in the current numbered delivery sequence
 
-The historical sequence below shows whether a completed item is already on `main` or still only exists on stacked branches.
+The historical sequence below shows whether a completed item is already on `main` or still only exists on stacked branches. Post-`#224` planning and sequencing now live in the GitHub project, not in this file.
 
-## Historical Development Sequence Through `#224`
+## Historical Development Sequence
 
 - [x] `#81` is shipped on `main`
 - [x] `#82` is implemented on the stacked branch `codex/project-aware-supervisor-orchestration`
@@ -234,6 +235,8 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#222` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#223` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#224` is implemented on `codex/codex-mvp-doctor-delivery-loop`
+- [x] `#225` is shipped on `main`
+- [x] `#230` is shipped on `main`
 
 ## Historical Numbered Roadmap
 

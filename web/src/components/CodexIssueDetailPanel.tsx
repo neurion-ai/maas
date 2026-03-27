@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { fetchArtifactDetail, fetchCodexRunDetail, prepareTaskPrDraft, promoteArtifactToMemory } from "../lib/controlRoomApi";
+import { fetchArtifactDetail, fetchCodexRunDetail, prepareTaskPrDraft, promoteArtifactToMemory, syncTaskGithubPr } from "../lib/controlRoomApi";
 import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview, CodexRunDetailResponse } from "../types";
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
@@ -131,6 +131,7 @@ export function CodexIssueDetailPanel({
   const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
   const [promotingMemory, setPromotingMemory] = useState(false);
   const [preparingDelivery, setPreparingDelivery] = useState(false);
+  const [syncingDelivery, setSyncingDelivery] = useState(false);
   const [artifactLoadFailed, setArtifactLoadFailed] = useState(false);
   const [promotedMemoryItems, setPromotedMemoryItems] = useState<
     NonNullable<CodexIssueDetailResponse["memory_context"]>
@@ -202,6 +203,7 @@ export function CodexIssueDetailPanel({
     );
   }
   const detailLoading = Boolean(task && !detail);
+  const delivery = detail?.delivery ?? null;
   const runConsole = detail?.run_console ?? null;
   const isReview = task.status === "review";
   const unlockCount = detail?.relationships.unlocks.length ?? 0;
@@ -405,21 +407,42 @@ export function CodexIssueDetailPanel({
             </button>
           ) : null}
           {task.status === "review" || task.status === "done" ? (
-            <button
-              type="button"
-              className="codex-button"
-              disabled={preparingDelivery}
-              onClick={() => {
-                setPreparingDelivery(true);
-                setDeliveryNotice(null);
-                void prepareTaskPrDraft(task.task_id)
-                  .then((payload) => setDeliveryNotice(`Prepared PR draft "${payload.title}".`))
-                  .catch((error) => setDeliveryNotice(error instanceof Error ? error.message : "Could not prepare PR draft."))
-                  .finally(() => setPreparingDelivery(false));
-              }}
-            >
-              {preparingDelivery ? "Preparing..." : "Prepare PR draft"}
-            </button>
+            <>
+              <button
+                type="button"
+                className="codex-button"
+                disabled={preparingDelivery || syncingDelivery}
+                onClick={() => {
+                  setPreparingDelivery(true);
+                  setDeliveryNotice(null);
+                  void prepareTaskPrDraft(task.task_id)
+                    .then((payload) => setDeliveryNotice(`Prepared PR draft "${payload.title}".`))
+                    .catch((error) => setDeliveryNotice(error instanceof Error ? error.message : "Could not prepare PR draft."))
+                    .finally(() => setPreparingDelivery(false));
+                }}
+              >
+                {preparingDelivery ? "Preparing..." : "Prepare PR draft"}
+              </button>
+              <button
+                type="button"
+                className="codex-button"
+                disabled={preparingDelivery || syncingDelivery || delivery?.delivery_gate.status === "blocked"}
+                onClick={() => {
+                  setSyncingDelivery(true);
+                  setDeliveryNotice(null);
+                  void syncTaskGithubPr(task.task_id)
+                    .then((payload) =>
+                      setDeliveryNotice(
+                        `${payload.mode === "created" ? "Created" : "Updated"} draft PR #${payload.github_pr.number}.`
+                      )
+                    )
+                    .catch((error) => setDeliveryNotice(error instanceof Error ? error.message : "Could not sync GitHub PR."))
+                    .finally(() => setSyncingDelivery(false));
+                }}
+              >
+                {syncingDelivery ? "Syncing..." : delivery?.github_pr ? "Sync draft PR" : "Create draft PR"}
+              </button>
+            </>
           ) : null}
         </div>
         {deliveryNotice ? <div className="codex-review-note">{deliveryNotice}</div> : null}
@@ -634,6 +657,60 @@ export function CodexIssueDetailPanel({
           </div>
         </section>
       ) : null}
+
+      <details className="codex-detail-foldout">
+        <summary>Delivery</summary>
+        {detailLoading ? <div className="codex-detail-section codex-empty-copy">Loading delivery state…</div> : null}
+        {!detailLoading && delivery ? (
+          <>
+            <section className="codex-detail-section">
+              <div className="codex-section-heading">
+                <strong>Delivery gate</strong>
+                <span>{delivery.delivery_gate.status}</span>
+              </div>
+              <div className="codex-review-callout">
+                <strong>{delivery.delivery_gate.summary}</strong>
+                <p>{delivery.delivery_gate.detail}</p>
+              </div>
+              <div className="codex-history-list">
+                {delivery.delivery_gate.checks.map((check) => (
+                  <div key={check.code} className="codex-history-item">
+                    <div className="codex-history-item__meta">
+                      <strong>{check.label}</strong>
+                      <span>{check.status}</span>
+                    </div>
+                    <span>{check.summary}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="codex-detail-section">
+              <div className="codex-section-heading">
+                <strong>GitHub draft PR</strong>
+                <span>{delivery.github_pr ? `#${delivery.github_pr.number}` : "Not synced"}</span>
+              </div>
+              {delivery.github_pr ? (
+                <div className="codex-review-callout">
+                  <strong>{delivery.github_pr.title ?? "Draft PR synced"}</strong>
+                  <p>
+                    {delivery.github_pr.is_draft ? "Draft" : "Ready"} · {delivery.github_pr.state ?? "OPEN"} ·{" "}
+                    {delivery.github_pr.head_branch ?? "branch?"} to {delivery.github_pr.base_branch ?? "base?"}
+                  </p>
+                  <p>{delivery.github_pr.url}</p>
+                </div>
+              ) : (
+                <div className="codex-empty-copy">No GitHub draft PR has been synced for this issue yet.</div>
+              )}
+              {delivery.latest_draft ? (
+                <div className="codex-review-note">
+                  Latest draft prepared {formatTimestamp(delivery.latest_draft.prepared_at)} at {delivery.latest_draft.body_path}
+                </div>
+              ) : null}
+            </section>
+          </>
+        ) : null}
+      </details>
 
       <details className="codex-detail-foldout">
         <summary>Decision context</summary>

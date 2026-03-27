@@ -46,8 +46,10 @@ import type {
   RestoreQuarantineEntryResponse,
   DeliveryDraftResponse,
   DeliveryOverviewResponse,
+  DeliverySyncResponse,
   EnvironmentDoctorResponse,
   SupervisorRunResponse,
+  TaskDeliveryStatusResponse,
   TimelineResponse
 } from "../types";
 import { appendProjectScope, getSelectedProjectId } from "./projectScope";
@@ -893,6 +895,10 @@ export function fetchDeliveryOverview(
         diff_count: 0,
         report_count: 0,
         bundle_count: 0,
+        ready_count: 0,
+        attention_count: 0,
+        blocked_count: 0,
+        synced_count: 0,
       },
       git: {
         is_git_repo: false,
@@ -908,8 +914,50 @@ export function fetchDeliveryOverview(
   );
 }
 
+export function fetchTaskDeliveryStatus(taskId: string, signal?: AbortSignal) {
+  return fetchJson<TaskDeliveryStatusResponse>(
+    appendProjectScope(`/api/tasks/${taskId}/delivery`),
+    {
+      task_id: taskId,
+      issue_key: null,
+      title: "",
+      task_status: "planned",
+      review_state: null,
+      goal_title: null,
+      latest_artifact_type: null,
+      artifact_count: 0,
+      created_at: null,
+      bundle_ready: false,
+      github_ready: false,
+      delivery_kind: "artifact",
+      delivery_gate: {
+        status: "blocked",
+        summary: "Delivery state is unavailable.",
+        detail: "The current delivery state could not be loaded.",
+        checks: []
+      },
+      latest_draft: null,
+      github_pr: null,
+      latest_artifacts: [],
+      git: {
+        is_git_repo: false,
+        branch: null,
+        default_branch: null,
+        dirty: false
+      }
+    },
+    signal
+  );
+}
+
 export async function prepareTaskPrDraft(taskId: string) {
   return postJson<DeliveryDraftResponse>(appendProjectScope(`/api/tasks/${taskId}/actions/prepare-pr-draft`), {
+    actor_id: DEFAULT_ACTOR_ID,
+  });
+}
+
+export async function syncTaskGithubPr(taskId: string) {
+  return postJson<DeliverySyncResponse>(appendProjectScope(`/api/tasks/${taskId}/actions/sync-github-pr`), {
     actor_id: DEFAULT_ACTOR_ID,
   });
 }

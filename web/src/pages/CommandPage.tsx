@@ -16,6 +16,7 @@ import {
   runOrchestratorPass,
   createGoal,
   synthesizeGoal,
+  syncTaskGithubPr,
   updateProjectAutopilot,
   updateProjectProviderCapacity,
 } from "../lib/controlRoomApi";
@@ -365,7 +366,7 @@ export function CommandPage({
   }
 
   async function handlePreparePrDraft(taskId: string) {
-    setPendingKey(`delivery:${taskId}`);
+    setPendingKey(`delivery:draft:${taskId}`);
     setDeliveryNotice(null);
     try {
       const payload = await prepareTaskPrDraft(taskId);
@@ -373,6 +374,22 @@ export function CommandPage({
       setDeliveryNotice(`Prepared PR draft "${payload.title}". Suggested command: ${payload.gh_command}`);
     } catch (error) {
       setDeliveryNotice(error instanceof Error ? error.message : "Could not prepare the PR draft.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleSyncGithubPr(taskId: string) {
+    setPendingKey(`delivery:sync:${taskId}`);
+    setDeliveryNotice(null);
+    try {
+      const payload = await syncTaskGithubPr(taskId);
+      await loadCommand();
+      setDeliveryNotice(
+        `${payload.mode === "created" ? "Created" : "Updated"} draft PR #${payload.github_pr.number}: ${payload.github_pr.url}`
+      );
+    } catch (error) {
+      setDeliveryNotice(error instanceof Error ? error.message : "Could not sync the GitHub draft PR.");
     } finally {
       setPendingKey(null);
     }
@@ -586,7 +603,9 @@ export function CommandPage({
               <span className="codex-kicker">Delivery</span>
               <h2>Turn completed work into deliverables</h2>
             </div>
-            <span className="codex-chip">{delivery?.summary.candidate_count ?? 0} candidates</span>
+            <span className="codex-chip">
+              {delivery?.summary.ready_count ?? 0} ready · {delivery?.summary.candidate_count ?? 0} candidates
+            </span>
           </div>
           <p className="codex-muted-copy">
             {delivery?.git.is_git_repo
@@ -599,18 +618,36 @@ export function CommandPage({
               <div key={item.task_id} className="codex-stack-item codex-stack-item--static">
                 <div className="codex-stack-item__header">
                   <strong>{item.issue_key ?? item.task_id}</strong>
-                  <span>{item.delivery_kind}</span>
+                  <span>{item.delivery_kind} · {item.delivery_gate.status}</span>
                 </div>
                 <span>{item.title}</span>
                 <p>{item.goal_title ?? "No linked goal"} · {item.artifact_count} artifacts</p>
+                <p className="codex-muted-copy">{item.delivery_gate.summary}</p>
+                {item.github_pr ? (
+                  <p className="codex-muted-copy">
+                    PR #{item.github_pr.number} · {item.github_pr.is_draft ? "draft" : "ready"} · {item.github_pr.url}
+                  </p>
+                ) : null}
                 <div className="codex-detail-actions">
                   <button
                     type="button"
                     className="codex-button"
-                    disabled={pendingKey !== null || !item.github_ready}
+                    disabled={pendingKey !== null}
                     onClick={() => void handlePreparePrDraft(item.task_id)}
                   >
-                    {pendingKey === `delivery:${item.task_id}` ? "Preparing..." : "Prepare PR draft"}
+                    {pendingKey === `delivery:draft:${item.task_id}` ? "Preparing..." : "Prepare PR draft"}
+                  </button>
+                  <button
+                    type="button"
+                    className="codex-button"
+                    disabled={pendingKey !== null || item.delivery_gate.status === "blocked"}
+                    onClick={() => void handleSyncGithubPr(item.task_id)}
+                  >
+                    {pendingKey === `delivery:sync:${item.task_id}`
+                      ? "Syncing..."
+                      : item.github_pr
+                        ? "Sync draft PR"
+                        : "Create draft PR"}
                   </button>
                   <button
                     type="button"

@@ -33,7 +33,7 @@ from maas.services.codex_mvp import (
     fetch_runs,
     fetch_system_diagnostics,
 )
-from maas.services.delivery import fetch_delivery_overview, prepare_github_pr_draft
+from maas.services.delivery import fetch_delivery_overview, fetch_task_delivery_status, prepare_github_pr_draft, sync_github_pr
 from maas.services.environment_doctor import fetch_environment_doctor
 from maas.services.goal_planning import create_goal, fetch_goal_planning, synthesize_goal_issues
 from maas.services.memory import fetch_project_memory, promote_artifact_to_memory
@@ -335,7 +335,7 @@ class GoalSynthesizeRequest(BaseModel):
     refresh: bool = True
 
 
-class DeliveryDraftRequest(BaseModel):
+class DeliveryActionRequest(BaseModel):
     actor_id: str = "agent_allocator"
 
 
@@ -926,6 +926,17 @@ def create_app(project_root="."):
         finally:
             connection.close()
 
+    @app.get("/api/tasks/{task_id}/delivery")
+    def task_delivery_status(task_id: str, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return fetch_task_delivery_status(connection, paths, task_id=task_id, project_id=scoped_project_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
     @app.get("/api/portfolio")
     def portfolio():
         connection = connect(paths)
@@ -1250,7 +1261,7 @@ def create_app(project_root="."):
             connection.close()
 
     @app.post("/api/tasks/{task_id}/actions/prepare-pr-draft")
-    def task_prepare_pr_draft(task_id: str, payload: DeliveryDraftRequest, project_id: str = None):
+    def task_prepare_pr_draft(task_id: str, payload: DeliveryActionRequest, project_id: str = None):
         connection = connect(paths)
         try:
             scoped_project_id = _selected_project_id(connection, project_id)
@@ -1264,6 +1275,29 @@ def create_app(project_root="."):
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/tasks/{task_id}/actions/sync-github-pr")
+    def task_sync_github_pr(task_id: str, payload: DeliveryActionRequest, project_id: str = None):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, project_id)
+            return sync_github_pr(
+                connection,
+                paths,
+                task_id=task_id,
+                actor_id=payload.actor_id,
+                project_id=scoped_project_id,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         finally:
             connection.close()

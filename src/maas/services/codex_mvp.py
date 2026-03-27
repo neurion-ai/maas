@@ -5,6 +5,7 @@ import json
 import os
 
 from maas.services.artifacts import fetch_artifacts
+from maas.services.delivery import fetch_task_delivery_status
 from maas.services.git_workspaces import fetch_task_git_workspace
 from maas.services.memory import fetch_project_memory, retrieve_relevant_memory
 from maas.services.provider_jobs import fetch_provider_jobs
@@ -1500,6 +1501,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         goal_title=task_row["goal_title"],
         limit=4,
     )
+    delivery = fetch_task_delivery_status(connection, project_paths, task_id, project_id=project_id)
     latest_run = runs[0] if runs else None
     recovery_playbook = _issue_recovery_playbook(
         dict(task_row),
@@ -1544,5 +1546,6 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "review_decision": review_decision,
         "recovery_playbook": recovery_playbook,
         "memory_context": related_memory,
+        "delivery": delivery,
         "git_workspace": git_workspace,
     }

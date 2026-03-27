@@ -58,6 +58,7 @@ Today MAAS is a substantial local prototype built around:
 - a Python/FastAPI backend with SQLite-backed state
 - a React control plane for Command, Work, Issues, Agents, Runs, System, and Projects
 - goal intake, issue synthesis, autopilot, review, recovery, retrieval, delivery-prep, and GitHub sync flows
+- a GitHub Project-driven execution workflow for tracked issues, PRs, and review state
 - live and simulated Codex execution paths with operator-visible logs, traces, and artifacts
 
 The implementation history is long because the product has pivoted several times. The public direction above is the one that matters now; the detailed historical roadmap is still preserved below for implementation tracking.
@@ -104,9 +105,19 @@ Relevant design and roadmap documents:
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 
+## Execution Workflow
+
+Active planning and execution now live in GitHub, not in the numbered implementation docs.
+
+- execution layer: [MAAS Delivery & Execution](https://github.com/orgs/neurion-ai/projects/4)
+- current-truth docs: [README.md](README.md), [docs/implementation/STATUS.md](docs/implementation/STATUS.md), and [docs/implementation/WORKFLOW.md](docs/implementation/WORKFLOW.md)
+- history/reference docs: the numbered implementation docs under [docs/implementation](docs/implementation/)
+
+Use one GitHub issue per tracked task or roadmap item, keep project fields truthful, and link the PR once code work starts.
+
 ## Roadmap and Implementation History
 
-The rest of this README tracks the shipped implementation and numbered delivery history in detail.
+The rest of this README tracks shipped implementation and numbered delivery history as archive/reference.
 
 ## Implementation Snapshot
 
@@ -115,9 +126,9 @@ Legend:
 - `[x]` completed in the current numbered delivery sequence
 - `[ ]` not yet completed in the current numbered delivery sequence
 
-Use the "Current stacked branch progress" section below to see whether a completed item is already on `main` or only exists on stacked branches.
+Use the stacked-branch references below to see whether a completed item is already on `main` or only exists on stacked branches.
 
-Current stacked development chain above `main`:
+Historical stacked development chain above `main`:
 
 - `#82` exists on `codex/project-aware-supervisor-orchestration`
 - `#83` exists on `codex/brownfield-file-backed-planning`

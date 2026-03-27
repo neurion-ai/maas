@@ -1265,6 +1265,7 @@ export function fetchCodexIssueDetail(taskId: string, signal?: AbortSignal, onFa
         actions: [],
         confidence: "low",
       },
+      goal_explainability: null,
       memory_context: [],
       git_workspace: null,
     },

@@ -24,6 +24,39 @@ def _load_project_config(project_row):
     return payload if isinstance(payload, dict) else {}
 
 
+def _issue_key_lookup(connection, project_id):
+    rows = connection.execute(
+        """
+        SELECT task_id
+        FROM tasks
+        WHERE project_id = ?
+        ORDER BY created_at ASC, task_id ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return {
+        row["task_id"]: "ISS-{0}".format(str(index + 1).zfill(4))
+        for index, row in enumerate(rows)
+    }
+
+
+def _acceptance_summary(acceptance_items):
+    labels = []
+    for item in acceptance_items or []:
+        item_type = item.get("type")
+        if item_type == "artifact_exists":
+            labels.append("produce operator-visible output")
+        elif item_type == "human_review":
+            labels.append("clear human review")
+        elif item_type:
+            labels.append(item_type.replace("_", " "))
+    if not labels:
+        return "No explicit acceptance criteria are recorded."
+    if len(labels) == 1:
+        return labels[0].capitalize() + "."
+    return "{0}, and {1}.".format(", ".join(label for label in labels[:-1]), labels[-1]).capitalize()
+
+
 def _goal_issue_specs(goal_row, project_row):
     title = (goal_row["title"] or "").strip()
     description = (goal_row["description"] or "").strip()
@@ -41,6 +74,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Clarify the scope, success criteria, and evidence expected for this research goal.\n\nGoal context:\n{0}".format(description or title),
                 "priority": high,
                 "acceptance": [{"type": "artifact_exists"}],
+                "stage_label": "Research framing",
+                "why_it_exists": "Create a clear research brief so later evidence can be judged against the same scope and success criteria.",
             },
             {
                 "slug": "collect-baseline-context",
@@ -48,6 +83,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Inspect the current repository, prior memory, and relevant artifacts before deep work begins.",
                 "priority": max(high - 4, 1),
                 "acceptance": [{"type": "artifact_exists"}],
+                "stage_label": "Context grounding",
+                "why_it_exists": "Ground the investigation in the current repo, prior memory, and existing artifacts before deeper work starts.",
             },
             {
                 "slug": "run-core-investigation",
@@ -55,6 +92,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Execute the primary research loop and record evidence-backed findings.",
                 "priority": max(high - 8, 1),
                 "acceptance": [{"type": "artifact_exists"}],
+                "stage_label": "Investigation",
+                "why_it_exists": "Produce the main research output that moves the goal forward with evidence rather than assumptions.",
             },
             {
                 "slug": "verify-findings",
@@ -62,6 +101,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Validate the research outputs and capture what still looks uncertain or risky.",
                 "priority": max(high - 12, 1),
                 "acceptance": [{"type": "artifact_exists"}, {"type": "human_review"}],
+                "stage_label": "Verification",
+                "why_it_exists": "Turn raw findings into trustworthy evidence by testing them and surfacing remaining risk explicitly.",
             },
             {
                 "slug": "prepare-delivery-report",
@@ -69,6 +110,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Package the research result into a deliverable summary, artifact bundle, or draft PR narrative.",
                 "priority": max(high - 16, 1),
                 "acceptance": [{"type": "artifact_exists"}, {"type": "human_review"}],
+                "stage_label": "Delivery",
+                "why_it_exists": "Package the result so an operator or downstream reviewer can consume it without replaying the whole investigation.",
             },
         ]
     else:
@@ -79,6 +122,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Turn the goal into operator-visible scope, acceptance criteria, and expected outputs.\n\nGoal context:\n{0}".format(description or title),
                 "priority": high,
                 "acceptance": [{"type": "artifact_exists"}],
+                "stage_label": "Planning",
+                "why_it_exists": "Make the goal explicit enough that implementation, review, and delivery all share the same definition of done.",
             },
             {
                 "slug": "inspect-current-surface",
@@ -86,6 +131,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Inspect the repo, existing memory, and current state before implementation starts.",
                 "priority": max(high - 4, 1),
                 "acceptance": [{"type": "artifact_exists"}],
+                "stage_label": "Grounding",
+                "why_it_exists": "Anchor the goal in the current implementation surface and reusable memory before changing code or behavior.",
             },
             {
                 "slug": "implement-primary-slice",
@@ -93,6 +140,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Complete the highest-value change required to advance this goal and record the output.",
                 "priority": max(high - 8, 1),
                 "acceptance": [{"type": "artifact_exists"}],
+                "stage_label": "Implementation",
+                "why_it_exists": "Deliver the main code or artifact change that materially advances the goal instead of just preparing for it.",
             },
             {
                 "slug": "verify-output-and-risk",
@@ -100,6 +149,8 @@ def _goal_issue_specs(goal_row, project_row):
                 "description": "Run verification, collect evidence, and summarize remaining risks or follow-up items.",
                 "priority": max(high - 12, 1),
                 "acceptance": [{"type": "artifact_exists"}, {"type": "human_review"}],
+                "stage_label": "Verification",
+                "why_it_exists": "Convert the implementation result into reviewable evidence and expose the remaining risk posture before delivery.",
             },
             {
                 "slug": "prepare-delivery-package",
@@ -111,9 +162,295 @@ def _goal_issue_specs(goal_row, project_row):
                 ),
                 "priority": max(high - 16, 1),
                 "acceptance": [{"type": "artifact_exists"}, {"type": "human_review"}],
+                "stage_label": "Delivery",
+                "why_it_exists": "Package the finished slice into a handoff that can be reviewed, approved, or synchronized to GitHub cleanly.",
             },
         ]
     return specs
+
+
+def _goal_plan_task_rows(connection, project_id, goal_id, origin):
+    return connection.execute(
+        """
+        SELECT
+            task_id,
+            title,
+            status,
+            priority,
+            review_state,
+            synthesis_key,
+            created_at,
+            updated_at
+        FROM tasks
+        WHERE project_id = ?
+          AND goal_id = ?
+          AND synthesis_origin = ?
+        ORDER BY created_at ASC, task_id ASC
+        """,
+        (project_id, goal_id, origin),
+    ).fetchall()
+
+
+def _goal_plan_dependency_rows(connection, project_id, task_ids):
+    if not task_ids:
+        return []
+    placeholders = ", ".join("?" for _ in task_ids)
+    params = [project_id, *task_ids, *task_ids]
+    return connection.execute(
+        """
+        SELECT source_task_id, target_task_id
+        FROM task_dependencies
+        WHERE project_id = ?
+          AND dependency_type = 'blocks'
+          AND source_task_id IN ({placeholders})
+          AND target_task_id IN ({placeholders})
+        ORDER BY rowid ASC
+        """.format(placeholders=placeholders),
+        tuple(params),
+    ).fetchall()
+
+
+def _goal_step_slug(origin, synthesis_key):
+    prefix = "{0}:".format(origin)
+    if synthesis_key and synthesis_key.startswith(prefix):
+        return synthesis_key[len(prefix) :]
+    return None
+
+
+def _build_goal_plan_explainability(connection, project_id, goal_row, project_row, issue_keys=None):
+    origin = "goal_plan:{0}".format(goal_row["goal_id"])
+    task_rows = _goal_plan_task_rows(connection, project_id, goal_row["goal_id"], origin)
+    issue_keys = issue_keys or _issue_key_lookup(connection, project_id)
+    if not task_rows:
+        return {
+            "goal_id": goal_row["goal_id"],
+            "goal_title": goal_row["title"],
+            "origin": origin,
+            "summary": {
+                "task_count": 0,
+                "done_count": 0,
+                "open_count": 0,
+                "blocked_count": 0,
+                "review_count": 0,
+                "current_focus_task_id": None,
+                "current_focus_issue_key": None,
+                "current_focus_title": None,
+                "current_focus_status": None,
+                "critical_path_remaining": 0,
+            },
+            "critical_path": {
+                "remaining_task_count": 0,
+                "items": [],
+            },
+            "tasks": [],
+        }
+
+    specs = _goal_issue_specs(goal_row, project_row)
+    specs_by_slug = {
+        spec["slug"]: spec
+        for spec in specs
+    }
+    spec_order = {
+        spec["slug"]: index
+        for index, spec in enumerate(specs)
+    }
+    task_rows = sorted(
+        task_rows,
+        key=lambda row: (
+            spec_order.get(_goal_step_slug(origin, row["synthesis_key"]), len(spec_order)),
+            row["created_at"] or "",
+            row["task_id"],
+        ),
+    )
+    ordered_ids = [row["task_id"] for row in task_rows]
+    row_by_id = {row["task_id"]: dict(row) for row in task_rows}
+    dependency_rows = _goal_plan_dependency_rows(connection, project_id, ordered_ids)
+    depends_on = {task_id: [] for task_id in ordered_ids}
+    unlocks = {task_id: [] for task_id in ordered_ids}
+    for row in dependency_rows:
+        source_task_id = row["source_task_id"]
+        target_task_id = row["target_task_id"]
+        unlocks.setdefault(source_task_id, []).append(target_task_id)
+        depends_on.setdefault(target_task_id, []).append(source_task_id)
+
+    remaining_ids = [
+        task_id
+        for task_id in ordered_ids
+        if row_by_id[task_id]["status"] not in {"done", "cancelled"}
+    ]
+    remaining_set = set(remaining_ids)
+    longest_to_end = {}
+    next_on_path = {}
+    position_by_id = {task_id: index for index, task_id in enumerate(ordered_ids)}
+    for task_id in reversed(ordered_ids):
+        if task_id not in remaining_set:
+            continue
+        child_ids = [child_id for child_id in unlocks.get(task_id, []) if child_id in remaining_set]
+        if not child_ids:
+            longest_to_end[task_id] = 1
+            next_on_path[task_id] = None
+            continue
+        best_child_id = max(
+            child_ids,
+            key=lambda child_id: (
+                longest_to_end.get(child_id, 1),
+                -position_by_id.get(child_id, 0),
+            ),
+        )
+        longest_to_end[task_id] = 1 + longest_to_end.get(best_child_id, 1)
+        next_on_path[task_id] = best_child_id
+
+    root_ids = [
+        task_id
+        for task_id in remaining_ids
+        if not [dependency_id for dependency_id in depends_on.get(task_id, []) if dependency_id in remaining_set]
+    ]
+    critical_path_ids = []
+    if root_ids:
+        start_id = max(
+            root_ids,
+            key=lambda task_id: (
+                longest_to_end.get(task_id, 1),
+                -position_by_id.get(task_id, 0),
+            ),
+        )
+        focus_id = start_id
+        while focus_id:
+            critical_path_ids.append(focus_id)
+            focus_id = next_on_path.get(focus_id)
+    critical_rank = {
+        task_id: index + 1
+        for index, task_id in enumerate(critical_path_ids)
+    }
+
+    current_focus_id = next(
+        (task_id for task_id in ordered_ids if row_by_id[task_id]["status"] not in {"done", "cancelled"}),
+        None,
+    )
+
+    tasks = []
+    for index, row in enumerate(task_rows, start=1):
+        task_row = row_by_id[row["task_id"]]
+        slug = _goal_step_slug(origin, task_row.get("synthesis_key"))
+        spec = specs_by_slug.get(slug) or {}
+        open_dependency_count = len(
+            [
+                task_id
+                for task_id in depends_on.get(row["task_id"], [])
+                if row_by_id.get(task_id, {}).get("status") not in {"done", "cancelled"}
+            ]
+        )
+        open_unlock_count = len(
+            [
+                task_id
+                for task_id in unlocks.get(row["task_id"], [])
+                if row_by_id.get(task_id, {}).get("status") not in {"done", "cancelled"}
+            ]
+        )
+        depends_on_items = [
+            {
+                "task_id": dependency_id,
+                "issue_key": issue_keys.get(dependency_id),
+                "title": row_by_id.get(dependency_id, {}).get("title"),
+                "status": row_by_id.get(dependency_id, {}).get("status"),
+            }
+            for dependency_id in depends_on.get(row["task_id"], [])
+        ]
+        unlock_items = [
+            {
+                "task_id": dependency_id,
+                "issue_key": issue_keys.get(dependency_id),
+                "title": row_by_id.get(dependency_id, {}).get("title"),
+                "status": row_by_id.get(dependency_id, {}).get("status"),
+            }
+            for dependency_id in unlocks.get(row["task_id"], [])
+        ]
+        tasks.append(
+            {
+                "task_id": row["task_id"],
+                "issue_key": issue_keys.get(row["task_id"]),
+                "title": row["title"],
+                "status": row["status"],
+                "review_state": row["review_state"],
+                "priority": row["priority"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "step_index": index,
+                "step_count": len(task_rows),
+                "step_slug": slug,
+                "stage_label": spec.get("stage_label"),
+                "why_it_exists": spec.get("why_it_exists") or "This synthesized issue exists to move the goal forward in sequence.",
+                "acceptance_summary": _acceptance_summary(spec.get("acceptance") or []),
+                "depends_on": depends_on_items,
+                "unlocks": unlock_items,
+                "depends_on_count": len(depends_on_items),
+                "unlocks_count": len(unlock_items),
+                "open_dependency_count": open_dependency_count,
+                "open_unlock_count": open_unlock_count,
+                "is_current_focus": row["task_id"] == current_focus_id,
+                "is_on_critical_path": row["task_id"] in critical_rank,
+                "critical_path_rank": critical_rank.get(row["task_id"]),
+            }
+        )
+
+    done_count = len([item for item in tasks if item["status"] == "done"])
+    blocked_count = len([item for item in tasks if item["status"] == "blocked"])
+    review_count = len([item for item in tasks if item["status"] == "review"])
+    open_count = len([item for item in tasks if item["status"] not in {"done", "cancelled"}])
+    current_focus = next((item for item in tasks if item["task_id"] == current_focus_id), None)
+    critical_path_items = [
+        next(item for item in tasks if item["task_id"] == task_id)
+        for task_id in critical_path_ids
+    ]
+
+    return {
+        "goal_id": goal_row["goal_id"],
+        "goal_title": goal_row["title"],
+        "origin": origin,
+        "summary": {
+            "task_count": len(tasks),
+            "done_count": done_count,
+            "open_count": open_count,
+            "blocked_count": blocked_count,
+            "review_count": review_count,
+            "current_focus_task_id": current_focus["task_id"] if current_focus else None,
+            "current_focus_issue_key": current_focus["issue_key"] if current_focus else None,
+            "current_focus_title": current_focus["title"] if current_focus else None,
+            "current_focus_status": current_focus["status"] if current_focus else None,
+            "critical_path_remaining": len(critical_path_items),
+        },
+        "critical_path": {
+            "remaining_task_count": len(critical_path_items),
+            "items": critical_path_items,
+        },
+        "tasks": tasks,
+    }
+
+
+def fetch_goal_explainability(connection, project_id, goal_id):
+    resolved_project_id = resolve_project_id(connection, project_id, include_archived=False)
+    if resolved_project_id is None:
+        raise ValueError("project not found")
+    goal_row = connection.execute(
+        """
+        SELECT goal_id, project_id, title, description, status, goal_type, priority
+        FROM goals
+        WHERE project_id = ?
+          AND goal_id = ?
+        """,
+        (resolved_project_id, goal_id),
+    ).fetchone()
+    if goal_row is None:
+        raise ValueError("goal not found")
+    project_row = resolve_project(connection, resolved_project_id, include_archived=False)
+    issue_keys = _issue_key_lookup(connection, resolved_project_id)
+    return _build_goal_plan_explainability(
+        connection,
+        resolved_project_id,
+        goal_row,
+        project_row,
+        issue_keys=issue_keys,
+    )
 
 
 def create_goal(connection, actor_id, project_id, title, description="", goal_type="initiative", priority=75, parent_goal_id=None):
@@ -416,6 +753,8 @@ def fetch_goal_planning(connection, project_id=None, goal_id=None):
     resolved_project_id = resolve_project_id(connection, project_id, include_archived=False)
     if resolved_project_id is None:
         raise ValueError("project not found")
+    project_row = resolve_project(connection, resolved_project_id, include_archived=False)
+    issue_keys = _issue_key_lookup(connection, resolved_project_id)
     params = [resolved_project_id]
     where_clause = "WHERE goals.project_id = ?"
     if goal_id:
@@ -456,6 +795,17 @@ def fetch_goal_planning(connection, project_id=None, goal_id=None):
             row[key] or 0
             for key in ("planned_tasks", "ready_tasks", "assigned_tasks", "active_tasks", "review_tasks", "blocked_tasks")
         )
+        plan = (
+            _build_goal_plan_explainability(
+                connection,
+                resolved_project_id,
+                row,
+                project_row,
+                issue_keys=issue_keys,
+            )
+            if synthesized_tasks
+            else None
+        )
         goals.append(
             {
                 "goal_id": row["goal_id"],
@@ -484,6 +834,7 @@ def fetch_goal_planning(connection, project_id=None, goal_id=None):
                     else "Refresh or inspect the synthesized issue plan."
                 ),
                 "open_issue_count": total_open,
+                "plan": plan,
             }
         )
     return {

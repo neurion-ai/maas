@@ -12,7 +12,8 @@ from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview, fetch_task_delivery_status
 from maas.services.environment_doctor import _git_status, fetch_environment_doctor
-from maas.services.goal_planning import create_goal, synthesize_goal_issues, _goal_issue_specs
+from maas.services.codex_mvp import fetch_issue_detail
+from maas.services.goal_planning import create_goal, fetch_goal_planning, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
 
 class CodexMvpApiTest(unittest.TestCase):
@@ -499,6 +500,117 @@ class CodexMvpApiTest(unittest.TestCase):
             finally:
                 connection.close()
 
+    def test_goal_planning_exposes_explainability_and_critical_path(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Goal Explainability Test", description="goal explainability", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                goal = create_goal(
+                    connection,
+                    "agent_allocator",
+                    None,
+                    "Ship explainable issue planning",
+                    "Show why each synthesized issue exists and what it unlocks.",
+                    priority=84,
+                )
+                synthesize_payload = synthesize_goal_issues(connection, None, goal["goal_id"], "agent_allocator", refresh=True)
+                first_task_id = synthesize_payload["task_ids"][0]
+                second_task_id = synthesize_payload["task_ids"][1]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'done', review_state = 'approved'
+                    WHERE task_id = ?
+                    """,
+                    (first_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (second_task_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            planning_response = client.get("/api/goals/planning")
+            self.assertEqual(planning_response.status_code, 200)
+            planning_payload = planning_response.json()
+            planning_goal = next(item for item in planning_payload["items"] if item["goal_id"] == goal["goal_id"])
+            self.assertIsNotNone(planning_goal["plan"])
+            self.assertEqual(planning_goal["plan"]["summary"]["current_focus_task_id"], second_task_id)
+            self.assertGreaterEqual(planning_goal["plan"]["critical_path"]["remaining_task_count"], 1)
+            self.assertIn("why each synthesized issue exists".split()[0], planning_goal["description"].lower())
+            self.assertTrue(planning_goal["plan"]["tasks"][0]["why_it_exists"])
+            self.assertTrue(planning_goal["plan"]["tasks"][0]["acceptance_summary"])
+
+            detail_response = client.get(f"/api/issues/{second_task_id}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertIsNotNone(detail_payload["goal_explainability"])
+            self.assertEqual(detail_payload["goal_explainability"]["task"]["task_id"], second_task_id)
+            self.assertTrue(detail_payload["goal_explainability"]["task"]["is_current_focus"])
+            self.assertGreaterEqual(len(detail_payload["goal_explainability"]["critical_path"]["items"]), 1)
+
+    def test_goal_planning_current_focus_respects_synthesized_step_order(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Goal Explainability Ordering Test", description="goal explainability ordering", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute(
+                    """
+                    SELECT project_id
+                    FROM projects
+                    LIMIT 1
+                    """
+                ).fetchone()["project_id"]
+                goal = create_goal(
+                    connection,
+                    "agent_allocator",
+                    None,
+                    "Ship explainable issue planning",
+                    "Show why each synthesized issue exists and what it unlocks.",
+                    priority=84,
+                )
+                synthesize_payload = synthesize_goal_issues(connection, None, goal["goal_id"], "agent_allocator", refresh=True)
+                first_task_id = synthesize_payload["task_ids"][0]
+                second_task_id = synthesize_payload["task_ids"][1]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'done', review_state = 'approved'
+                    WHERE task_id = ?
+                    """,
+                    (first_task_id,),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (second_task_id,),
+                )
+                connection.commit()
+
+                planning_payload = fetch_goal_planning(connection, project_id=project_id)
+                planning_goal = next(item for item in planning_payload["items"] if item["goal_id"] == goal["goal_id"])
+                detail_payload = fetch_issue_detail(connection, paths, project_id, second_task_id)
+            finally:
+                connection.close()
+
+            self.assertEqual(planning_goal["plan"]["summary"]["current_focus_task_id"], second_task_id)
+            self.assertEqual(planning_goal["plan"]["tasks"][0]["task_id"], first_task_id)
+            self.assertEqual(planning_goal["plan"]["tasks"][1]["task_id"], second_task_id)
+            self.assertEqual(detail_payload["goal_explainability"]["task"]["task_id"], second_task_id)
+            self.assertTrue(detail_payload["goal_explainability"]["task"]["is_current_focus"])
+
     def test_memory_promotion_feeds_memory_index_retrieval_and_issue_detail(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Codex Memory Test", description="codex memory", project_type="custom")
@@ -570,6 +682,203 @@ class CodexMvpApiTest(unittest.TestCase):
             self.assertGreaterEqual(len(detail_payload["memory_context"]), 1)
             self.assertEqual(detail_payload["memory_context"][0]["artifact_id"], artifact_id)
             self.assertEqual(detail_payload["memory_context"][0]["freshness"], "fresh")
+
+    def test_review_packets_expose_items_for_bulk_decision(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Review Packet V4 Test", description="codex packet ux", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                tasks = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 2
+                    """
+                ).fetchall()
+                for task in tasks:
+                    connection.execute(
+                        """
+                        UPDATE tasks
+                        SET status = 'review', priority = 50, review_state = 'review_requested'
+                        WHERE task_id = ?
+                        """,
+                        (task["task_id"],),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO verification_runs (
+                            verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                            artifact_id, actor_id, started_at, finished_at
+                        ) VALUES (
+                            ?, ?, ?, 'pytest tests/test_packet_v4.py', 'passed', 0, '1 passed',
+                            NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                        """,
+                        (generate_id("vrf"), task["project_id"], task["task_id"]),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            response = client.get("/api/issues/index")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            packet = payload["queue"]["review"]["batch_review"]["packets"][0]
+            self.assertEqual(packet["eligible_count"], 2)
+            self.assertEqual(len(packet["items"]), 2)
+            self.assertTrue(packet["packet_scope_label"])
+            self.assertEqual(packet["items"][0]["decision_mode"], "auto_approve")
+            self.assertTrue(packet["items"][0]["issue_key"])
+
+    def test_memory_item_usefulness_and_match_reason_are_exposed(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Usefulness Test", description="codex memory usefulness", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Prepare explainability packet', description = 'Reuse the explainability packet and memory summary.'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "explainability-packet.txt")
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("explainability packet\ncritical path narrative\n")
+                artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?)
+                    """,
+                    (
+                        artifact_id,
+                        task["project_id"],
+                        task["task_id"],
+                        artifact_path,
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Explainability packet",
+                                    "summary": "Reusable explainability summary",
+                                    "tags": ["explainability", "packet"],
+                                    "promoted_at": "2026-03-26T10:00:00+00:00",
+                                    "promoted_by": "agent_allocator",
+                                    "used_count": 3,
+                                    "success_count": 2,
+                                    "failure_count": 1,
+                                    "last_used_at": "2026-03-26T11:00:00+00:00",
+                                    "last_run_outcome": "completed",
+                                }
+                            }
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            detail_response = client.get(f"/api/issues/{task['task_id']}")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertEqual(detail_payload["memory_context"][0]["artifact_id"], artifact_id)
+            self.assertIn("Matched", detail_payload["memory_context"][0]["match_summary"])
+            self.assertIn("Used 3x", detail_payload["memory_context"][0]["usefulness_summary"])
+
+            retrieval_response = client.get("/api/retrieval/search", params={"search": "explainability packet"})
+            self.assertEqual(retrieval_response.status_code, 200)
+            retrieval_payload = retrieval_response.json()
+            self.assertEqual(retrieval_payload["memory"][0]["artifact_id"], artifact_id)
+            self.assertGreaterEqual(len(retrieval_payload["memory"][0]["matched_terms"]), 1)
+
+    def test_memory_retrieval_handles_promoted_items_without_preview(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Codex Memory Preview Gap Test", description="codex memory preview gap", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET title = 'Prepare explainability packet', description = 'Reuse the explainability packet and memory summary.'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_id = generate_id("art")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'note', ?, ?)
+                    """,
+                    (
+                        artifact_id,
+                        task["project_id"],
+                        task["task_id"],
+                        os.path.join(paths.artifacts_dir, "missing-explainability-packet.txt"),
+                        json.dumps(
+                            {
+                                "memory": {
+                                    "promoted": True,
+                                    "title": "Explainability packet",
+                                    "summary": "Reusable explainability summary",
+                                    "tags": ["explainability", "packet"],
+                                    "promoted_at": "2026-03-26T10:00:00+00:00",
+                                    "promoted_by": "agent_allocator",
+                                    "used_count": 3,
+                                    "success_count": 2,
+                                    "failure_count": 1,
+                                    "last_used_at": "2026-03-26T11:00:00+00:00",
+                                    "last_run_outcome": "completed",
+                                }
+                            }
+                        ),
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            reopened = connect(paths)
+            try:
+                retrieved = retrieve_relevant_memory(
+                    reopened,
+                    task["project_id"],
+                    "Prepare explainability packet",
+                    task_description="Reuse the explainability packet and memory summary.",
+                )
+            finally:
+                reopened.close()
+
+            self.assertEqual(retrieved[0]["artifact_id"], artifact_id)
+            self.assertIsNone(retrieved[0]["preview"])
+            self.assertIn("Matched", retrieved[0]["match_summary"])
+            self.assertIn("Used 3x", retrieved[0]["usefulness_summary"])
 
     def test_memory_retrieval_prefers_newer_promoted_items_on_score_ties(self):
         with tempfile.TemporaryDirectory() as tmpdir:

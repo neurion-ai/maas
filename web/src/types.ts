@@ -396,6 +396,81 @@ export interface GoalPlanningItem {
   synthesized_tasks: number;
   supports_synthesis: boolean;
   next_step: string;
+  plan?: {
+    goal_id: string;
+    goal_title?: string | null;
+    origin: string;
+    summary: {
+      task_count: number;
+      done_count: number;
+      open_count: number;
+      blocked_count: number;
+      review_count: number;
+      current_focus_task_id?: string | null;
+      current_focus_issue_key?: string | null;
+      current_focus_title?: string | null;
+      current_focus_status?: string | null;
+      critical_path_remaining: number;
+    };
+    critical_path: {
+      remaining_task_count: number;
+      items: Array<{
+        task_id: string;
+        issue_key?: string | null;
+        title: string;
+        status: string;
+        review_state?: string | null;
+        priority: number;
+        step_index: number;
+        step_count: number;
+        stage_label?: string | null;
+        why_it_exists: string;
+        acceptance_summary: string;
+        depends_on_count: number;
+        unlocks_count: number;
+        open_dependency_count: number;
+        open_unlock_count: number;
+        is_current_focus: boolean;
+        is_on_critical_path: boolean;
+        critical_path_rank?: number | null;
+      }>;
+    };
+    tasks: Array<{
+      task_id: string;
+      issue_key?: string | null;
+      title: string;
+      status: string;
+      review_state?: string | null;
+      priority: number;
+      created_at?: string | null;
+      updated_at?: string | null;
+      step_index: number;
+      step_count: number;
+      step_slug?: string | null;
+      stage_label?: string | null;
+      why_it_exists: string;
+      acceptance_summary: string;
+      depends_on: Array<{
+        task_id: string;
+        issue_key?: string | null;
+        title?: string | null;
+        status?: string | null;
+      }>;
+      unlocks: Array<{
+        task_id: string;
+        issue_key?: string | null;
+        title?: string | null;
+        status?: string | null;
+      }>;
+      depends_on_count: number;
+      unlocks_count: number;
+      open_dependency_count: number;
+      open_unlock_count: number;
+      is_current_focus: boolean;
+      is_on_critical_path: boolean;
+      critical_path_rank?: number | null;
+    }>;
+  } | null;
 }
 
 export interface GoalPlanningResponse {
@@ -1994,6 +2069,9 @@ export interface CodexIssueDetailResponse {
     actions: string[];
     confidence: string;
   };
+  goal_explainability?: NonNullable<GoalPlanningItem["plan"]> & {
+    task: NonNullable<GoalPlanningItem["plan"]>["tasks"][number];
+  } | null;
   memory_context?: Array<{
     artifact_id: string;
     task_id?: string | null;
@@ -2009,12 +2087,16 @@ export interface CodexIssueDetailResponse {
     age_days?: number | null;
     freshness?: "fresh" | "aging" | "stale" | "unknown";
     stale?: boolean;
+    matched_terms?: string[];
+    match_reasons?: string[];
+    match_summary?: string | null;
     used_count?: number;
     success_count?: number;
     failure_count?: number;
     success_ratio?: number | null;
     usefulness_score?: number;
     usefulness?: "high" | "medium" | "low" | "unknown";
+    usefulness_summary?: string | null;
     preview?: {
       content?: string;
       truncated?: boolean;
@@ -2054,6 +2136,27 @@ export interface CodexIssueQueueBucket {
       eligible_task_ids?: string[];
       eligible_issue_keys?: string[];
       auto_approve_eligible_count?: number;
+      packet_scope?: string | null;
+      packet_scope_id?: string | null;
+      packet_scope_label?: string | null;
+      items?: Array<{
+        task_id: string;
+        issue_key?: string | null;
+        title: string;
+        status: string;
+        priority: number;
+        goal_id?: string | null;
+        goal_title?: string | null;
+        agent_id?: string | null;
+        agent_name?: string | null;
+        review_state?: string | null;
+        latest_verification_status?: string | null;
+        latest_verification_at?: string | null;
+        latest_verification_command?: string | null;
+        review_age_hours?: number | null;
+        decision_mode?: string | null;
+        auto_approve_eligible?: boolean;
+      }>;
     }>;
     summary: string;
   };
@@ -2169,6 +2272,19 @@ export interface CodexRetrievalSearchResponse {
     tags?: string[];
     promoted_at?: string | null;
     promoted_by?: string | null;
+    age_days?: number | null;
+    freshness?: "fresh" | "aging" | "stale" | "unknown";
+    stale?: boolean;
+    matched_terms?: string[];
+    match_reasons?: string[];
+    match_summary?: string | null;
+    used_count?: number;
+    success_count?: number;
+    failure_count?: number;
+    success_ratio?: number | null;
+    usefulness_score?: number;
+    usefulness?: "high" | "medium" | "low" | "unknown";
+    usefulness_summary?: string | null;
     preview?: {
       content?: string;
       truncated?: boolean;

@@ -233,6 +233,8 @@ export function CodexIssueDetailPanel({
   const isSimulationRun = executionMode === "local_simulation";
   const reviewDecision = detail?.review_decision ?? null;
   const reviewPacket = reviewDecision?.grouped_review_packet ?? null;
+  const goalExplainability = detail?.goal_explainability ?? null;
+  const explainedTask = goalExplainability?.task ?? null;
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
   const selectedRunRecord = selectedRunDetail;
@@ -247,6 +249,47 @@ export function CodexIssueDetailPanel({
   }, [detail?.memory_context, promotedMemoryItems]);
   const reviewBundle = (
     <>
+      {goalExplainability && explainedTask ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Goal explainability</strong>
+            <span>
+              Step {explainedTask.step_index}/{explainedTask.step_count}
+            </span>
+          </div>
+          <div className="codex-run-list codex-run-list--compact">
+            <div className="codex-output-item">
+              <strong>
+                {explainedTask.stage_label ?? "Planned step"}
+                {explainedTask.is_current_focus ? " · current focus" : ""}
+                {explainedTask.is_on_critical_path ? ` · critical path #${explainedTask.critical_path_rank}` : ""}
+              </strong>
+              <span>{explainedTask.why_it_exists}</span>
+              <span>{explainedTask.acceptance_summary}</span>
+              <span>
+                {explainedTask.open_dependency_count > 0
+                  ? `${explainedTask.open_dependency_count} open dependency`
+                  : "No open dependencies"}
+                {explainedTask.open_unlock_count > 0 ? ` · unlocks ${explainedTask.open_unlock_count}` : ""}
+              </span>
+            </div>
+            {goalExplainability.critical_path.items.length ? (
+              <div className="codex-output-item">
+                <strong>Current critical path</strong>
+                <span>
+                  {goalExplainability.critical_path.remaining_task_count} remaining step
+                  {goalExplainability.critical_path.remaining_task_count === 1 ? "" : "s"}
+                </span>
+                <span>
+                  {goalExplainability.critical_path.items
+                    .map((item) => item.issue_key ?? item.title)
+                    .join(" -> ")}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       <section className="codex-detail-section">
         <div className="codex-section-heading">
           <strong>Latest output</strong>
@@ -344,6 +387,7 @@ export function CodexIssueDetailPanel({
               <div key={`${item.artifact_id}:${item.task_id ?? "memory"}`} className="codex-output-item">
                 <strong>{item.title ?? item.path ?? item.artifact_id}</strong>
                 <span>{item.summary ?? "No memory summary recorded."}</span>
+                {item.match_summary ? <span>{item.match_summary}</span> : null}
                 <span>
                   {(item.tags?.length ?? 0) ? item.tags?.join(", ") : "No tags"}
                   {item.score != null ? ` · score ${item.score}` : ""}
@@ -352,6 +396,7 @@ export function CodexIssueDetailPanel({
                   {item.usefulness ? ` · usefulness ${item.usefulness}` : ""}
                   {item.used_count != null ? ` · used ${item.used_count}x` : ""}
                 </span>
+                {item.usefulness_summary ? <span>{item.usefulness_summary}</span> : null}
               </div>
             ))}
           </div>

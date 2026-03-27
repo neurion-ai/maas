@@ -579,6 +579,40 @@ export function CommandPage({
                 </div>
                 <span>{goal.goal_type} · {goal.open_issue_count} open issues · {goal.synthesized_tasks} synthesized</span>
                 <p>{goal.description || "No goal description recorded yet."}</p>
+                {goal.plan?.summary.task_count ? (
+                  <div className="codex-list-block">
+                    <strong>
+                      Critical path: {goal.plan.summary.critical_path_remaining} remaining
+                      {goal.plan.summary.current_focus_issue_key || goal.plan.summary.current_focus_title
+                        ? ` · focus ${goal.plan.summary.current_focus_issue_key ?? goal.plan.summary.current_focus_title}`
+                        : ""}
+                    </strong>
+                    <div className="codex-run-list codex-run-list--compact">
+                      {goal.plan.tasks.slice(0, 5).map((item) => (
+                        <button
+                          key={item.task_id}
+                          type="button"
+                          className="codex-output-item codex-output-item--interactive"
+                          onClick={() => {
+                            setPendingTaskFocus(item.task_id);
+                            onNavigate("issues");
+                          }}
+                        >
+                          <strong>
+                            {item.issue_key ?? item.task_id} · {item.title}
+                          </strong>
+                          <span>
+                            Step {item.step_index}/{item.step_count}
+                            {item.stage_label ? ` · ${item.stage_label}` : ""}
+                            {item.is_current_focus ? " · current focus" : ""}
+                            {item.is_on_critical_path ? ` · critical path #${item.critical_path_rank}` : ""}
+                          </span>
+                          <span>{item.why_it_exists}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="codex-detail-actions">
                   <button
                     type="button"
@@ -852,7 +886,12 @@ export function CommandPage({
                       <span>{item.promoted_at ? formatTimestamp(item.promoted_at) : "memory"}</span>
                     </div>
                     <span>{item.summary || item.path || "Promoted project memory"}</span>
-                    <p>{item.preview?.content || item.tags?.join(" · ") || "Reusable context for future Codex runs."}</p>
+                    <p>{item.match_summary || item.preview?.content || item.tags?.join(" · ") || "Reusable context for future Codex runs."}</p>
+                    <p>
+                      {(item.tags?.length ?? 0) ? item.tags?.join(" · ") : "No tags"}
+                      {item.usefulness ? ` · usefulness ${item.usefulness}` : ""}
+                      {item.usefulness_summary ? ` · ${item.usefulness_summary}` : ""}
+                    </p>
                   </button>
                 ))}
                 {!retrieval?.memory.length ? <div className="codex-empty-copy">No memory matches.</div> : null}

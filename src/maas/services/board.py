@@ -213,10 +213,14 @@ def _group_review_packets(review_items):
                 "title": packet.get("title"),
                 "summary": packet.get("summary"),
                 "recommended_decision": packet.get("recommended_decision"),
+                "packet_scope": packet.get("packet_scope"),
+                "packet_scope_id": packet.get("packet_scope_id"),
+                "packet_scope_label": packet.get("packet_scope_label"),
                 "eligible_count": 0,
                 "eligible_task_ids": [],
                 "eligible_issue_keys": [],
                 "auto_approve_eligible_count": 0,
+                "items": [],
             },
         )
         bucket["eligible_count"] += 1
@@ -225,6 +229,26 @@ def _group_review_packets(review_items):
             bucket["eligible_issue_keys"].append(task["issue_key"])
         if eligibility.get("auto_approve_eligible"):
             bucket["auto_approve_eligible_count"] += 1
+        bucket["items"].append(
+            {
+                "task_id": task["task_id"],
+                "issue_key": task.get("issue_key"),
+                "title": task["title"],
+                "status": task["status"],
+                "priority": task["priority"],
+                "goal_id": (task.get("goal") or {}).get("id"),
+                "goal_title": (task.get("goal") or {}).get("title"),
+                "agent_id": (task.get("agent") or {}).get("id"),
+                "agent_name": (task.get("agent") or {}).get("name"),
+                "review_state": task.get("review_state"),
+                "latest_verification_status": task.get("latest_verification_status"),
+                "latest_verification_at": task.get("latest_verification_at"),
+                "latest_verification_command": task.get("latest_verification_command"),
+                "review_age_hours": task.get("review_age_hours"),
+                "decision_mode": eligibility.get("decision_mode"),
+                "auto_approve_eligible": bool(eligibility.get("auto_approve_eligible")),
+            }
+        )
     return list(packets.values())
 
 

@@ -7,6 +7,7 @@ import os
 from maas.services.artifacts import fetch_artifacts
 from maas.services.delivery import fetch_task_delivery_status
 from maas.services.git_workspaces import fetch_task_git_workspace
+from maas.services.goal_planning import fetch_goal_explainability
 from maas.services.memory import fetch_project_memory, retrieve_relevant_memory
 from maas.services.provider_jobs import fetch_provider_jobs
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
@@ -1501,6 +1502,18 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         goal_title=task_row["goal_title"],
         limit=4,
     )
+    goal_explainability = None
+    if task_row["goal_id"]:
+        goal_plan = fetch_goal_explainability(connection, project_id, task_row["goal_id"])
+        selected_plan_task = next(
+            (item for item in goal_plan.get("tasks") or [] if item["task_id"] == task_id),
+            None,
+        )
+        if selected_plan_task is not None:
+            goal_explainability = {
+                **goal_plan,
+                "task": selected_plan_task,
+            }
     delivery = fetch_task_delivery_status(connection, project_paths, task_id, project_id=project_id)
     latest_run = runs[0] if runs else None
     recovery_playbook = _issue_recovery_playbook(
@@ -1545,6 +1558,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "verification_runs": verification_runs,
         "review_decision": review_decision,
         "recovery_playbook": recovery_playbook,
+        "goal_explainability": goal_explainability,
         "memory_context": related_memory,
         "delivery": delivery,
         "git_workspace": git_workspace,

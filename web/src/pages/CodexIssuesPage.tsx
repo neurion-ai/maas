@@ -45,6 +45,7 @@ export function CodexIssuesPage({
   const [detail, setDetail] = useState<CodexIssueDetailResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [packetSelection, setPacketSelection] = useState<Record<string, string[]>>({});
   const livePulse = useLivePulse();
   const { scope, savedScopes, setScope, applySavedScope, saveCurrentScope, deleteSavedScope, resetScope } =
     useCodexIssueScope(getSelectedProjectId(), "issues");
@@ -117,9 +118,11 @@ export function CodexIssuesPage({
     const visibleTaskIds = new Set(filteredReviewItems.map((task) => task.task_id));
     return (issueIndex?.queue.review.batch_review?.packets ?? [])
       .map((packet) => {
-        const eligibleTaskIds = (packet.eligible_task_ids ?? []).filter((taskId) => visibleTaskIds.has(taskId));
+        const packetItems = (packet.items ?? []).filter((item) => visibleTaskIds.has(item.task_id));
+        const eligibleTaskIds = packetItems.map((item) => item.task_id);
         return {
           ...packet,
+          items: packetItems,
           eligible_task_ids: eligibleTaskIds,
           eligible_count: eligibleTaskIds.length,
         };
@@ -147,6 +150,41 @@ export function CodexIssuesPage({
     setSelectedTaskId(visibleItems[0]?.task_id ?? null);
   }, [selectedTaskId, filteredOpenTasks, filteredResolved, visibleItems]);
 
+  useEffect(() => {
+    setPacketSelection((current) => {
+      const next = { ...current };
+      const activePacketKeys = new Set(filteredBatchReviewPackets.map((packet) => packet.packet_key));
+      for (const packet of filteredBatchReviewPackets) {
+        const validIds = new Set((packet.eligible_task_ids ?? []).filter(Boolean));
+        if (packet.packet_key in current) {
+          next[packet.packet_key] = (current[packet.packet_key] ?? []).filter((taskId) => validIds.has(taskId));
+          continue;
+        }
+        next[packet.packet_key] = [...validIds];
+      }
+      for (const key of Object.keys(next)) {
+        if (!activePacketKeys.has(key)) {
+          delete next[key];
+        }
+      }
+      return next;
+    });
+  }, [filteredBatchReviewPackets]);
+
+  function selectedPacketTaskIds(packetKey: string, eligibleTaskIds: string[]) {
+    return (packetSelection[packetKey] ?? eligibleTaskIds).filter((taskId) => eligibleTaskIds.includes(taskId));
+  }
+
+  function togglePacketTask(packetKey: string, taskId: string) {
+    setPacketSelection((current) => {
+      const existing = current[packetKey] ?? [];
+      const next = existing.includes(taskId)
+        ? existing.filter((candidate) => candidate !== taskId)
+        : [...existing, taskId];
+      return { ...current, [packetKey]: next };
+    });
+  }
+
   async function runAction(key: string, action: () => Promise<unknown>, message: string) {
     setPendingKey(key);
     setNotice(null);
@@ -165,11 +203,16 @@ export function CodexIssuesPage({
     }
   }
 
-  async function handleBatchReview(packetTaskIds: string[], decision: "approve" | "reject", packetTitle?: string | null) {
+  async function handleBatchReview(
+    packetKey: string,
+    packetTaskIds: string[],
+    decision: "approve" | "reject",
+    packetTitle?: string | null
+  ) {
     if (!packetTaskIds.length) {
       return;
     }
-    setPendingKey(`batch-review:${decision}:${packetTaskIds[0]}`);
+    setPendingKey(`batch-review:${decision}:${packetKey}`);
     setNotice(null);
     try {
       await batchReviewIssues(packetTaskIds, decision);
@@ -367,36 +410,102 @@ export function CodexIssuesPage({
                           {(packet.eligible_count ?? packet.eligible_task_ids?.length ?? 0)} issue
                           {(packet.eligible_count ?? packet.eligible_task_ids?.length ?? 0) === 1 ? "" : "s"}
                         </span>
+                        <span>
+                          {packet.packet_scope_label ?? "Shared scope"}
+                          {packet.auto_approve_eligible_count ? ` · ${packet.auto_approve_eligible_count} auto-approve eligible` : ""}
+                        </span>
+                        <div className="codex-run-list codex-run-list--compact">
+                          {(packet.items ?? []).map((item) => {
+                            const selectedIds = selectedPacketTaskIds(packet.packet_key, packet.eligible_task_ids ?? []);
+                            const checked = selectedIds.includes(item.task_id);
+                            return (
+                              <div key={item.task_id} className="codex-packet-item">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePacketTask(packet.packet_key, item.task_id)}
+                                />
+                                <button
+                                  type="button"
+                                  className="codex-packet-item__content"
+                                  onClick={() => setSelectedTaskId(item.task_id)}
+                                >
+                                  <strong>{item.issue_key ?? item.task_id} · {item.title}</strong>
+                                  <span>
+                                    {item.goal_title ?? "Unlinked goal"}
+                                    {item.latest_verification_at ? ` · ${formatTimestamp(item.latest_verification_at)}` : ""}
+                                  </span>
+                                  <span>
+                                    {priorityLabel(item.priority)}
+                                    {item.auto_approve_eligible ? " · auto-approve eligible" : ""}
+                                  </span>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
                         <div className="codex-detail-actions">
                           <button
                             type="button"
+                            className="codex-button"
+                            onClick={() =>
+                              setPacketSelection((current) => ({
+                                ...current,
+                                [packet.packet_key]: [...(packet.eligible_task_ids ?? [])],
+                              }))
+                            }
+                          >
+                            Select all
+                          </button>
+                          <button
+                            type="button"
+                            className="codex-button"
+                            onClick={() =>
+                              setPacketSelection((current) => ({
+                                ...current,
+                                [packet.packet_key]: [],
+                              }))
+                            }
+                          >
+                            Clear
+                          </button>
+                          <button
+                            type="button"
                             className="codex-button codex-button--primary"
-                            disabled={pendingKey === `batch-review:approve:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`}
+                            disabled={
+                              pendingKey === `batch-review:approve:${packet.packet_key}` ||
+                              selectedPacketTaskIds(packet.packet_key, packet.eligible_task_ids ?? []).length === 0
+                            }
                             onClick={() =>
                               void handleBatchReview(
-                                packet.eligible_task_ids ?? [],
+                                packet.packet_key,
+                                selectedPacketTaskIds(packet.packet_key, packet.eligible_task_ids ?? []),
                                 "approve",
                                 packet.title ?? "the low-risk review packet"
                               )
                             }
                           >
-                            {pendingKey === `batch-review:approve:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`
+                            {pendingKey === `batch-review:approve:${packet.packet_key}`
                               ? "Approving..."
-                              : `Approve ${packet.eligible_count ?? packet.eligible_task_ids?.length ?? 0}`}
+                              : `Approve ${selectedPacketTaskIds(packet.packet_key, packet.eligible_task_ids ?? []).length}`}
                           </button>
                           <button
                             type="button"
                             className="codex-button"
-                            disabled={pendingKey === `batch-review:reject:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`}
+                            disabled={
+                              pendingKey === `batch-review:reject:${packet.packet_key}` ||
+                              selectedPacketTaskIds(packet.packet_key, packet.eligible_task_ids ?? []).length === 0
+                            }
                             onClick={() =>
                               void handleBatchReview(
-                                packet.eligible_task_ids ?? [],
+                                packet.packet_key,
+                                selectedPacketTaskIds(packet.packet_key, packet.eligible_task_ids ?? []),
                                 "reject",
                                 packet.title ?? "the low-risk review packet"
                               )
                             }
                           >
-                            {pendingKey === `batch-review:reject:${packet.eligible_task_ids?.[0] ?? packet.packet_key}`
+                            {pendingKey === `batch-review:reject:${packet.packet_key}`
                               ? "Updating..."
                               : "Request changes"}
                           </button>

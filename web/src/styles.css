@@ -5008,6 +5008,14 @@ body {
   padding: 12px 14px;
 }
 
+.codex-output-item--interactive {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 90%, transparent 10%);
+  text-align: left;
+}
+
 .codex-run-item,
 .codex-history-item {
   border: 1px solid var(--line);
@@ -5019,6 +5027,26 @@ body {
   display: grid;
   gap: 10px;
   padding: 14px;
+}
+
+.codex-run-list--compact {
+  padding: 0;
+}
+
+.codex-packet-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.codex-packet-item__content {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  text-align: left;
 }
 
 .codex-output-selector {

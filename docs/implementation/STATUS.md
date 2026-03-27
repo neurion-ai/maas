@@ -61,6 +61,7 @@ See:
 - [17-codex-mvp-control-loop-hardening-plan.md](17-codex-mvp-control-loop-hardening-plan.md)
 - [18-codex-mvp-doctor-delivery-loop-plan.md](18-codex-mvp-doctor-delivery-loop-plan.md)
 - [19-codex-mvp-delivery-execution-verification-plan.md](19-codex-mvp-delivery-execution-verification-plan.md)
+- [20-codex-mvp-explainability-review-memory-plan.md](20-codex-mvp-explainability-review-memory-plan.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract
@@ -236,6 +237,9 @@ The current product-modeling sequence on `codex/linear-vibekanban-cockpit` now c
 - [x] `#223` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#224` is implemented on `codex/codex-mvp-doctor-delivery-loop`
 - [x] `#225` is shipped on `main`
+- [x] `#226` is implemented on `codex/goal-explainability-review-memory-usefulness`
+- [x] `#228` is implemented on `codex/goal-explainability-review-memory-usefulness`
+- [x] `#229` is implemented on `codex/goal-explainability-review-memory-usefulness`
 - [x] `#230` is shipped on `main`
 
 ## Historical Numbered Roadmap

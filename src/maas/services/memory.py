@@ -119,6 +119,24 @@ def _memory_usage_fields(memory_payload):
     }
 
 
+def _memory_usefulness_summary(entry):
+    used_count = int(entry.get("used_count") or 0)
+    success_count = int(entry.get("success_count") or 0)
+    failure_count = int(entry.get("failure_count") or 0)
+    last_outcome = entry.get("last_run_outcome")
+    usefulness = entry.get("usefulness") or "unknown"
+    if used_count <= 0:
+        return "Not reused yet."
+    parts = ["Used {0}x".format(used_count)]
+    if success_count or failure_count:
+        parts.append("{0} successful, {1} failed".format(success_count, failure_count))
+    if last_outcome:
+        parts.append("last outcome {0}".format(str(last_outcome).replace("_", " ")))
+    if usefulness != "unknown":
+        parts.append("usefulness {0}".format(usefulness))
+    return "; ".join(parts) + "."
+
+
 def _memory_recency_sort_key(value):
     if not value:
         return 0
@@ -129,6 +147,59 @@ def _memory_recency_sort_key(value):
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc).timestamp()
+
+
+def _memory_match_details(query_tokens, entry):
+    ordered_tokens = []
+    seen = set()
+    for token in query_tokens:
+        if token in seen:
+            continue
+        ordered_tokens.append(token)
+        seen.add(token)
+    fields = {
+        "title": _tokenize(entry.get("title") or ""),
+        "summary": _tokenize(entry.get("summary") or ""),
+        "tags": _tokenize(" ".join(entry.get("tags") or [])),
+        "preview": _tokenize((entry.get("preview") or {}).get("content") or ""),
+    }
+    matches_by_field = {}
+    for field_name, tokens in fields.items():
+        token_set = set(tokens)
+        matches = [token for token in ordered_tokens if token in token_set]
+        if matches:
+            matches_by_field[field_name] = matches
+    matched_terms = []
+    matched_seen = set()
+    for field_name in ("title", "summary", "tags", "preview"):
+        for token in matches_by_field.get(field_name, []):
+            if token in matched_seen:
+                continue
+            matched_terms.append(token)
+            matched_seen.add(token)
+    reasons = []
+    labels = {
+        "title": "title",
+        "summary": "summary",
+        "tags": "tags",
+        "preview": "preview",
+    }
+    for field_name in ("title", "summary", "tags", "preview"):
+        matches = matches_by_field.get(field_name) or []
+        if not matches:
+            continue
+        reasons.append("{0}: {1}".format(labels[field_name], ", ".join(matches[:3])))
+    if not reasons:
+        return {
+            "matched_terms": [],
+            "match_reasons": [],
+            "match_summary": "Retrieved from project memory.",
+        }
+    return {
+        "matched_terms": matched_terms,
+        "match_reasons": reasons,
+        "match_summary": "Matched " + "; ".join(reasons[:3]) + ".",
+    }
 
 
 def _memory_summary_from_preview(preview):
@@ -347,14 +418,19 @@ def fetch_project_memory(connection, project_id, limit=40, search=None):
             **_memory_freshness_fields(memory.get("promoted_at")),
             **_memory_usage_fields(memory),
         }
+        entry["usefulness_summary"] = _memory_usefulness_summary(entry)
         if query_tokens:
             candidate = " ".join([entry["title"], entry["summary"], " ".join(entry["tags"] or [])])
             score = _score_tokens(query_tokens, candidate)
             if score <= 0:
                 continue
             entry["score"] = score
+            entry.update(_memory_match_details(query_tokens, entry))
         else:
             entry["score"] = 0
+            entry["matched_terms"] = []
+            entry["match_reasons"] = []
+            entry["match_summary"] = "Retrieved from project memory."
         entries.append(entry)
     if query_tokens:
         entries = sorted(
@@ -387,12 +463,13 @@ def retrieve_relevant_memory(connection, project_id, task_title, task_descriptio
     candidates = fetch_project_memory(connection, project_id, limit=200)
     scored = []
     for candidate in candidates:
+        preview = candidate.get("preview") or {}
         candidate_text = " ".join(
             [
                 candidate.get("title") or "",
                 candidate.get("summary") or "",
                 " ".join(candidate.get("tags") or []),
-                candidate.get("preview", {}).get("content") or "",
+                preview.get("content") or "",
             ]
         )
         score = _score_tokens(query_tokens, candidate_text)
@@ -400,6 +477,7 @@ def retrieve_relevant_memory(connection, project_id, task_title, task_descriptio
             continue
         candidate_copy = dict(candidate)
         candidate_copy["score"] = score
+        candidate_copy.update(_memory_match_details(query_tokens, candidate_copy))
         scored.append(candidate_copy)
     scored.sort(
         key=lambda item: (
@@ -454,6 +532,11 @@ def build_task_prompt(connection, task_id):
                 title=entry.get("title") or entry["artifact_id"],
                 summary=snippet or entry.get("summary") or "No summary available.",
             )
+            usefulness_summary = entry.get("usefulness_summary")
+            match_summary = entry.get("match_summary")
+            if usefulness_summary or match_summary:
+                details = " ".join(part for part in (match_summary, usefulness_summary) if part)
+                block += " ({0})".format(details)
             if current_length + len(block) > MEMORY_CONTEXT_MAX_CHARS:
                 break
             memory_lines.append(block)
@@ -475,12 +558,16 @@ def build_task_prompt(connection, task_id):
                 "age_days": entry.get("age_days"),
                 "freshness": entry.get("freshness"),
                 "stale": entry.get("stale"),
+                "matched_terms": entry.get("matched_terms") or [],
+                "match_reasons": entry.get("match_reasons") or [],
+                "match_summary": entry.get("match_summary"),
                 "used_count": entry.get("used_count"),
                 "success_count": entry.get("success_count"),
                 "failure_count": entry.get("failure_count"),
                 "success_ratio": entry.get("success_ratio"),
                 "usefulness_score": entry.get("usefulness_score"),
                 "usefulness": entry.get("usefulness"),
+                "usefulness_summary": entry.get("usefulness_summary"),
             }
             for entry in memory_entries
         ],

@@ -2825,3 +2825,54 @@ lint = "imported:lint"
             self.assertEqual(grounding["repo_plan_items"][0]["task_id"], repo_task["task_id"])
             self.assertTrue(grounding["repo_plan_items"][0]["issue_key"])
             self.assertGreaterEqual(len(grounding["repo_plan_items"][0]["linked_items"]), 1)
+
+    def test_brownfield_grounding_counts_non_current_repo_plan_tasks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_brownfield_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Historical Grounding Test", description="brownfield historical grounding", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                repo_task = connection.execute(
+                    """
+                    SELECT task_id, synthesis_key
+                    FROM tasks
+                    WHERE project_id = ?
+                      AND synthesis_origin = 'repo_grounded_plan'
+                      AND synthesis_key LIKE 'runbook:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project["project_id"],),
+                ).fetchone()
+                connection.execute(
+                    "UPDATE tasks SET status = 'done', review_state = NULL WHERE task_id = ?",
+                    (repo_task["task_id"],),
+                )
+                config = json.loads(project["config_json"] or "{}")
+                config["onboarding"]["review_overrides"]["accepted_workflow_labels"] = []
+                config["onboarding"]["review_overrides"]["accepted_runbook_labels"] = []
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.commit()
+
+                detail_payload = fetch_issue_detail(connection, paths, project["project_id"], repo_task["task_id"])
+            finally:
+                connection.close()
+
+            grounding = detail_payload["brownfield_grounding"]
+            self.assertEqual(grounding["repo_plan"]["generated_task_count"], 1)
+            self.assertEqual(grounding["repo_plan"]["active_task_count"], 2)
+            self.assertEqual(grounding["repo_plan_items"][0]["task_id"], repo_task["task_id"])
+            self.assertEqual(grounding["repo_plan_items"][0]["status"], "done")

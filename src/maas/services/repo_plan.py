@@ -630,21 +630,13 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
         ]
     )
     validation_commands = _validation_commands_from_acceptance(task_row.get("acceptance_criteria_json"))
-    current_repo_plan_items = build_repo_plan_item_lookup(
-        filtered_summary,
-        task_rows=repo_task_rows,
-        issue_keys=issue_keys,
-        relationship_map=relationship_map,
-    )
     current_repo_plan_preview = build_repo_plan_preview(
         filtered_summary,
         task_rows=repo_task_rows,
         issue_keys=issue_keys,
         relationship_map=relationship_map,
     )
-    current_active_count = len(
-        [item for item in current_repo_plan_items.values() if item.get("task_id") and item.get("status") != "cancelled"]
-    )
+    current_active_count = len([row for row in repo_task_rows if row.get("status") != "cancelled"])
     review_task = connection.execute(
         """
         SELECT task_id, status, review_state

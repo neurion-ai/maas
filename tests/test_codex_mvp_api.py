@@ -10,7 +10,7 @@ from maas.api import create_app
 from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
-from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview
+from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview, fetch_task_delivery_status
 from maas.services.environment_doctor import _git_status, fetch_environment_doctor
 from maas.services.goal_planning import create_goal, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
@@ -1591,6 +1591,161 @@ class CodexMvpApiTest(unittest.TestCase):
 
             item = next(entry for entry in payload["items"] if entry["task_id"] == task["task_id"])
             self.assertTrue(item["bundle_ready"])
+
+    def test_delivery_overview_reuses_one_git_snapshot_per_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Git Snapshot Test", description="delivery git snapshot", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-git-snapshot.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('snapshot')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            git_snapshot = {
+                "is_git_repo": True,
+                "branch": "feature/delivery-git-snapshot",
+                "default_branch": "main",
+                "dirty": False,
+                "gh_installed": True,
+            }
+            with mock.patch("maas.services.delivery._git_repo_snapshot", return_value=git_snapshot) as snapshot_mock:
+                connection = connect(paths)
+                try:
+                    payload = fetch_delivery_overview(connection, paths, task["project_id"])
+                finally:
+                    connection.close()
+
+            self.assertGreaterEqual(payload["summary"]["candidate_count"], 1)
+            self.assertEqual(snapshot_mock.call_count, 1)
+
+    def test_delivery_gate_uses_latest_required_verification_per_command(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Delivery Verification History Test", description="delivery verification history", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review',
+                        review_state = 'review_requested',
+                        acceptance_criteria_json = ?
+                    WHERE task_id = ?
+                    """,
+                    (
+                        json.dumps(
+                            [
+                                {"type": "test_passes", "command": "pytest tests/test_alpha.py"},
+                                {"type": "test_passes", "command": "pytest tests/test_beta.py"},
+                            ]
+                        ),
+                        task["task_id"],
+                    ),
+                )
+                artifact_path = os.path.join(paths.artifacts_dir, "delivery-history.txt")
+                os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                with open(artifact_path, "w", encoding="utf-8") as handle:
+                    handle.write("diff --git a/app.py b/app.py\n+print('history')\n")
+                connection.execute(
+                    """
+                    INSERT INTO artifacts (
+                        artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                    ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                    """,
+                    (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO verification_runs (
+                        verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                        artifact_id, actor_id, started_at, finished_at
+                    ) VALUES (
+                        ?, ?, ?, 'pytest tests/test_beta.py', 'passed', 0, 'beta ok',
+                        NULL, 'agent_reviewer', DATETIME('now', '-120 minutes'), DATETIME('now', '-120 minutes')
+                    )
+                    """,
+                    (generate_id("vrf"), task["project_id"], task["task_id"]),
+                )
+                for index in range(24):
+                    connection.execute(
+                        """
+                        INSERT INTO verification_runs (
+                            verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                            artifact_id, actor_id, started_at, finished_at
+                        ) VALUES (
+                            ?, ?, ?, 'pytest tests/test_alpha.py', 'passed', 0, 'alpha ok',
+                            NULL, 'agent_reviewer', DATETIME('now', ?), DATETIME('now', ?)
+                        )
+                        """,
+                        (
+                            generate_id("vrf"),
+                            task["project_id"],
+                            task["task_id"],
+                            "-{0} minutes".format(30 - index),
+                            "-{0} minutes".format(30 - index),
+                        ),
+                    )
+                connection.commit()
+            finally:
+                connection.close()
+
+            git_snapshot = {
+                "is_git_repo": True,
+                "branch": "feature/delivery-history",
+                "default_branch": "main",
+                "dirty": False,
+                "gh_installed": True,
+            }
+            with mock.patch("maas.services.delivery._git_repo_snapshot", return_value=git_snapshot):
+                connection = connect(paths)
+                try:
+                    payload = fetch_task_delivery_status(connection, paths, task["task_id"], project_id=task["project_id"])
+                finally:
+                    connection.close()
+
+            self.assertEqual(payload["delivery_gate"]["status"], "ready")
+            self.assertEqual(
+                payload["delivery_gate"]["checks"][2]["metadata"]["required_commands"],
+                ["pytest tests/test_alpha.py", "pytest tests/test_beta.py"],
+            )
+            self.assertNotIn("missing_commands", payload["delivery_gate"]["checks"][2]["metadata"])
 
     def test_board_review_eligibility_uses_full_verification_history(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -165,6 +165,52 @@ def _latest_verification_by_command(verification_runs):
     return latest
 
 
+def _delivery_verification_runs(connection, project_id, task_id, task_row, default_limit=20):
+    verification_commands = task_verification_commands(task_row)
+    required_commands = []
+    seen_commands = set()
+    for command_spec in verification_commands:
+        command = (command_spec.get("command") or "").strip()
+        if not command or command in seen_commands:
+            continue
+        seen_commands.add(command)
+        required_commands.append(command)
+    if not required_commands:
+        return fetch_verification_runs(connection, project_id=project_id, task_id=task_id, limit=default_limit)
+    placeholders = ", ".join("?" for _ in required_commands)
+    rows = connection.execute(
+        """
+        SELECT
+            verification_run_id,
+            project_id,
+            task_id,
+            command,
+            status,
+            exit_code,
+            output_excerpt,
+            artifact_id,
+            actor_id,
+            started_at,
+            finished_at
+        FROM verification_runs
+        WHERE project_id = ?
+          AND task_id = ?
+          AND TRIM(command) IN ({0})
+        ORDER BY finished_at DESC, verification_run_id DESC
+        """.format(placeholders),
+        (project_id, task_id, *required_commands),
+    ).fetchall()
+    latest = {}
+    for row in rows:
+        command = (row["command"] or "").strip()
+        if not command or command in latest:
+            continue
+        latest[command] = dict(row)
+        if len(latest) == len(required_commands):
+            break
+    return [latest[command] for command in required_commands if command in latest]
+
+
 def _task_delivery_gate(task_row, artifacts, bundle_ready, verification_runs, git_snapshot):
     checks = []
     status = task_row["status"]
@@ -391,15 +437,15 @@ def _draft_state(draft_artifact):
     }
 
 
-def _task_delivery_item(connection, project_paths, task_row, project_row, issue_keys):
+def _task_delivery_item(connection, project_paths, task_row, project_row, issue_keys, git_snapshot=None):
     project_id = task_row["project_id"]
     task_id = task_row["task_id"]
     source_root = project_row["source_root"] or project_paths.root
-    git_snapshot = _git_repo_snapshot(source_root)
+    git_snapshot = git_snapshot or _git_repo_snapshot(source_root)
     artifacts = _latest_task_artifacts(connection, project_id, task_id, limit=6)
     latest_artifact = artifacts[0] if artifacts else None
     bundle_ready = artifact_export_bundle_available(connection, task_id=task_id)
-    verification_runs = fetch_verification_runs(connection, project_id=project_id, task_id=task_id, limit=20)
+    verification_runs = _delivery_verification_runs(connection, project_id, task_id, task_row)
     draft_artifact = _latest_task_artifact_by_type(connection, project_id, task_id, "delivery_pr_draft")
     sync_artifact = _latest_task_artifact_by_type(connection, project_id, task_id, "delivery_github_pr_sync")
     gate = _task_delivery_gate(task_row, artifacts, bundle_ready, verification_runs, git_snapshot)
@@ -467,7 +513,7 @@ def _load_delivery_context(connection, project_paths, task_id, project_id=None):
     git_snapshot = _git_repo_snapshot(source_root)
     artifacts = _latest_task_artifacts(connection, resolved_project_id, task_id, limit=6)
     bundle_ready = artifact_export_bundle_available(connection, task_id=task_id)
-    verification_runs = fetch_verification_runs(connection, project_id=resolved_project_id, task_id=task_id, limit=20)
+    verification_runs = _delivery_verification_runs(connection, resolved_project_id, task_id, task_row)
     gate = _task_delivery_gate(task_row, artifacts, bundle_ready, verification_runs, git_snapshot)
     issue_keys = _task_issue_keys(connection, resolved_project_id)
     return {
@@ -553,7 +599,17 @@ def fetch_delivery_overview(connection, project_paths, project_id=None, limit=12
         (resolved_project_id, max(int(limit or 12), 1)),
     ).fetchall()
     git_snapshot = _git_repo_snapshot(project_row["source_root"] or project_paths.root)
-    items = [_task_delivery_item(connection, project_paths, row, project_row, issue_keys) for row in task_rows]
+    items = [
+        _task_delivery_item(
+            connection,
+            project_paths,
+            row,
+            project_row,
+            issue_keys,
+            git_snapshot=git_snapshot,
+        )
+        for row in task_rows
+    ]
     return {
         "project_id": resolved_project_id,
         "project_name": project_row["name"] if project_row else "",
@@ -583,6 +639,7 @@ def fetch_task_delivery_status(connection, project_paths, task_id, project_id=No
         context["task_row"],
         context["project_row"],
         issue_keys,
+        git_snapshot=context["git_snapshot"],
     )
     item["git"] = context["git_snapshot"]
     return item

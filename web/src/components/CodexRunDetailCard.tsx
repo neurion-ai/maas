@@ -104,6 +104,15 @@ export function CodexRunDetailCard({
         {run.is_stale ? (
           <div className="codex-review-note">This run looks stale: the heartbeat has gone quiet while the session still appears active.</div>
         ) : null}
+        {run.observability ? (
+          <div className="codex-review-note">
+            {run.observability.summary}
+            {run.observability.last_activity_action
+              ? ` Last activity: ${run.observability.last_activity_action.replaceAll("_", " ")}`
+              : ""}
+            {run.observability.last_activity_at ? ` at ${formatTimestamp(run.observability.last_activity_at)}` : ""}.
+          </div>
+        ) : null}
         {run.diagnostic_summary ? <div className="codex-review-note">{run.diagnostic_summary}</div> : null}
         {run.recommended_action ? <div className="codex-review-note">Recommended action: {run.recommended_action}</div> : null}
       </div>

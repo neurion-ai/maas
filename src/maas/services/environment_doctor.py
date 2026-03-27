@@ -10,6 +10,14 @@ import subprocess
 
 from maas.providers import list_provider_status
 from maas.services.autopilot import fetch_autopilot_runtime, fetch_project_autopilot_policy
+from maas.services.codex_mvp import STALE_RUN_HEARTBEAT_SECONDS
+from maas.services.operator_actions import (
+    dedupe_operator_actions,
+    project_autopilot_action,
+    project_launch_posture_action,
+    project_orchestrator_action,
+    task_operator_action,
+)
 from maas.services.projects import resolve_project
 from maas.services.queue_capacity import queue_capacity_snapshot
 
@@ -391,7 +399,22 @@ def _doctor_summary(checks):
     }
 
 
+def _progress_reason(code, severity, summary, detail, recommended_action=None, operator_actions=None):
+    item = {
+        "code": code,
+        "severity": severity,
+        "summary": summary,
+        "detail": detail,
+        "recommended_action": recommended_action,
+    }
+    if operator_actions:
+        item["operator_actions"] = dedupe_operator_actions(operator_actions)
+    return item
+
+
 def _progress_diagnostic(connection, project_id, doctor_summary):
+    from maas.services.recovery_policy import fetch_project_recovery_overview
+
     task_summary = connection.execute(
         """
         SELECT
@@ -415,49 +438,95 @@ def _progress_diagnostic(connection, project_id, doctor_summary):
     assigned_tasks = task_summary["assigned_tasks"] or 0
     active_tasks = task_summary["active_tasks"] or 0
     planned_tasks = task_summary["planned_tasks"] or 0
+    stale_active_runs = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM sessions
+        WHERE project_id = ?
+          AND status = 'active'
+          AND last_heartbeat_at IS NOT NULL
+          AND datetime(last_heartbeat_at) <= datetime('now', ?)
+        """,
+        (project_id, "-{0} seconds".format(STALE_RUN_HEARTBEAT_SECONDS)),
+    ).fetchone()["count"]
+    max_running_jobs = int(queue_snapshot.get("max_running_jobs") or 0)
+    preferred_provider_id = queue_snapshot.get("preferred_provider_id")
+    recovery_overview = fetch_project_recovery_overview(connection, project_id) if blocked_tasks else None
 
     reasons = []
     if doctor_summary["status"] == "blocked":
         reasons.append(
-            {
-                "code": "doctor_blocked",
-                "severity": "critical",
-                "summary": "Environment doctor is blocking live work.",
-                "detail": "Fix the failed doctor checks before expecting safe live Codex execution.",
-                "recommended_action": "Open the doctor panel and clear the failed readiness checks.",
-            }
+            _progress_reason(
+                "doctor_blocked",
+                "critical",
+                "Environment doctor is blocking live work.",
+                "Fix the failed doctor checks before expecting safe live Codex execution.",
+                "Open the doctor panel and clear the failed readiness checks.",
+            )
         )
     if queue_snapshot.get("queue_mode") == "paused":
         reasons.append(
-            {
-                "code": "queue_paused",
-                "severity": "critical",
-                "summary": "Launches are paused.",
-                "detail": "Assigned issues will not launch while provider capacity posture is paused.",
-                "recommended_action": "Resume launches or disable autopilot if the pause is intentional.",
-            }
+            _progress_reason(
+                "queue_paused",
+                "critical",
+                "Launches are paused.",
+                "Assigned issues will not launch while provider capacity posture is paused.",
+                "Resume launches or disable autopilot if the pause is intentional.",
+                operator_actions=[
+                    project_launch_posture_action(
+                        project_id,
+                        "Resume launches",
+                        "running",
+                        max(max_running_jobs, 1),
+                        preferred_provider_id=preferred_provider_id,
+                    )
+                ],
+            )
         )
     if queue_snapshot.get("queue_mode") == "draining":
         reasons.append(
-            {
-                "code": "queue_draining",
-                "severity": "warning",
-                "summary": "Queue is draining.",
-                "detail": "Running and queued jobs can finish, but newly assigned work will not launch.",
-                "recommended_action": "Return queue posture to running when you want fresh work to launch.",
-            }
+            _progress_reason(
+                "queue_draining",
+                "warning",
+                "Queue is draining.",
+                "Running and queued jobs can finish, but newly assigned work will not launch.",
+                "Return queue posture to running when you want fresh work to launch.",
+                operator_actions=[
+                    project_launch_posture_action(
+                        project_id,
+                        "Resume launches",
+                        "running",
+                        max(max_running_jobs, 1),
+                        preferred_provider_id=preferred_provider_id,
+                    )
+                ],
+            )
         )
-    if int(queue_snapshot.get("max_running_jobs") or 0) <= 0:
+    if max_running_jobs <= 0:
         reasons.append(
-            {
-                "code": "zero_capacity",
-                "severity": "critical",
-                "summary": "Max running jobs is zero.",
-                "detail": "The project cannot launch live provider work until capacity is increased.",
-                "recommended_action": "Raise project capacity above zero.",
-            }
+            _progress_reason(
+                "zero_capacity",
+                "critical",
+                "Max running jobs is zero.",
+                "The project cannot launch live provider work until capacity is increased.",
+                "Raise project capacity above zero.",
+                operator_actions=[
+                    project_launch_posture_action(
+                        project_id,
+                        "Set capacity to 1 and resume launches",
+                        "running",
+                        1,
+                        preferred_provider_id=preferred_provider_id,
+                    )
+                ],
+            )
         )
-    if active_tasks:
+    if active_tasks and stale_active_runs:
+        status = "stalled"
+        summary = "Live work exists, but progress looks stalled."
+        detail = "One or more active runs have gone stale, so the control loop needs inspection rather than passive waiting."
+        recommended_action = "Open Runs or System and inspect the stale sessions before letting automation continue."
+    elif active_tasks:
         status = "running"
         summary = "MAAS is actively working."
         detail = "Live sessions are in progress and the queue is moving."
@@ -494,22 +563,91 @@ def _progress_diagnostic(connection, project_id, doctor_summary):
         recommended_action = "Create or synthesize a goal plan, or import work into the project."
     if not autopilot_policy.get("enabled"):
         reasons.append(
-            {
-                "code": "autopilot_disabled",
-                "severity": "warning",
-                "summary": "Autopilot is disabled.",
-                "detail": "MAAS will only move when the operator runs cycles manually.",
-                "recommended_action": "Enable autopilot if you want the project to keep advancing on its own.",
-            }
+            _progress_reason(
+                "autopilot_disabled",
+                "warning",
+                "Autopilot is disabled.",
+                "MAAS will only move when the operator runs cycles manually.",
+                "Enable autopilot if you want the project to keep advancing on its own.",
+                operator_actions=[
+                    project_autopilot_action(
+                        project_id,
+                        "Enable autopilot",
+                        {**autopilot_policy, "enabled": True},
+                    )
+                ],
+            )
         )
     elif runtime.get("status") == "error":
         reasons.append(
+            _progress_reason(
+                "autopilot_error",
+                "critical",
+                "Autopilot reported an error.",
+                runtime.get("last_error") or "The autonomous control loop failed during its last pass.",
+                "Inspect the latest run/system diagnostics and restart autopilot after clearing the failure.",
+            )
+        )
+    operator_actions = []
+    if status in {"waiting_for_assignment", "waiting_for_launch"}:
+        operator_actions.append(
+            project_orchestrator_action(
+                project_id,
+                "Run next cycle",
+                allocate_limit=autopilot_policy.get("allocate_limit"),
+                provider_job_limit=autopilot_policy.get("provider_job_limit"),
+                auto_launch_assigned_work=autopilot_policy.get("auto_launch_assigned_work"),
+            )
+        )
+    if status == "blocked" and recovery_overview:
+        if recovery_overview["recoverable_blocked_tasks"]:
+            task = recovery_overview["recoverable_blocked_tasks"][0]
+            operator_actions.append(
+                task_operator_action(
+                    "recover_and_requeue_task",
+                    "Recover and requeue {0}".format(task["task_id"]),
+                    task["task_id"],
+                )
+            )
+        elif recovery_overview["replanning_candidates"]:
+            task = recovery_overview["replanning_candidates"][0]
+            operator_actions.append(
+                task_operator_action(
+                    "mark_task_for_replan",
+                    "Move {0} into replanning".format(task["task_id"]),
+                    task["task_id"],
+                )
+            )
+        elif recovery_overview["repeated_failure_incidents"]:
+            task = recovery_overview["repeated_failure_incidents"][0]
+            operator_actions.append(
+                task_operator_action(
+                    "resolve_repeated_failures",
+                    "Resolve repeated failures for {0}".format(task["task_id"]),
+                    task["task_id"],
+                )
+            )
+    for reason in reasons:
+        operator_actions.extend(reason.get("operator_actions") or [])
+    facts = {
+        "planned_tasks": planned_tasks,
+        "ready_tasks": ready_tasks,
+        "assigned_tasks": assigned_tasks,
+        "active_tasks": active_tasks,
+        "stale_active_runs": stale_active_runs,
+        "review_tasks": review_tasks,
+        "blocked_tasks": blocked_tasks,
+        "queue_mode": queue_snapshot.get("queue_mode"),
+        "max_running_jobs": queue_snapshot.get("max_running_jobs"),
+        "autopilot_enabled": autopilot_policy.get("enabled"),
+    }
+    if recovery_overview:
+        facts.update(
             {
-                "code": "autopilot_error",
-                "severity": "critical",
-                "summary": "Autopilot reported an error.",
-                "detail": runtime.get("last_error") or "The autonomous control loop failed during its last pass.",
-                "recommended_action": "Inspect the latest run/system diagnostics and restart autopilot after clearing the failure.",
+                "recoverable_blocked_tasks": recovery_overview["summary"]["recoverable_blocked_tasks"],
+                "retry_backoff_tasks": recovery_overview["summary"]["retry_backoff_tasks"],
+                "needs_replan_tasks": recovery_overview["summary"]["needs_replan_tasks"],
+                "repeated_failure_incidents": recovery_overview["summary"]["open_repeated_failure_alerts"],
             }
         )
     return {
@@ -518,17 +656,8 @@ def _progress_diagnostic(connection, project_id, doctor_summary):
         "detail": detail,
         "recommended_action": recommended_action,
         "reasons": reasons,
-        "facts": {
-            "planned_tasks": planned_tasks,
-            "ready_tasks": ready_tasks,
-            "assigned_tasks": assigned_tasks,
-            "active_tasks": active_tasks,
-            "review_tasks": review_tasks,
-            "blocked_tasks": blocked_tasks,
-            "queue_mode": queue_snapshot.get("queue_mode"),
-            "max_running_jobs": queue_snapshot.get("max_running_jobs"),
-            "autopilot_enabled": autopilot_policy.get("enabled"),
-        },
+        "operator_actions": dedupe_operator_actions(operator_actions),
+        "facts": facts,
     }
 
 

@@ -346,6 +346,25 @@ export interface EnvironmentDoctorCheck {
   metadata: Record<string, unknown>;
 }
 
+export interface ControlOperatorAction {
+  action:
+    | "run_orchestrator"
+    | "update_launch_posture"
+    | "update_autopilot"
+    | "recover_task"
+    | "recover_and_requeue_task"
+    | "mark_task_for_replan"
+    | "resolve_repeated_failures"
+    | "reset_retry_state"
+    | "reset_circuit_breaker"
+    | "restore_and_requeue_quarantine_entry";
+  label: string;
+  resource_type: "project" | "task" | "quarantine";
+  resource_id: string;
+  related_task_id?: string | null;
+  payload?: Record<string, unknown>;
+}
+
 export interface EnvironmentDoctorResponse {
   generated_at: string;
   project_id: string;
@@ -362,6 +381,7 @@ export interface EnvironmentDoctorResponse {
   progress: {
     status:
       | "running"
+      | "stalled"
       | "waiting_for_review"
       | "waiting_for_launch"
       | "waiting_for_assignment"
@@ -377,7 +397,9 @@ export interface EnvironmentDoctorResponse {
       summary: string;
       detail: string;
       recommended_action?: string | null;
+      operator_actions?: ControlOperatorAction[];
     }>;
+    operator_actions?: ControlOperatorAction[];
     facts: Record<string, number | string | boolean | null>;
   };
   recommended_actions: string[];
@@ -621,6 +643,9 @@ export interface AutopilotStatusResponse {
     max_review_queue?: number;
     max_blocked_queue?: number;
     max_idle_cycles_before_alert?: number;
+    max_stale_runs?: number;
+    max_repeated_failure_incidents?: number;
+    max_notification_failures?: number;
   };
   runtime: {
     project_id: string;
@@ -647,13 +672,35 @@ export interface AutopilotStatusResponse {
   why_idle: string;
   governance_gate?: {
     blocked: boolean;
+    summary?: string | null;
     reason?: string | null;
     detail?: string | null;
     review_queue?: number;
     blocked_queue?: number;
+    stale_runs?: number;
+    repeated_failure_incidents?: number;
+    notification_failures?: number;
     schedule_window_open?: boolean;
     doctor_summary?: EnvironmentDoctorResponse["summary"] | null;
     doctor_state?: string | null;
+    thresholds?: {
+      max_review_queue?: number;
+      max_blocked_queue?: number;
+      max_stale_runs?: number;
+      max_repeated_failure_incidents?: number;
+      max_notification_failures?: number;
+    };
+    signals?: Array<{
+      code: string;
+      label: string;
+      severity: string;
+      summary: string;
+      detail: string;
+      count?: number;
+      threshold?: number;
+      blocking?: boolean;
+      operator_actions?: ControlOperatorAction[];
+    }>;
   };
 }
 
@@ -1792,6 +1839,16 @@ export interface CodexRunDetailResponse {
   is_stale?: boolean;
   diagnostic_summary?: string | null;
   recommended_action?: string | null;
+  observability?: {
+    state: string;
+    attention_level: string;
+    summary: string;
+    detail: string;
+    last_activity_at?: string | null;
+    last_activity_action?: string | null;
+    activity_count: number;
+    heartbeat_age_seconds?: number | null;
+  };
   current_step?: string | null;
   timeout_seconds?: number | null;
   command?: string[] | null;
@@ -1858,6 +1915,16 @@ export interface CodexRunListItem {
   is_stale: boolean;
   diagnostic_summary?: string | null;
   recommended_action?: string | null;
+  observability?: {
+    state: string;
+    attention_level: string;
+    summary: string;
+    detail: string;
+    last_activity_at?: string | null;
+    last_activity_action?: string | null;
+    activity_count: number;
+    heartbeat_age_seconds?: number | null;
+  };
   artifact_count: number;
   failure_count: number;
 }
@@ -1877,10 +1944,12 @@ export interface CodexRunIndexResponse {
 
 export interface CodexSystemDiagnosticsResponse {
   summary: {
+    active_runs?: number;
     suspect_runs: number;
     stale_agents: number;
     queued_jobs: number;
     running_jobs: number;
+    suppressed_items?: number;
     oldest_queued_at?: string | null;
     oldest_running_at?: string | null;
   };
@@ -1888,6 +1957,12 @@ export interface CodexSystemDiagnosticsResponse {
     state: string;
     summary: string;
     detail: string;
+  };
+  live_runs?: {
+    active_runs: number;
+    stale_runs: number;
+    failed_runs: number;
+    completed_runs: number;
   };
   suspect_runs: CodexRunListItem[];
   stale_agents: Array<{
@@ -1902,6 +1977,36 @@ export interface CodexSystemDiagnosticsResponse {
     diagnostic_summary?: string | null;
     recommended_action?: string | null;
   }>;
+  attention_items?: Array<{
+    kind: string;
+    title: string;
+    summary?: string | null;
+    detail?: string | null;
+    session_id?: string | null;
+    task_id?: string | null;
+    issue_key?: string | null;
+    operator_action?: ControlOperatorAction | null;
+  }>;
+  suppression?: {
+    summary: {
+      total: number;
+      retry_backoff: number;
+      circuit_breaker: number;
+      quarantine: number;
+      repeated_failure: number;
+    };
+    items: Array<{
+      kind: string;
+      task_id?: string | null;
+      task_title?: string | null;
+      status?: string | null;
+      review_state?: string | null;
+      summary?: string | null;
+      detail?: string | null;
+      since_at?: string | null;
+      operator_action?: ControlOperatorAction | null;
+    }>;
+  };
   queue_pressure: {
     queued_jobs: number;
     running_jobs: number;

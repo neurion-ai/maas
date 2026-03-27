@@ -16,6 +16,7 @@ import {
   setRecoveryPolicy,
   setTaskRetryLimit
 } from "../lib/controlRoomApi";
+import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { useLivePulse } from "../lib/useLivePulse";
 import type {
   AlertItem,
@@ -435,13 +436,16 @@ export function RecoveryPage() {
   const [pendingQueueAction, setPendingQueueAction] = useState<string | null>(null);
   const [pendingAlertActionId, setPendingAlertActionId] = useState<string | null>(null);
   const [pendingRepeatedFailureTaskId, setPendingRepeatedFailureTaskId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => getSelectedProjectId());
   const livePulse = useLivePulse();
+
+  useEffect(() => subscribeProjectScope(setSelectedProjectId), []);
 
   useEffect(() => {
     let mounted = true;
 
     async function loadRecovery() {
-      const payload = await fetchRecoveryPolicy();
+      const payload = await fetchRecoveryPolicy(undefined, undefined, selectedProjectId);
       if (mounted) {
         setRecovery(payload);
         setDraft((current) => buildDraft(payload, current));
@@ -452,10 +456,10 @@ export function RecoveryPage() {
     return () => {
       mounted = false;
     };
-  }, [livePulse]);
+  }, [livePulse, selectedProjectId]);
 
   async function reload(reset = false) {
-    const payload = await fetchRecoveryPolicy();
+    const payload = await fetchRecoveryPolicy(undefined, undefined, selectedProjectId);
     setRecovery(payload);
     setDraft((current) => buildDraft(payload, current, reset));
   }

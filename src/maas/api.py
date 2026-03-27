@@ -319,6 +319,9 @@ class ProjectAutopilotRequest(BaseModel):
     max_review_queue: int = 0
     max_blocked_queue: int = 0
     max_idle_cycles_before_alert: int = 6
+    max_stale_runs: int = 0
+    max_repeated_failure_incidents: int = 0
+    max_notification_failures: int = 0
 
 
 class GoalCreateRequest(BaseModel):
@@ -671,6 +674,9 @@ def create_app(project_root="."):
                     "max_review_queue": payload.max_review_queue,
                     "max_blocked_queue": payload.max_blocked_queue,
                     "max_idle_cycles_before_alert": payload.max_idle_cycles_before_alert,
+                    "max_stale_runs": payload.max_stale_runs,
+                    "max_repeated_failure_incidents": payload.max_repeated_failure_incidents,
+                    "max_notification_failures": payload.max_notification_failures,
                 },
             )
         except PermissionError as exc:

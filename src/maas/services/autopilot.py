@@ -14,7 +14,9 @@ from maas.config import DEFAULT_AUTOPILOT_SETTINGS
 from maas.db import connect
 from maas.ids import generate_id
 from maas.paths import ProjectPaths
+from maas.services.codex_mvp import STALE_RUN_HEARTBEAT_SECONDS
 from maas.services.notifications import process_next_notification, queue_notification_event
+from maas.services.operator_actions import dedupe_operator_actions, task_operator_action
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.projects import resolve_project_id
 from maas.services.security import ensure_board_action_allowed
@@ -351,6 +353,24 @@ def normalize_autopilot_policy(policy=None):
             or defaults["max_idle_cycles_before_alert"]
         ),
     )
+    max_stale_runs = max(
+        0,
+        int(requested.get("max_stale_runs", defaults["max_stale_runs"]) or 0),
+    )
+    max_repeated_failure_incidents = max(
+        0,
+        int(
+            requested.get(
+                "max_repeated_failure_incidents",
+                defaults["max_repeated_failure_incidents"],
+            )
+            or 0
+        ),
+    )
+    max_notification_failures = max(
+        0,
+        int(requested.get("max_notification_failures", defaults["max_notification_failures"]) or 0),
+    )
     return {
         "enabled": enabled,
         "interval_seconds": interval_seconds,
@@ -371,6 +391,9 @@ def normalize_autopilot_policy(policy=None):
         "max_review_queue": max_review_queue,
         "max_blocked_queue": max_blocked_queue,
         "max_idle_cycles_before_alert": max_idle_cycles_before_alert,
+        "max_stale_runs": max_stale_runs,
+        "max_repeated_failure_incidents": max_repeated_failure_incidents,
+        "max_notification_failures": max_notification_failures,
     }
 
 
@@ -459,6 +482,35 @@ def _schedule_window_open(policy, now=None):
 
 
 def _governance_gate(connection, project_paths, project_id, policy):
+    from maas.services.failure_memory import fetch_repeated_failure_tasks
+
+    def _signal(
+        code,
+        label,
+        severity,
+        summary,
+        detail,
+        *,
+        count=0,
+        threshold=0,
+        blocking=False,
+        operator_actions=None,
+    ):
+        item = {
+            "code": code,
+            "label": label,
+            "severity": severity,
+            "summary": summary,
+            "detail": detail,
+            "count": int(count or 0),
+            "threshold": int(threshold or 0),
+            "blocking": bool(blocking),
+        }
+        if operator_actions:
+            item["operator_actions"] = dedupe_operator_actions(operator_actions)
+        return item
+
+    repeated_failure_items = fetch_repeated_failure_tasks(connection, project_id=project_id, actionable_only=True)
     review_count = connection.execute(
         """
         SELECT COUNT(*) AS count
@@ -477,59 +529,199 @@ def _governance_gate(connection, project_paths, project_id, policy):
         """,
         (project_id,),
     ).fetchone()["count"]
+    stale_runs = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM sessions
+        WHERE project_id = ?
+          AND status = 'active'
+          AND last_heartbeat_at IS NOT NULL
+          AND datetime(last_heartbeat_at) <= datetime('now', ?)
+        """,
+        (project_id, "-{0} seconds".format(STALE_RUN_HEARTBEAT_SECONDS)),
+    ).fetchone()["count"]
+    repeated_failure_incidents = len(repeated_failure_items)
+    notification_failures = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM notification_outbox
+        WHERE project_id = ?
+          AND status = 'failed'
+        """,
+        (project_id,),
+    ).fetchone()["count"]
     gate = {
         "blocked": False,
         "reason": None,
         "detail": None,
         "review_queue": review_count or 0,
         "blocked_queue": blocked_count or 0,
+        "stale_runs": stale_runs or 0,
+        "repeated_failure_incidents": repeated_failure_incidents,
+        "notification_failures": notification_failures or 0,
         "schedule_window_open": _schedule_window_open(policy),
         "doctor_summary": None,
         "doctor_state": None,
+        "summary": "Autopilot governance thresholds are clear.",
+        "signals": [],
+        "thresholds": {
+            "max_review_queue": int(policy.get("max_review_queue") or 0),
+            "max_blocked_queue": int(policy.get("max_blocked_queue") or 0),
+            "max_stale_runs": int(policy.get("max_stale_runs") or 0),
+            "max_repeated_failure_incidents": int(policy.get("max_repeated_failure_incidents") or 0),
+            "max_notification_failures": int(policy.get("max_notification_failures") or 0),
+        },
     }
+    signals = []
     if not gate["schedule_window_open"]:
-        gate.update(
-            {
-                "blocked": True,
-                "reason": "outside_schedule_window",
-                "detail": "Autopilot is outside the configured UTC schedule window for this project.",
-            }
-        )
-        return gate
-    max_review_queue = int(policy.get("max_review_queue") or 0)
-    if max_review_queue > 0 and gate["review_queue"] >= max_review_queue:
-        gate.update(
-            {
-                "blocked": True,
-                "reason": "review_queue_limit",
-                "detail": "Autopilot paused because the review queue reached the configured threshold.",
-            }
-        )
-        return gate
-    max_blocked_queue = int(policy.get("max_blocked_queue") or 0)
-    if max_blocked_queue > 0 and gate["blocked_queue"] >= max_blocked_queue:
-        gate.update(
-            {
-                "blocked": True,
-                "reason": "blocked_queue_limit",
-                "detail": "Autopilot paused because the blocked queue reached the configured threshold.",
-            }
-        )
-        return gate
-    if policy.get("stop_when_doctor_blocked", True):
-        from maas.services.environment_doctor import fetch_environment_doctor
-
-        doctor = fetch_environment_doctor(connection, project_paths, project_id)
-        gate["doctor_summary"] = doctor.get("summary")
-        gate["doctor_state"] = (doctor.get("progress") or {}).get("status")
-        if (doctor.get("summary") or {}).get("status") == "blocked":
-            gate.update(
-                {
-                    "blocked": True,
-                    "reason": "doctor_blocked",
-                    "detail": "Autopilot is paused because environment doctor checks are blocking live execution.",
-                }
+        signals.append(
+            _signal(
+                "outside_schedule_window",
+                "Outside schedule window",
+                "warning",
+                "Autopilot is outside the configured UTC schedule window for this project.",
+                "No autonomous cycles should launch until the schedule window opens again.",
+                blocking=True,
             )
+        )
+    max_review_queue = int(policy.get("max_review_queue") or 0)
+    if gate["review_queue"] > 0 or max_review_queue > 0:
+        signals.append(
+            _signal(
+                "review_queue_limit",
+                "Review queue pressure",
+                "warning" if gate["review_queue"] else "info",
+                (
+                    "Review queue reached the configured threshold."
+                    if max_review_queue > 0 and gate["review_queue"] >= max_review_queue
+                    else "Review queue is accumulating operator work."
+                ),
+                "Too much review backlog reduces autonomous forward progress and increases merge latency.",
+                count=gate["review_queue"],
+                threshold=max_review_queue,
+                blocking=bool(max_review_queue > 0 and gate["review_queue"] >= max_review_queue),
+            )
+        )
+    max_blocked_queue = int(policy.get("max_blocked_queue") or 0)
+    if gate["blocked_queue"] > 0 or max_blocked_queue > 0:
+        signals.append(
+            _signal(
+                "blocked_queue_limit",
+                "Blocked queue pressure",
+                "warning" if gate["blocked_queue"] else "info",
+                (
+                    "Blocked queue reached the configured threshold."
+                    if max_blocked_queue > 0 and gate["blocked_queue"] >= max_blocked_queue
+                    else "Blocked work is accumulating and should be recovered or replanned."
+                ),
+                "Too much blocked work means the allocator can keep spinning without real delivery progress.",
+                count=gate["blocked_queue"],
+                threshold=max_blocked_queue,
+                blocking=bool(max_blocked_queue > 0 and gate["blocked_queue"] >= max_blocked_queue),
+            )
+        )
+    max_stale_runs = int(policy.get("max_stale_runs") or 0)
+    if gate["stale_runs"] > 0 or max_stale_runs > 0:
+        signals.append(
+            _signal(
+                "stale_run_limit",
+                "Stale run pressure",
+                "critical" if gate["stale_runs"] else "info",
+                (
+                    "Stale or suspect live runs reached the configured threshold."
+                    if max_stale_runs > 0 and gate["stale_runs"] >= max_stale_runs
+                    else "Stale or suspect runs exist and need inspection."
+                ),
+                "Stale sessions usually mean the loop is spending capacity on work that is no longer advancing.",
+                count=gate["stale_runs"],
+                threshold=max_stale_runs,
+                blocking=bool(max_stale_runs > 0 and gate["stale_runs"] >= max_stale_runs),
+            )
+        )
+    max_repeated_failures = int(policy.get("max_repeated_failure_incidents") or 0)
+    repeated_failure_actions = []
+    if repeated_failure_items and repeated_failure_items[0].get("operator_action"):
+        repeated_failure_actions.append(
+            task_operator_action(
+                "resolve_repeated_failures",
+                repeated_failure_items[0]["operator_action"].get("label") or "Resolve repeated failures",
+                repeated_failure_items[0]["task_id"],
+            )
+        )
+    if gate["repeated_failure_incidents"] > 0 or max_repeated_failures > 0:
+        signals.append(
+            _signal(
+                "repeated_failure_limit",
+                "Repeated failure pressure",
+                "critical" if gate["repeated_failure_incidents"] else "info",
+                (
+                    "Repeated-failure incidents reached the configured threshold."
+                    if max_repeated_failures > 0 and gate["repeated_failure_incidents"] >= max_repeated_failures
+                    else "Repeated-failure incidents are open and suppressing autonomous retries."
+                ),
+                "Thrashing tasks should be resolved or replanned before the loop keeps spending effort on them.",
+                count=gate["repeated_failure_incidents"],
+                threshold=max_repeated_failures,
+                blocking=bool(max_repeated_failures > 0 and gate["repeated_failure_incidents"] >= max_repeated_failures),
+                operator_actions=repeated_failure_actions,
+            )
+        )
+    max_notification_failures = int(policy.get("max_notification_failures") or 0)
+    if gate["notification_failures"] > 0 or max_notification_failures > 0:
+        signals.append(
+            _signal(
+                "notification_failure_limit",
+                "Notification delivery failures",
+                "warning" if gate["notification_failures"] else "info",
+                (
+                    "Failed outbound notifications reached the configured threshold."
+                    if max_notification_failures > 0 and gate["notification_failures"] >= max_notification_failures
+                    else "Failed outbound notifications exist and reduce operator visibility."
+                ),
+                "Notification failures do not stop code from running, but they reduce trust in autonomous supervision.",
+                count=gate["notification_failures"],
+                threshold=max_notification_failures,
+                blocking=bool(max_notification_failures > 0 and gate["notification_failures"] >= max_notification_failures),
+            )
+        )
+    from maas.services.environment_doctor import fetch_environment_doctor
+
+    doctor = fetch_environment_doctor(connection, project_paths, project_id)
+    gate["doctor_summary"] = doctor.get("summary")
+    gate["doctor_state"] = (doctor.get("progress") or {}).get("status")
+    doctor_status = (doctor.get("summary") or {}).get("status")
+    if doctor_status in {"blocked", "attention", "simulation_only"}:
+        doctor_signal_code = "doctor_blocked" if doctor_status == "blocked" else "doctor_attention"
+        signals.append(
+            _signal(
+                doctor_signal_code,
+                "Environment doctor",
+                "critical" if doctor_status == "blocked" else "warning",
+                (
+                    "Environment doctor is blocking live execution."
+                    if doctor_status == "blocked"
+                    else "Environment doctor has live-readiness issues worth clearing."
+                ),
+                (doctor.get("summary") or {}).get("detail")
+                or "Doctor posture should be cleared before trusting fully autonomous live execution.",
+                blocking=bool(policy.get("stop_when_doctor_blocked", True) and doctor_status == "blocked"),
+            )
+        )
+    blocking_signals = [item for item in signals if item["blocking"]]
+    gate["signals"] = signals
+    if blocking_signals:
+        first = blocking_signals[0]
+        gate.update(
+            {
+                "blocked": True,
+                "reason": first["code"],
+                "detail": first["detail"],
+                "summary": first["summary"],
+            }
+        )
+    elif signals:
+        gate["summary"] = "Autopilot is within policy, but control-loop pressure is building."
+        gate["detail"] = signals[0]["detail"]
     return gate
 
 

@@ -14,6 +14,7 @@ import type {
   CodexRunIndexResponse,
   CodexSystemDiagnosticsResponse,
   CodexRunDetailResponse,
+  ControlOperatorAction,
   DirectoryPickerResponse,
   DismissQuarantineEntryResponse,
   EscalationsResponse,
@@ -681,6 +682,9 @@ export function fetchAutopilotStatus(
         max_review_queue: 0,
         max_blocked_queue: 0,
         max_idle_cycles_before_alert: 6,
+        max_stale_runs: 0,
+        max_repeated_failure_incidents: 0,
+        max_notification_failures: 0,
       },
       runtime: {
         project_id: "",
@@ -700,6 +704,9 @@ export function fetchAutopilotStatus(
           max_review_queue: 0,
           max_blocked_queue: 0,
           max_idle_cycles_before_alert: 6,
+          max_stale_runs: 0,
+          max_repeated_failure_incidents: 0,
+          max_notification_failures: 0,
         },
         last_heartbeat_at: null,
         last_summary: null,
@@ -709,13 +716,25 @@ export function fetchAutopilotStatus(
       why_idle: "Autopilot status unavailable.",
       governance_gate: {
         blocked: false,
+        summary: "Autopilot governance thresholds are clear.",
         reason: null,
         detail: null,
         review_queue: 0,
         blocked_queue: 0,
+        stale_runs: 0,
+        repeated_failure_incidents: 0,
+        notification_failures: 0,
         schedule_window_open: true,
         doctor_summary: null,
         doctor_state: null,
+        thresholds: {
+          max_review_queue: 0,
+          max_blocked_queue: 0,
+          max_stale_runs: 0,
+          max_repeated_failure_incidents: 0,
+          max_notification_failures: 0,
+        },
+        signals: [],
       },
     },
     signal,
@@ -792,6 +811,9 @@ export async function updateProjectAutopilot(
     max_review_queue?: number;
     max_blocked_queue?: number;
     max_idle_cycles_before_alert?: number;
+    max_stale_runs?: number;
+    max_repeated_failure_incidents?: number;
+    max_notification_failures?: number;
   }
 ) {
   return postJson(`/api/projects/${projectId}/actions/update-autopilot`, {
@@ -826,6 +848,7 @@ export function fetchEnvironmentDoctor(
         detail: "The current no-progress diagnosis could not be loaded.",
         recommended_action: "Refresh the page or inspect System for more detail.",
         reasons: [],
+        operator_actions: [],
         facts: {},
       },
       recommended_actions: [],
@@ -1151,8 +1174,12 @@ export function fetchAgentRoster(
   return fetchJson<AgentRosterResponse>("/api/agents", ROSTER_FALLBACK, signal, onFallback, projectId);
 }
 
-export function fetchActivity() {
-  return fetchJson<ActivityItem[]>("/api/activity", ACTIVITY_FALLBACK);
+export function fetchActivity(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<ActivityItem[]>(appendProjectScope("/api/activity", projectId), ACTIVITY_FALLBACK, signal, onFallback);
 }
 
 export function fetchIncidentTimeline(
@@ -1391,15 +1418,34 @@ export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: (
     appendProjectScope("/api/system/diagnostics"),
     {
       summary: {
+        active_runs: 0,
         suspect_runs: 0,
         stale_agents: 0,
         queued_jobs: 0,
         running_jobs: 0,
+        suppressed_items: 0,
         oldest_queued_at: null,
         oldest_running_at: null,
       },
+      live_runs: {
+        active_runs: 0,
+        stale_runs: 0,
+        failed_runs: 0,
+        completed_runs: 0,
+      },
       suspect_runs: [],
       stale_agents: [],
+      attention_items: [],
+      suppression: {
+        summary: {
+          total: 0,
+          retry_backoff: 0,
+          circuit_breaker: 0,
+          quarantine: 0,
+          repeated_failure: 0,
+        },
+        items: [],
+      },
       queue_pressure: {
         queued_jobs: 0,
         running_jobs: 0,
@@ -1622,12 +1668,20 @@ export function fetchLiveSnapshot() {
   return fetchJson<LiveSnapshot>("/api/live", LIVE_FALLBACK);
 }
 
-export function fetchProviders() {
-  return fetchJson<ProvidersResponse>("/api/providers", PROVIDERS_FALLBACK);
+export function fetchProviders(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<ProvidersResponse>(appendProjectScope("/api/providers", projectId), PROVIDERS_FALLBACK, signal, onFallback);
 }
 
-export function fetchRecoveryPolicy() {
-  return fetchJson<RecoveryPolicyResponse>("/api/recovery-policy", RECOVERY_POLICY_FALLBACK);
+export function fetchRecoveryPolicy(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
+  return fetchJson<RecoveryPolicyResponse>(appendProjectScope("/api/recovery-policy", projectId), RECOVERY_POLICY_FALLBACK, signal, onFallback);
 }
 
 export async function runProviderTask(providerId: string, projectId: string, agentId: string, taskId: string) {
@@ -1817,6 +1871,85 @@ export async function runAlertOperatorAction(operatorAction: AlertOperatorAction
     return;
   }
   await postJson(`/api/agents/${operatorAction.resource_id}/actions/recover`, { actor_id: "agent_allocator" });
+}
+
+export async function runControlOperatorAction(operatorAction: ControlOperatorAction) {
+  if (operatorAction.action === "run_orchestrator") {
+    const payload = operatorAction.payload ?? {};
+    await runOrchestratorPass(
+      Number(payload.allocate_limit ?? 6),
+      Number(payload.provider_job_limit ?? 4),
+      Boolean(payload.auto_launch_assigned_work ?? true)
+    );
+    return;
+  }
+  if (operatorAction.action === "update_launch_posture") {
+    await updateProjectProviderCapacity(operatorAction.resource_id, {
+      queue_mode: String(operatorAction.payload?.queue_mode ?? "running") as "running" | "draining" | "paused",
+      max_running_jobs: Number(operatorAction.payload?.max_running_jobs ?? 1),
+      preferred_provider_id:
+        typeof operatorAction.payload?.preferred_provider_id === "string"
+          ? operatorAction.payload.preferred_provider_id
+          : null,
+    });
+    return;
+  }
+  if (operatorAction.action === "update_autopilot") {
+    await updateProjectAutopilot(operatorAction.resource_id, {
+      enabled: Boolean(operatorAction.payload?.enabled ?? false),
+      interval_seconds: Number(operatorAction.payload?.interval_seconds ?? 20),
+      allocate_limit: Number(operatorAction.payload?.allocate_limit ?? 6),
+      provider_job_limit: Number(operatorAction.payload?.provider_job_limit ?? 4),
+      auto_launch_assigned_work: Boolean(operatorAction.payload?.auto_launch_assigned_work ?? true),
+      process_notifications: Boolean(operatorAction.payload?.process_notifications ?? true),
+      notification_batch_limit: Number(operatorAction.payload?.notification_batch_limit ?? 5),
+      schedule_window_start_hour_utc:
+        operatorAction.payload?.schedule_window_start_hour_utc == null
+          ? null
+          : Number(operatorAction.payload.schedule_window_start_hour_utc),
+      schedule_window_end_hour_utc:
+        operatorAction.payload?.schedule_window_end_hour_utc == null
+          ? null
+          : Number(operatorAction.payload.schedule_window_end_hour_utc),
+      stop_when_doctor_blocked: Boolean(operatorAction.payload?.stop_when_doctor_blocked ?? true),
+      max_review_queue: Number(operatorAction.payload?.max_review_queue ?? 0),
+      max_blocked_queue: Number(operatorAction.payload?.max_blocked_queue ?? 0),
+      max_idle_cycles_before_alert: Number(operatorAction.payload?.max_idle_cycles_before_alert ?? 6),
+      max_stale_runs: Number(operatorAction.payload?.max_stale_runs ?? 0),
+      max_repeated_failure_incidents: Number(operatorAction.payload?.max_repeated_failure_incidents ?? 0),
+      max_notification_failures: Number(operatorAction.payload?.max_notification_failures ?? 0),
+    });
+    return;
+  }
+  if (operatorAction.action === "recover_task") {
+    await recoverTask(operatorAction.resource_id);
+    return;
+  }
+  if (operatorAction.action === "recover_and_requeue_task") {
+    await recoverAndRequeueTask(operatorAction.resource_id);
+    return;
+  }
+  if (operatorAction.action === "mark_task_for_replan") {
+    await markTaskForReplan(operatorAction.resource_id);
+    return;
+  }
+  if (operatorAction.action === "resolve_repeated_failures") {
+    await postJson(`/api/tasks/${operatorAction.resource_id}/actions/resolve-repeated-failures`, {
+      actor_id: DEFAULT_ACTOR_ID,
+    });
+    return;
+  }
+  if (operatorAction.action === "reset_retry_state") {
+    await resetTaskRetryState(operatorAction.resource_id);
+    return;
+  }
+  if (operatorAction.action === "reset_circuit_breaker") {
+    await resetTaskCircuitBreaker(operatorAction.resource_id);
+    return;
+  }
+  if (operatorAction.action === "restore_and_requeue_quarantine_entry") {
+    await restoreAndRequeueQuarantineEntry(operatorAction.resource_id);
+  }
 }
 
 export async function runFailureOperatorAction(operatorAction: FailureOperatorAction) {

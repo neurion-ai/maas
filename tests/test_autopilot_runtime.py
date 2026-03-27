@@ -17,7 +17,7 @@ from maas.services.autopilot import (
     release_autopilot_runtime_lease,
 )
 from maas.services.bootstrap import bootstrap_project
-from maas.services.notifications import fetch_notification_outbox
+from maas.services.notifications import fetch_notification_outbox, queue_notification_event
 
 
 class AutopilotRuntimeTest(unittest.TestCase):
@@ -248,6 +248,136 @@ class AutopilotRuntimeTest(unittest.TestCase):
                 self.assertEqual(len(notifications), 1)
             finally:
                 connection.close()
+
+    def test_autopilot_governance_surfaces_richer_pressure_signals(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Autopilot Governance Test", description="governance test", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = self._project_id(connection)
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                agent_id = connection.execute(
+                    "SELECT agent_id FROM agents ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["agent_id"]
+                project_row = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["autopilot"] = normalize_autopilot_policy(
+                    {
+                        "enabled": True,
+                        "interval_seconds": 9,
+                        "stop_when_doctor_blocked": False,
+                        "max_stale_runs": 1,
+                        "max_repeated_failure_incidents": 1,
+                        "max_notification_failures": 1,
+                    }
+                )
+                config["notifications"] = {
+                    "webhook_urls": ["https://example.test/maas"],
+                    "minimum_severity": "warning",
+                    "enabled_events": ["escalation_requested"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress',
+                        assigned_agent_id = ?
+                    WHERE task_id = ?
+                    """,
+                    (agent_id, task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        'sess_governance', ?, ?, ?, 'active', 'openai_codex', 35,
+                        'Working through governance test', DATETIME('now', '-180 seconds'), DATETIME('now', '-20 minutes'), NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (project_id, agent_id, task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES
+                        ('fail_gov_1', ?, ?, NULL, ?, 'session_failed', 'First failure', '{}'),
+                        ('fail_gov_2', ?, ?, NULL, ?, 'session_failed', 'Second failure', '{}')
+                    """,
+                    (project_id, task["task_id"], agent_id, project_id, task["task_id"], agent_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO alerts (
+                        alert_id, project_id, severity, title, description, status
+                    ) VALUES ('alert_gov_repeat', ?, 'critical', 'Repeated task failures', ?, 'open')
+                    """,
+                    (
+                        project_id,
+                        "Task {0} (Governance task) has failed 2 times. Latest failure: Second failure".format(
+                            task["task_id"]
+                        ),
+                    ),
+                )
+                queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "warning",
+                    "Governance notification",
+                    "Testing failed notification pressure",
+                    resource_type="project",
+                    resource_id=project_id,
+                )
+                connection.execute(
+                    "UPDATE notification_outbox SET status = 'failed' WHERE project_id = ?",
+                    (project_id,),
+                )
+                connection.commit()
+
+                with mock.patch(
+                    "maas.services.environment_doctor.fetch_environment_doctor",
+                    return_value={
+                        "summary": {
+                            "status": "ready",
+                            "detail": "Doctor is ready.",
+                        },
+                        "progress": {"status": "running"},
+                    },
+                ):
+                    payload = fetch_autopilot_status(connection, paths, project_id)
+            finally:
+                connection.close()
+
+            gate = payload["governance_gate"]
+            self.assertTrue(gate["blocked"])
+            signal_map = {item["code"]: item for item in gate["signals"]}
+            self.assertIn("stale_run_limit", signal_map)
+            self.assertIn("repeated_failure_limit", signal_map)
+            self.assertIn("notification_failure_limit", signal_map)
+            self.assertTrue(signal_map["stale_run_limit"]["blocking"])
+            self.assertEqual(
+                signal_map["repeated_failure_limit"]["operator_actions"][0]["action"],
+                "resolve_repeated_failures",
+            )
+            self.assertEqual(gate["thresholds"]["max_stale_runs"], 1)
+            self.assertEqual(gate["thresholds"]["max_repeated_failure_incidents"], 1)
 
 
 if __name__ == "__main__":

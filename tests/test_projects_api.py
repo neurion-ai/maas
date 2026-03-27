@@ -140,6 +140,9 @@ lint = "imported:lint"
                         "max_review_queue": 4,
                         "max_blocked_queue": 3,
                         "max_idle_cycles_before_alert": 7,
+                        "max_stale_runs": 2,
+                        "max_repeated_failure_incidents": 3,
+                        "max_notification_failures": 4,
                     },
                 )
                 self.assertEqual(response.status_code, 200)
@@ -150,6 +153,9 @@ lint = "imported:lint"
                 self.assertFalse(payload["policy"]["process_notifications"])
                 self.assertEqual(payload["policy"]["schedule_window_start_hour_utc"], 8)
                 self.assertEqual(payload["policy"]["max_review_queue"], 4)
+                self.assertEqual(payload["policy"]["max_stale_runs"], 2)
+                self.assertEqual(payload["policy"]["max_repeated_failure_incidents"], 3)
+                self.assertEqual(payload["policy"]["max_notification_failures"], 4)
 
                 status_response = client.get("/api/autopilot/status", params={"project_id": project_id})
                 self.assertEqual(status_response.status_code, 200)
@@ -158,6 +164,9 @@ lint = "imported:lint"
                 self.assertTrue(status_payload["policy"]["enabled"])
                 self.assertEqual(status_payload["policy"]["interval_seconds"], 9)
                 self.assertEqual(status_payload["policy"]["provider_job_limit"], 2)
+                self.assertEqual(status_payload["policy"]["max_stale_runs"], 2)
+                self.assertEqual(status_payload["policy"]["max_repeated_failure_incidents"], 3)
+                self.assertEqual(status_payload["policy"]["max_notification_failures"], 4)
                 self.assertFalse(status_payload["policy"]["process_notifications"])
                 self.assertEqual(status_payload["policy"]["schedule_window_end_hour_utc"], 18)
                 self.assertEqual(status_payload["policy"]["max_blocked_queue"], 3)

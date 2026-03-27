@@ -12,6 +12,7 @@ from maas.services.security import ensure_board_action_allowed
 REPO_PLAN_SYNTHESIS_ORIGIN = "repo_grounded_plan"
 REPO_PLAN_STALE_REVIEW_STATE = "repo_plan_stale"
 REPO_PLAN_MUTABLE_STATUSES = {"planned", "ready", "blocked"}
+BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
 
 
 def _load_project_config(project_row):
@@ -32,6 +33,58 @@ def _normalize_paths(paths):
             continue
         normalized.append(candidate)
     return normalized
+
+
+def _paths_overlap(left_paths, right_paths):
+    left = _normalize_paths(left_paths)
+    right = _normalize_paths(right_paths)
+    if not left or not right:
+        return False
+    return any(
+        candidate == other
+        or candidate.startswith(other + "/")
+        or other.startswith(candidate + "/")
+        for candidate in left
+        for other in right
+    )
+
+
+def _parse_acceptance_criteria(raw_value):
+    try:
+        payload = json.loads(raw_value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return payload if isinstance(payload, list) else []
+
+
+def _validation_commands_from_acceptance(raw_value):
+    commands = []
+    seen = set()
+    for criterion in _parse_acceptance_criteria(raw_value):
+        if not isinstance(criterion, dict):
+            continue
+        command = (criterion.get("command") or "").strip()
+        if not command or command in seen:
+            continue
+        seen.add(command)
+        commands.append(command)
+    return commands
+
+
+def _issue_key_lookup(connection, project_id):
+    rows = connection.execute(
+        """
+        SELECT task_id
+        FROM tasks
+        WHERE project_id = ?
+        ORDER BY created_at ASC, task_id ASC
+        """,
+        (project_id,),
+    ).fetchall()
+    return {
+        row["task_id"]: "ISS-{0}".format(str(index + 1).zfill(4))
+        for index, row in enumerate(rows)
+    }
 
 
 def _source_path_criterion(paths):
@@ -125,26 +178,126 @@ def _build_repo_plan_specs(discovery_summary):
     return specs
 
 
-def build_repo_plan_preview(discovery_summary):
+def _repo_plan_task_rows(connection, project_id):
+    return [
+        dict(row)
+        for row in connection.execute(
+            """
+            SELECT
+                task_id,
+                title,
+                status,
+                priority,
+                review_state,
+                synthesis_key,
+                acceptance_criteria_json
+            FROM tasks
+            WHERE project_id = ?
+              AND synthesis_origin = ?
+            ORDER BY priority DESC, created_at ASC, task_id ASC
+            """,
+            (project_id, REPO_PLAN_SYNTHESIS_ORIGIN),
+        ).fetchall()
+    ]
+
+
+def _repo_plan_relationship_map(connection, project_id, task_rows, issue_keys):
+    task_rows_by_id = {row["task_id"]: row for row in task_rows}
+    task_ids = list(task_rows_by_id.keys())
+    if not task_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in task_ids)
+    rows = connection.execute(
+        """
+        SELECT source_task_id, target_task_id, dependency_type
+        FROM task_dependencies
+        WHERE project_id = ?
+          AND source_task_id IN ({placeholders})
+          AND target_task_id IN ({placeholders})
+        ORDER BY rowid ASC
+        """.format(placeholders=placeholders),
+        (project_id, *task_ids, *task_ids),
+    ).fetchall()
+    relationships = {task_id: [] for task_id in task_ids}
+    for row in rows:
+        source_task_id = row["source_task_id"]
+        target_task_id = row["target_task_id"]
+        dependency_type = row["dependency_type"]
+        source_row = task_rows_by_id.get(source_task_id)
+        target_row = task_rows_by_id.get(target_task_id)
+        if source_row is not None:
+            relationships[source_task_id].append(
+                {
+                    "task_id": target_task_id,
+                    "issue_key": issue_keys.get(target_task_id),
+                    "title": target_row.get("title") if target_row else None,
+                    "status": target_row.get("status") if target_row else None,
+                    "review_state": target_row.get("review_state") if target_row else None,
+                    "dependency_type": dependency_type,
+                    "direction": "outgoing",
+                }
+            )
+        if target_row is not None:
+            relationships[target_task_id].append(
+                {
+                    "task_id": source_task_id,
+                    "issue_key": issue_keys.get(source_task_id),
+                    "title": source_row.get("title") if source_row else None,
+                    "status": source_row.get("status") if source_row else None,
+                    "review_state": source_row.get("review_state") if source_row else None,
+                    "dependency_type": dependency_type,
+                    "direction": "incoming",
+                }
+            )
+    return relationships
+
+
+def build_repo_plan_item_lookup(discovery_summary, task_rows=None, issue_keys=None, relationship_map=None):
     specs = _build_repo_plan_specs(discovery_summary)
+    existing_by_key = {
+        row["synthesis_key"]: dict(row)
+        for row in (task_rows or [])
+        if row.get("synthesis_key")
+    }
+    relationship_map = relationship_map or {}
+    issue_keys = issue_keys or {}
+    items = {}
+    for spec in specs:
+        existing = existing_by_key.get(spec["synthesis_key"])
+        task_id = existing.get("task_id") if existing else None
+        items[spec["synthesis_key"]] = {
+            "synthesis_key": spec["synthesis_key"],
+            "task_kind": spec["task_kind"],
+            "title": spec["title"],
+            "source_label": spec["source_label"],
+            "paths": spec.get("paths", [])[:3],
+            "command": spec.get("command"),
+            "task_id": task_id,
+            "issue_key": issue_keys.get(task_id) if task_id else None,
+            "status": existing.get("status") if existing else None,
+            "review_state": existing.get("review_state") if existing else None,
+            "linked_items": relationship_map.get(task_id, [])[:4] if task_id else [],
+        }
+    return items
+
+
+def build_repo_plan_preview(discovery_summary, task_rows=None, issue_keys=None, relationship_map=None):
+    items = list(
+        build_repo_plan_item_lookup(
+            discovery_summary,
+            task_rows=task_rows,
+            issue_keys=issue_keys,
+            relationship_map=relationship_map,
+        ).values()
+    )
     return {
-        "generated_task_count": len(specs),
-        "verification_task_count": len([item for item in specs if item["task_kind"] == "verification_recipe"]),
-        "repo_area_task_count": len([item for item in specs if item["task_kind"] == "repo_area_plan"]),
+        "generated_task_count": len(items),
+        "verification_task_count": len([item for item in items if item["task_kind"] == "verification_recipe"]),
+        "repo_area_task_count": len([item for item in items if item["task_kind"] == "repo_area_plan"]),
         "sample_paths": _normalize_paths(
-            [path for item in specs for path in item.get("paths", [])]
+            [path for item in items for path in item.get("paths", [])]
         )[:8],
-        "items": [
-            {
-                "synthesis_key": item["synthesis_key"],
-                "task_kind": item["task_kind"],
-                "title": item["title"],
-                "source_label": item["source_label"],
-                "paths": item.get("paths", [])[:3],
-                "command": item.get("command"),
-            }
-            for item in specs[:8]
-        ],
+        "items": items[:8],
     }
 
 
@@ -236,7 +389,6 @@ def refresh_repo_grounded_plan(connection, project_id, actor_id, commit=True, en
 
     filtered_summary = _filtered_discovery_summary(config)
     desired_specs = _build_repo_plan_specs(filtered_summary)
-    preview = build_repo_plan_preview(filtered_summary)
     tactical_goal = connection.execute(
         """
         SELECT goal_id
@@ -369,10 +521,20 @@ def refresh_repo_grounded_plan(connection, project_id, actor_id, commit=True, en
     _upsert_repo_plan_dependencies(connection, resolved_project_id, synthesized_task_ids, desired_specs)
     refresh_ready_tasks(connection, commit=False, project_id=resolved_project_id)
 
+    current_repo_plan_tasks = _repo_plan_task_rows(connection, resolved_project_id)
+    issue_keys = _issue_key_lookup(connection, resolved_project_id)
+    relationship_map = _repo_plan_relationship_map(connection, resolved_project_id, current_repo_plan_tasks, issue_keys)
+    preview = build_repo_plan_preview(
+        filtered_summary,
+        task_rows=current_repo_plan_tasks,
+        issue_keys=issue_keys,
+        relationship_map=relationship_map,
+    )
+
     refreshed_at = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
     onboarding["repo_plan"] = {
         **preview,
-        "active_task_count": len(created_task_ids) + len(updated_task_ids) + len(skipped_task_ids),
+        "active_task_count": len([row for row in current_repo_plan_tasks if row.get("status") != "cancelled"]),
         "created_count": len(created_task_ids),
         "updated_count": len(updated_task_ids),
         "cancelled_count": len(cancelled_task_ids),
@@ -437,4 +599,142 @@ def refresh_repo_grounded_plan(connection, project_id, actor_id, commit=True, en
         "skipped_task_ids": skipped_task_ids,
         "cancelled_task_ids": cancelled_task_ids,
         "repo_plan": onboarding["repo_plan"],
+    }
+
+
+def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None):
+    project_row = resolve_project(connection, project_id, include_archived=False)
+    if project_row is None:
+        return None
+    config = _load_project_config(project_row)
+    onboarding = dict(config.get("onboarding") or {})
+    if (onboarding.get("mode") or "greenfield") != "brownfield":
+        return None
+
+    filtered_summary = _filtered_discovery_summary(config)
+    repo_task_rows = _repo_plan_task_rows(connection, project_id)
+    issue_keys = issue_keys or _issue_key_lookup(connection, project_id)
+    relationship_map = _repo_plan_relationship_map(connection, project_id, repo_task_rows, issue_keys)
+    repo_plan_items = build_repo_plan_item_lookup(
+        filtered_summary,
+        task_rows=repo_task_rows,
+        issue_keys=issue_keys,
+        relationship_map=relationship_map,
+    )
+    scoped_paths = _normalize_paths(
+        [
+            path
+            for criterion in _parse_acceptance_criteria(task_row.get("acceptance_criteria_json"))
+            if isinstance(criterion, dict) and criterion.get("type") == "source_path_exists"
+            for path in criterion.get("paths") or []
+        ]
+    )
+    validation_commands = _validation_commands_from_acceptance(task_row.get("acceptance_criteria_json"))
+    current_repo_plan_items = build_repo_plan_item_lookup(
+        filtered_summary,
+        task_rows=repo_task_rows,
+        issue_keys=issue_keys,
+        relationship_map=relationship_map,
+    )
+    current_repo_plan_preview = build_repo_plan_preview(
+        filtered_summary,
+        task_rows=repo_task_rows,
+        issue_keys=issue_keys,
+        relationship_map=relationship_map,
+    )
+    current_active_count = len(
+        [item for item in current_repo_plan_items.values() if item.get("task_id") and item.get("status") != "cancelled"]
+    )
+    review_task = connection.execute(
+        """
+        SELECT task_id, status, review_state
+        FROM tasks
+        WHERE project_id = ? AND title = ?
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (project_id, BROWNFIELD_REVIEW_TASK_TITLE),
+    ).fetchone()
+    review_status = onboarding.get("review_status")
+    if not review_status:
+        if review_task is None:
+            review_status = "review_pending"
+        elif review_task["status"] == "done" or review_task["review_state"] == "approved":
+            review_status = "approved"
+        elif review_task["review_state"] == "changes_requested":
+            review_status = "changes_requested"
+        else:
+            review_status = "review_pending"
+
+    matched_repo_items = []
+    synthesis_key = task_row.get("synthesis_key")
+    seen_synthesis_keys = set()
+    if task_row.get("synthesis_origin") == REPO_PLAN_SYNTHESIS_ORIGIN:
+        exact_item = repo_plan_items.get(synthesis_key)
+        if exact_item is None:
+            inferred_kind = "repo_plan_step"
+            if (synthesis_key or "").startswith("runbook:"):
+                inferred_kind = "verification_recipe"
+            elif (synthesis_key or "").startswith("area:"):
+                inferred_kind = "repo_area_plan"
+            exact_item = {
+                "synthesis_key": synthesis_key,
+                "task_kind": inferred_kind,
+                "title": task_row.get("title"),
+                "source_label": (synthesis_key or task_row.get("title") or "").split(":", 1)[-1],
+                "paths": scoped_paths[:3],
+                "command": validation_commands[0] if validation_commands else None,
+                "task_id": task_row.get("task_id"),
+                "issue_key": issue_keys.get(task_row.get("task_id")),
+                "status": task_row.get("status"),
+                "review_state": task_row.get("review_state"),
+                "linked_items": relationship_map.get(task_row.get("task_id"), [])[:4],
+            }
+        matched_repo_items.append(exact_item)
+        seen_synthesis_keys.add(exact_item["synthesis_key"])
+    for item in repo_plan_items.values():
+        if item["synthesis_key"] in seen_synthesis_keys:
+            continue
+        command_match = bool(item.get("command") and item["command"] in validation_commands)
+        path_match = _paths_overlap(item.get("paths") or [], scoped_paths)
+        if command_match or path_match:
+            matched_repo_items.append(item)
+            seen_synthesis_keys.add(item["synthesis_key"])
+
+    codebase_areas = [
+        item
+        for item in filtered_summary.get("codebase_map") or []
+        if _paths_overlap(scoped_paths, (item.get("sample_files") or []) + ([item.get("path")] if item.get("path") else []))
+    ][:4]
+    workflow_signals = [
+        item
+        for item in filtered_summary.get("workflow_details") or []
+        if item.get("path") and _paths_overlap(scoped_paths, [item["path"]])
+    ][:4]
+    runbook_signals = [
+        item
+        for item in filtered_summary.get("runbook_commands") or []
+        if (
+            item.get("command") and item["command"] in validation_commands
+        ) or (
+            item.get("path") and _paths_overlap(scoped_paths, [item["path"]])
+        )
+    ][:4]
+    repo_plan_state = onboarding.get("repo_plan") or {}
+
+    return {
+        "review_status": review_status,
+        "scoped_paths": scoped_paths,
+        "validation_commands": validation_commands,
+        "repo_plan": {
+            "generated_task_count": current_repo_plan_preview["generated_task_count"],
+            "active_task_count": current_active_count,
+            "stale": bool(repo_plan_state.get("stale")),
+            "last_refreshed_at": repo_plan_state.get("last_refreshed_at"),
+            "last_refreshed_by": repo_plan_state.get("last_refreshed_by"),
+        },
+        "repo_plan_items": matched_repo_items[:6],
+        "codebase_areas": codebase_areas,
+        "workflow_signals": workflow_signals,
+        "runbook_signals": runbook_signals,
     }

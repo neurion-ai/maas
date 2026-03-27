@@ -43,6 +43,10 @@ For the current delivery execution and verification batch, see [19-codex-mvp-del
 
 For the current explainability, review, and memory batch, see [20-codex-mvp-explainability-review-memory-plan.md](20-codex-mvp-explainability-review-memory-plan.md).
 
+For the current control-loop governance and observability batch, see [21-codex-mvp-control-loop-governance-observability-plan.md](21-codex-mvp-control-loop-governance-observability-plan.md).
+
+For the current brownfield depth pass, see [22-codex-mvp-brownfield-depth-pass.md](22-codex-mvp-brownfield-depth-pass.md).
+
 Legend for numbered roadmap checklists:
 
 - `[x]` completed in the current numbered delivery sequence
@@ -129,14 +133,14 @@ The next product-defining sequence starts after the historical `#81-#151` chain 
 - [x] `#224` Async supervision v3 and overdue decision posture
 - [x] `#225` GitHub delivery execution and PR sync
 - [x] `#226` Goal-to-issue explainability and critical path view
-- [ ] `#227` No-progress diagnosis with one-click remediation
+- [x] `#227` No-progress diagnosis with one-click remediation
 - [x] `#228` Review packets v4 and bulk decision UX
 - [x] `#229` Memory usefulness by item, not just by run
 - [x] `#230` Delivery verification gates
-- [ ] `#231` Live run observability v2
-- [ ] `#232` Autopilot governance v2
-- [ ] `#233` Self-healing and repeated-failure suppression v3
-- [ ] `#234` Brownfield depth pass
+- [x] `#231` Live run observability v2
+- [x] `#232` Autopilot governance v2
+- [x] `#233` Self-healing and repeated-failure suppression v3
+- [x] `#234` Brownfield depth pass
 
 Proposed post-`#224` PR split:
 

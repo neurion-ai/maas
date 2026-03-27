@@ -103,6 +103,8 @@ Relevant design and roadmap documents:
 - [Codex MVP Doctor, Planning, and Delivery Loop Plan](docs/implementation/18-codex-mvp-doctor-delivery-loop-plan.md)
 - [Codex MVP Delivery Execution and Verification Plan](docs/implementation/19-codex-mvp-delivery-execution-verification-plan.md)
 - [Codex MVP Explainability, Review, and Memory Plan](docs/implementation/20-codex-mvp-explainability-review-memory-plan.md)
+- [Codex MVP Control-Loop Governance and Observability Plan](docs/implementation/21-codex-mvp-control-loop-governance-observability-plan.md)
+- [Codex MVP Brownfield Depth Pass](docs/implementation/22-codex-mvp-brownfield-depth-pass.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

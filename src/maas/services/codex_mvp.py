@@ -11,6 +11,7 @@ from maas.services.goal_planning import fetch_goal_explainability
 from maas.services.memory import fetch_project_memory, retrieve_relevant_memory
 from maas.services.provider_jobs import fetch_provider_jobs
 from maas.services.recovery_policy import fetch_suppression_summary
+from maas.services.repo_plan import build_brownfield_grounding
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
@@ -1615,6 +1616,9 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
             tasks.status,
             tasks.priority,
             tasks.review_state,
+            tasks.synthesis_origin,
+            tasks.synthesis_key,
+            tasks.acceptance_criteria_json,
             tasks.progress_pct,
             tasks.retry_count,
             tasks.auto_retry_limit,
@@ -1640,6 +1644,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
     if task_row is None:
         return None
 
+    brownfield_grounding = build_brownfield_grounding(connection, project_id, dict(task_row), issue_keys=issue_keys)
     relationships = _task_relationships(connection, project_id, task_id, task_row["goal_id"], issue_keys)
     runs = _task_runs(connection, project_id, task_id)
     run_console = _issue_run_console(connection, project_paths, project_id, task_id, runs)
@@ -1710,6 +1715,8 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
             "status": task_row["status"],
             "priority": task_row["priority"],
             "review_state": task_row["review_state"],
+            "synthesis_origin": task_row["synthesis_origin"],
+            "synthesis_key": task_row["synthesis_key"],
             "progress_pct": task_row["progress_pct"],
             "retry_count": task_row["retry_count"],
             "auto_retry_limit": task_row["auto_retry_limit"],
@@ -1736,6 +1743,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "review_decision": review_decision,
         "recovery_playbook": recovery_playbook,
         "goal_explainability": goal_explainability,
+        "brownfield_grounding": brownfield_grounding,
         "memory_context": related_memory,
         "delivery": delivery,
         "git_workspace": git_workspace,

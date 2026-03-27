@@ -450,8 +450,20 @@ export function OverviewPage() {
                       {overview.onboarding.repo_plan_preview.items?.map((item) => (
                         <p key={item.synthesis_key}>
                           <strong>{item.title}</strong>
+                          {item.issue_key ? ` · ${item.issue_key}` : ""}
+                          {item.status ? ` · ${item.status.replaceAll("_", " ")}` : ""}
                           {item.command ? ` · ${item.command}` : ""}
                           {(item.paths?.length ?? 0) > 0 ? ` · ${item.paths.join(", ")}` : ""}
+                          {(item.linked_items?.length ?? 0) > 0
+                            ? ` · linked ${item.linked_items
+                                ?.map((linked) =>
+                                  linked.issue_key
+                                    ? `${linked.direction === "incoming" ? "from" : "to"} ${linked.issue_key}`
+                                    : null
+                                )
+                                .filter(Boolean)
+                                .join(", ")}`
+                            : ""}
                         </p>
                       ))}
                     </div>

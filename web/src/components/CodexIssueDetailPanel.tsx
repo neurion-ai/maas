@@ -235,6 +235,7 @@ export function CodexIssueDetailPanel({
   const reviewPacket = reviewDecision?.grouped_review_packet ?? null;
   const goalExplainability = detail?.goal_explainability ?? null;
   const explainedTask = goalExplainability?.task ?? null;
+  const brownfieldGrounding = detail?.brownfield_grounding ?? null;
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
   const selectedRunRecord = selectedRunDetail;
@@ -287,6 +288,91 @@ export function CodexIssueDetailPanel({
                 </span>
               </div>
             ) : null}
+          </div>
+        </section>
+      ) : null}
+      {brownfieldGrounding ? (
+        <section className="codex-detail-section">
+          <div className="codex-section-heading">
+            <strong>Brownfield grounding</strong>
+            <span>{brownfieldGrounding.review_status.replaceAll("_", " ")}</span>
+          </div>
+          <div className="codex-run-list codex-run-list--compact">
+            <div className="codex-output-item">
+              <strong>
+                {brownfieldGrounding.repo_plan.generated_task_count} repo-plan step
+                {brownfieldGrounding.repo_plan.generated_task_count === 1 ? "" : "s"}
+                {brownfieldGrounding.repo_plan.stale ? " · stale" : ""}
+              </strong>
+              <span>
+                {brownfieldGrounding.repo_plan.active_task_count} active synthesized task
+                {brownfieldGrounding.repo_plan.active_task_count === 1 ? "" : "s"}
+              </span>
+              <span>
+                {brownfieldGrounding.repo_plan.last_refreshed_at
+                  ? `Last refreshed ${ageLabel(brownfieldGrounding.repo_plan.last_refreshed_at)} by ${brownfieldGrounding.repo_plan.last_refreshed_by ?? "unknown actor"}`
+                  : "Repo-grounded plan has not been refreshed yet."}
+              </span>
+            </div>
+            {brownfieldGrounding.scoped_paths.length ? (
+              <div className="codex-output-item">
+                <strong>Scoped paths</strong>
+                <span>{brownfieldGrounding.scoped_paths.join(", ")}</span>
+              </div>
+            ) : null}
+            {brownfieldGrounding.validation_commands.length ? (
+              <div className="codex-output-item">
+                <strong>Validation commands</strong>
+                <span>{brownfieldGrounding.validation_commands.join(" · ")}</span>
+              </div>
+            ) : null}
+            {brownfieldGrounding.repo_plan_items.map((item) => (
+              <div key={item.synthesis_key} className="codex-output-item">
+                <strong>
+                  {item.title}
+                  {item.issue_key ? ` · ${item.issue_key}` : ""}
+                  {item.status ? ` · ${statusLabel(item.status, item.review_state)}` : ""}
+                </strong>
+                <span>
+                  {[item.command, ...(item.paths ?? [])].filter(Boolean).join(" · ") || "No explicit repo grounding recorded."}
+                </span>
+                {(item.linked_items?.length ?? 0) > 0 ? (
+                  <span>
+                    {item.linked_items
+                      ?.map((linked) =>
+                        linked.issue_key
+                          ? `${linked.direction === "incoming" ? "From" : "To"} ${linked.issue_key}${linked.dependency_type ? ` (${linked.dependency_type})` : ""}`
+                          : null
+                      )
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+            {brownfieldGrounding.codebase_areas.map((item) => (
+              <div key={`${item.name}-${item.path ?? ""}`} className="codex-output-item">
+                <strong>{item.name}</strong>
+                <span>
+                  {[item.kind.replaceAll("_", " "), item.path, item.primary_language, `${item.file_count} files`]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+                {item.summary ? <span>{item.summary}</span> : null}
+              </div>
+            ))}
+            {brownfieldGrounding.runbook_signals.map((item) => (
+              <div key={`${item.label}-${item.command ?? ""}-${item.path ?? ""}`} className="codex-output-item">
+                <strong>{item.label}</strong>
+                <span>{[item.command, item.path, item.detail].filter(Boolean).join(" · ")}</span>
+              </div>
+            ))}
+            {brownfieldGrounding.workflow_signals.map((item) => (
+              <div key={`${item.label}-${item.path ?? ""}`} className="codex-output-item">
+                <strong>{item.label}</strong>
+                <span>{[item.path, item.detail].filter(Boolean).join(" · ")}</span>
+              </div>
+            ))}
           </div>
         </section>
       ) : null}

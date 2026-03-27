@@ -47,6 +47,8 @@ interface RepoPlanItem {
   source_label: string;
   paths: string[];
   command?: string | null;
+  issue_key?: string | null;
+  status?: string | null;
 }
 
 interface TaskInspectorProps {
@@ -230,7 +232,9 @@ export function TaskInspector({
                 {repoPlanItems.map((item) => (
                   <div key={item.synthesis_key} className="inspector-static-row">
                     <strong>{item.title}</strong>
-                    <span>{formatList(item.paths, 2)}</span>
+                    <span>
+                      {[item.issue_key, item.status, formatList(item.paths, 2)].filter(Boolean).join(" · ")}
+                    </span>
                   </div>
                 ))}
               </div>

@@ -164,6 +164,18 @@ lint = "example:main"
             self.assertIsNotNone(overview_payload["onboarding"]["repo_plan_state"])
             self.assertFalse(overview_payload["onboarding"]["repo_plan_state"]["stale"])
             self.assertGreater(overview_payload["onboarding"]["repo_plan_state"]["generated_task_count"], 0)
+            self.assertEqual(
+                overview_payload["onboarding"]["repo_plan_state"]["active_task_count"],
+                overview_payload["onboarding"]["repo_plan_state"]["generated_task_count"],
+            )
+            verification_item = next(
+                item
+                for item in overview_payload["onboarding"]["repo_plan_state"]["items"]
+                if item["task_kind"] == "verification_recipe"
+            )
+            self.assertTrue(verification_item["task_id"])
+            self.assertTrue(verification_item["issue_key"])
+            self.assertGreaterEqual(len(verification_item["linked_items"]), 1)
 
     def test_overview_filters_brownfield_summary_using_review_overrides(self):
         with tempfile.TemporaryDirectory() as tmpdir:

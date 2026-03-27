@@ -16,6 +16,7 @@ from maas.services.operator_actions import (
     project_autopilot_action,
     project_launch_posture_action,
     project_orchestrator_action,
+    run_operator_action,
     task_operator_action,
 )
 from maas.services.projects import resolve_project
@@ -449,6 +450,19 @@ def _progress_diagnostic(connection, project_id, doctor_summary):
         """,
         (project_id, "-{0} seconds".format(STALE_RUN_HEARTBEAT_SECONDS)),
     ).fetchone()["count"]
+    oldest_stale_run = connection.execute(
+        """
+        SELECT session_id, task_id
+        FROM sessions
+        WHERE project_id = ?
+          AND status = 'active'
+          AND last_heartbeat_at IS NOT NULL
+          AND datetime(last_heartbeat_at) <= datetime('now', ?)
+        ORDER BY last_heartbeat_at ASC, started_at ASC
+        LIMIT 1
+        """,
+        (project_id, "-{0} seconds".format(STALE_RUN_HEARTBEAT_SECONDS)),
+    ).fetchone()
     max_running_jobs = int(queue_snapshot.get("max_running_jobs") or 0)
     preferred_provider_id = queue_snapshot.get("preferred_provider_id")
     recovery_overview = fetch_project_recovery_overview(connection, project_id) if blocked_tasks else None
@@ -597,6 +611,15 @@ def _progress_diagnostic(connection, project_id, doctor_summary):
                 allocate_limit=autopilot_policy.get("allocate_limit"),
                 provider_job_limit=autopilot_policy.get("provider_job_limit"),
                 auto_launch_assigned_work=autopilot_policy.get("auto_launch_assigned_work"),
+            )
+        )
+    if status == "stalled" and oldest_stale_run is not None:
+        operator_actions.append(
+            run_operator_action(
+                "cancel_run",
+                "Stop stale run {0}".format(oldest_stale_run["session_id"]),
+                oldest_stale_run["session_id"],
+                related_task_id=oldest_stale_run["task_id"],
             )
         )
     if status == "blocked" and recovery_overview:

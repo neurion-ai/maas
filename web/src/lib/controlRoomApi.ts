@@ -1883,6 +1883,10 @@ export async function runControlOperatorAction(operatorAction: ControlOperatorAc
     );
     return;
   }
+  if (operatorAction.action === "cancel_run") {
+    await cancelCodexRun(operatorAction.resource_id);
+    return;
+  }
   if (operatorAction.action === "update_launch_posture") {
     await updateProjectProviderCapacity(operatorAction.resource_id, {
       queue_mode: String(operatorAction.payload?.queue_mode ?? "running") as "running" | "draining" | "paused",

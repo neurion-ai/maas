@@ -349,6 +349,7 @@ export interface EnvironmentDoctorCheck {
 export interface ControlOperatorAction {
   action:
     | "run_orchestrator"
+    | "cancel_run"
     | "update_launch_posture"
     | "update_autopilot"
     | "recover_task"
@@ -359,7 +360,7 @@ export interface ControlOperatorAction {
     | "reset_circuit_breaker"
     | "restore_and_requeue_quarantine_entry";
   label: string;
-  resource_type: "project" | "task" | "quarantine";
+  resource_type: "project" | "task" | "quarantine" | "run";
   resource_id: string;
   related_task_id?: string | null;
   payload?: Record<string, unknown>;

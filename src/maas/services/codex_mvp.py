@@ -811,6 +811,22 @@ def fetch_runs(connection, project_id, limit=200, status=None, search=None):
 
 def fetch_system_diagnostics(connection, project_id):
     run_payload = fetch_runs(connection, project_id, limit=100)
+    suspect_run_count = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM sessions
+        WHERE project_id = ?
+          AND (
+            status IN ('failed', 'timed_out', 'cancelled')
+            OR (
+                status = 'active'
+                AND last_heartbeat_at IS NOT NULL
+                AND datetime(last_heartbeat_at) <= datetime('now', ?)
+            )
+          )
+        """,
+        (project_id, "-{0} seconds".format(STALE_RUN_HEARTBEAT_SECONDS)),
+    ).fetchone()["count"]
     all_suspect_runs = [
         item
         for item in run_payload["items"]
@@ -915,7 +931,7 @@ def fetch_system_diagnostics(connection, project_id):
     return {
         "summary": {
             "active_runs": run_payload["summary"]["active_runs"],
-            "suspect_runs": len(all_suspect_runs),
+            "suspect_runs": suspect_run_count,
             "stale_agents": len(stale_agents),
             "queued_jobs": len(queued_jobs),
             "running_jobs": len(running_jobs),

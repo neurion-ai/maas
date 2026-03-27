@@ -83,6 +83,16 @@ def quarantine_operator_action(action, label, queue_id, related_task_id=None):
     )
 
 
+def run_operator_action(action, label, session_id, related_task_id=None):
+    return operator_action(
+        action,
+        label,
+        "run",
+        session_id,
+        related_task_id=related_task_id,
+    )
+
+
 def dedupe_operator_actions(actions):
     items = []
     seen = set()

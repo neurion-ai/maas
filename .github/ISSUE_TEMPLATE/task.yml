@@ -29,7 +29,7 @@ body:
     attributes:
       label: Roadmap ID(s)
       description: Numbered roadmap item(s) if applicable.
-      placeholder: "#226" or "#225, #230"
+      placeholder: "#226 or #225, #230"
 
   - type: dropdown
     id: lane

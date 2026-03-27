@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
 import { cancelCodexRun, fetchCodexRunDetail, fetchCodexRuns, fetchPortfolio, runOrchestratorPass, updateProjectProviderCapacity } from "../lib/controlRoomApi";
-import { getSelectedProjectId } from "../lib/projectScope";
+import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { consumePendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -39,7 +39,10 @@ export function CodexRunsPage({
   const [search, setSearch] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => getSelectedProjectId());
   const livePulse = useLivePulse();
+
+  useEffect(() => subscribeProjectScope(setSelectedProjectId), []);
 
   async function loadRuns(signal?: AbortSignal) {
     const [runsPayload, portfolioPayload] = await Promise.all([
@@ -55,7 +58,6 @@ export function CodexRunsPage({
     ]);
     setRuns(runsPayload.items);
     setSelectedRunId((current) => current ?? runsPayload.items[0]?.session_id ?? null);
-    const selectedProjectId = getSelectedProjectId();
     setProject(
       portfolioPayload.projects.find((item) => item.project_id === selectedProjectId) ??
         portfolioPayload.projects[0] ??
@@ -68,7 +70,7 @@ export function CodexRunsPage({
     const controller = new AbortController();
     void loadRuns(controller.signal).catch(() => setNotice("Runs refresh failed; showing the latest available execution state."));
     return () => controller.abort();
-  }, [livePulse, statusFilter, search]);
+  }, [livePulse, statusFilter, search, selectedProjectId]);
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -347,6 +349,8 @@ export function CodexRunsPage({
                   <p>{run.diagnostic_summary ?? run.status_message ?? "No runtime summary recorded."}</p>
                   <div className="codex-work-row__chips">
                     <span className="codex-chip">{run.progress_pct ?? 0}% progress</span>
+                    {run.observability ? <span className="codex-chip">{run.observability.state.replaceAll("_", " ")}</span> : null}
+                    {run.observability?.activity_count ? <span className="codex-chip">{run.observability.activity_count} activity</span> : null}
                     <span className="codex-chip">{run.artifact_count} artifacts</span>
                     <span className="codex-chip">{run.failure_count} failures</span>
                   </div>

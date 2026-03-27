@@ -12,7 +12,7 @@ from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview, fetch_task_delivery_status
 from maas.services.environment_doctor import _git_status, fetch_environment_doctor
-from maas.services.codex_mvp import fetch_issue_detail
+from maas.services.codex_mvp import fetch_issue_detail, fetch_system_diagnostics
 from maas.services.goal_planning import create_goal, fetch_goal_planning, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
 
@@ -2177,6 +2177,231 @@ class CodexMvpApiTest(unittest.TestCase):
             provider_checks = {item["code"]: item for item in payload["checks"] if item["code"].startswith("provider_")}
             self.assertEqual(provider_checks["provider_openai_codex"]["status"], "passed")
             self.assertEqual(provider_checks["provider_claude_code"]["status"], "warning")
+
+    def test_environment_doctor_exposes_typed_remediation_actions(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Doctor Action Test", description="doctor actions", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project = connection.execute(
+                    "SELECT project_id, config_json FROM projects LIMIT 1"
+                ).fetchone()
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["provider_capacity"] = {
+                    "queue_mode": "paused",
+                    "max_running_jobs": 0,
+                    "preferred_provider_id": "openai_codex",
+                }
+                config["autopilot"] = {"enabled": False}
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'assigned',
+                        assigned_agent_id = COALESCE(assigned_agent_id, 'agent_allocator')
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.commit()
+
+                with mock.patch(
+                    "maas.services.environment_doctor.list_provider_status",
+                    return_value=[
+                        {
+                            "id": "openai_codex",
+                            "name": "OpenAI Codex",
+                            "effective_execution_mode": "codex_cli",
+                            "execution_mode": "codex_cli",
+                            "is_runnable": True,
+                            "configurable_runtime_controls": {"cli_command": "codex"},
+                            "config_warnings": [],
+                            "notes": None,
+                        }
+                    ],
+                ), mock.patch(
+                    "maas.services.environment_doctor._cli_available",
+                    return_value=True,
+                ), mock.patch(
+                    "maas.services.environment_doctor._codex_auth_available",
+                    return_value=True,
+                ):
+                    payload = fetch_environment_doctor(connection, paths, project["project_id"])
+            finally:
+                connection.close()
+
+            action_names = {
+                action["action"]
+                for action in (payload["progress"].get("operator_actions") or [])
+            }
+            self.assertIn("update_launch_posture", action_names)
+            self.assertIn("update_autopilot", action_names)
+            reason_map = {item["code"]: item for item in payload["progress"]["reasons"]}
+            self.assertTrue(reason_map["queue_paused"]["operator_actions"])
+            self.assertTrue(reason_map["zero_capacity"]["operator_actions"])
+            self.assertTrue(reason_map["autopilot_disabled"]["operator_actions"])
+
+    def test_system_diagnostics_include_run_observability_and_suppression(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="System Diagnostics Test", description="system diagnostics", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                tasks = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 2
+                    """
+                ).fetchall()
+                blocked_task = tasks[0]
+                live_task = tasks[1]
+                agent_id = live_task["assigned_agent_id"] or connection.execute(
+                    "SELECT agent_id FROM agents ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["agent_id"]
+
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'retry_backoff',
+                        next_retry_at = DATETIME('now', '+10 minutes'),
+                        next_retry_reason = 'Waiting for operator-confirmed retry window.'
+                    WHERE task_id = ?
+                    """,
+                    (blocked_task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress',
+                        assigned_agent_id = ?
+                    WHERE task_id = ?
+                    """,
+                    (agent_id, live_task["task_id"]),
+                )
+                session_id = generate_id("sess")
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'active', 'openai_codex', 55,
+                        'Still working', DATETIME('now', '-180 seconds'), DATETIME('now', '-30 minutes'), NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (session_id, live_task["project_id"], agent_id, live_task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO activity_log (
+                        activity_id, project_id, agent_id, task_id, action, category, description, details_json, severity
+                    ) VALUES (?, ?, ?, ?, 'execution_running', 'runtime', ?, ?, 'info')
+                    """,
+                    (
+                        generate_id("act"),
+                        live_task["project_id"],
+                        agent_id,
+                        live_task["task_id"],
+                        "Codex is still processing the live run.",
+                        json.dumps({"session_id": session_id}),
+                    ),
+                )
+                connection.commit()
+
+                payload = fetch_system_diagnostics(connection, live_task["project_id"])
+            finally:
+                connection.close()
+
+            self.assertGreaterEqual(payload["summary"]["suppressed_items"], 1)
+            self.assertEqual(payload["suspect_runs"][0]["observability"]["state"], "stalled")
+            suppression = payload["suppression"]["items"][0]
+            self.assertEqual(suppression["kind"], "retry_backoff")
+            self.assertEqual(suppression["operator_action"]["action"], "reset_retry_state")
+            attention_kinds = {item["kind"] for item in payload["attention_items"]}
+            self.assertIn("retry_backoff", attention_kinds)
+            self.assertEqual(payload["summary"]["suspect_runs"], 1)
+
+    def test_environment_doctor_stalled_progress_emits_stop_stale_run_action(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Doctor Stalled Test", description="stalled doctor", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                agent_id = connection.execute(
+                    "SELECT agent_id FROM agents ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["agent_id"]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress',
+                        assigned_agent_id = ?
+                    WHERE task_id = ?
+                    """,
+                    (agent_id, task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        'sess_doctor_stalled', ?, ?, ?, 'active', 'openai_codex', 35,
+                        'Stale run for doctor test', DATETIME('now', '-180 seconds'), DATETIME('now', '-20 minutes'), NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (task["project_id"], agent_id, task["task_id"]),
+                )
+                connection.commit()
+                with mock.patch(
+                    "maas.services.environment_doctor.list_provider_status",
+                    return_value=[
+                        {
+                            "id": "openai_codex",
+                            "name": "OpenAI Codex",
+                            "effective_execution_mode": "codex_cli",
+                            "execution_mode": "codex_cli",
+                            "is_runnable": True,
+                            "configurable_runtime_controls": {"cli_command": "codex"},
+                            "config_warnings": [],
+                            "notes": None,
+                        }
+                    ],
+                ), mock.patch(
+                    "maas.services.environment_doctor._cli_available",
+                    return_value=True,
+                ), mock.patch(
+                    "maas.services.environment_doctor._codex_auth_available",
+                    return_value=True,
+                ):
+                    payload = fetch_environment_doctor(connection, paths, task["project_id"])
+            finally:
+                connection.close()
+
+            self.assertEqual(payload["progress"]["status"], "stalled")
+            self.assertEqual(payload["progress"]["operator_actions"][0]["action"], "cancel_run")
 
     def test_goal_creation_rejects_parent_goal_from_another_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:

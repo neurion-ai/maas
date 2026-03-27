@@ -49,6 +49,9 @@ DEFAULT_AUTOPILOT_SETTINGS = {
     "max_review_queue": 0,
     "max_blocked_queue": 0,
     "max_idle_cycles_before_alert": 6,
+    "max_stale_runs": 0,
+    "max_repeated_failure_incidents": 0,
+    "max_notification_failures": 0,
 }
 
 

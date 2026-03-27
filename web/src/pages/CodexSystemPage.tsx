@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
-import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders } from "../lib/controlRoomApi";
+import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
 import { boardCounts, formatTimestamp, openBoardTasks, resolvedBoardTasks } from "../lib/codexMvp";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
+import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
-import type { ActivityItem, BoardTask, CodexRunDetailResponse, CodexSystemDiagnosticsResponse, ProvidersResponse, TimelineEvent } from "../types";
+import type { ActivityItem, BoardTask, CodexRunDetailResponse, CodexSystemDiagnosticsResponse, ControlOperatorAction, ProvidersResponse, TimelineEvent } from "../types";
 
 type ViewTarget = "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command";
 
@@ -32,13 +33,17 @@ export function CodexSystemPage({
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunDetail, setSelectedRunDetail] = useState<CodexRunDetailResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => getSelectedProjectId());
   const livePulse = useLivePulse();
+
+  useEffect(() => subscribeProjectScope(setSelectedProjectId), []);
 
   async function loadSystem(signal?: AbortSignal) {
     const [providersPayload, activityPayload, timelinePayload, boardPayload, diagnosticsPayload] = await Promise.all([
-      fetchProviders(),
-      fetchActivity(),
-      fetchIncidentTimeline({ limit: 24 }, signal),
+      fetchProviders(signal, undefined, selectedProjectId),
+      fetchActivity(signal, undefined, selectedProjectId),
+      fetchIncidentTimeline({ limit: 24 }, signal, undefined, selectedProjectId),
       fetchBoard({}, signal),
       fetchCodexSystemDiagnostics(signal),
     ]);
@@ -54,7 +59,7 @@ export function CodexSystemPage({
     const controller = new AbortController();
     void loadSystem(controller.signal).catch(() => setNotice("System refresh failed; showing the latest available machine state."));
     return () => controller.abort();
-  }, [livePulse]);
+  }, [livePulse, selectedProjectId]);
 
   useEffect(() => {
     const firstRunnableJob =
@@ -87,6 +92,24 @@ export function CodexSystemPage({
       });
     return () => controller.abort();
   }, [selectedRunId, livePulse]);
+
+  async function handleControlAction(action: ControlOperatorAction) {
+    const key = `${action.action}:${action.resource_id}`;
+    setPendingActionKey(key);
+    setNotice(null);
+    try {
+      await runControlOperatorAction(action);
+      await loadSystem();
+      if (action.related_task_id) {
+        setPendingTaskFocus(action.related_task_id);
+      }
+      setNotice(`${action.label} complete.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `${action.label} failed.`);
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
 
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const providerSummary = useMemo(() => {
@@ -185,9 +208,11 @@ export function CodexSystemPage({
           <strong>{runtimeDiagnostics?.summary.stale_agents ?? 0}</strong>
           <span>Stale agents</span>
           <p>
-            {runtimeDiagnostics?.summary.oldest_queued_at
-              ? `Oldest queued ${formatTimestamp(runtimeDiagnostics.summary.oldest_queued_at)}`
-              : "No queued backlog"}
+            {runtimeDiagnostics?.summary.suppressed_items
+              ? `${runtimeDiagnostics.summary.suppressed_items} suppressed issue${runtimeDiagnostics.summary.suppressed_items === 1 ? "" : "s"}`
+              : runtimeDiagnostics?.summary.oldest_queued_at
+                ? `Oldest queued ${formatTimestamp(runtimeDiagnostics.summary.oldest_queued_at)}`
+                : "No queued backlog"}
           </p>
         </article>
       </div>
@@ -331,6 +356,128 @@ export function CodexSystemPage({
             ))}
             {!(runtimeDiagnostics?.suspect_runs.length || runtimeDiagnostics?.stale_agents.length) ? (
               <div className="codex-empty-copy">No suspect runs or stale agents need inspection right now.</div>
+            ) : null}
+          </div>
+        </section>
+      </div>
+
+      <div className="codex-two-column">
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Attention now</span>
+              <h2>Cross-loop pressure</h2>
+            </div>
+          </div>
+          <div className="codex-history-list">
+            {(runtimeDiagnostics?.attention_items ?? []).map((item, index) => (
+              <div key={`${item.kind}:${item.session_id ?? item.task_id ?? index}`} className="codex-history-item">
+                <div className="codex-history-item__meta">
+                  <strong>{item.title}</strong>
+                  <span>{item.kind.replaceAll("_", " ")}</span>
+                </div>
+                <span>{item.summary ?? "Attention item"}</span>
+                {item.detail ? <span>{item.detail}</span> : null}
+                <div className="codex-detail-actions">
+                  {item.session_id ? (
+                    <button
+                      type="button"
+                      className="codex-button"
+                      onClick={() => {
+                        const sessionId = item.session_id ?? null;
+                        if (!sessionId) {
+                          return;
+                        }
+                        setSelectedRunId(sessionId);
+                        setPendingRunFocus(sessionId);
+                        onNavigate("runs");
+                      }}
+                    >
+                      Open run
+                    </button>
+                  ) : null}
+                  {item.task_id ? (
+                    <button
+                      type="button"
+                      className="codex-button"
+                      onClick={() => {
+                        setPendingTaskFocus(item.task_id!);
+                        onNavigate("issues");
+                      }}
+                    >
+                      Open issue
+                    </button>
+                  ) : null}
+                  {item.operator_action ? (
+                    <button
+                      type="button"
+                      className="codex-button codex-button--primary"
+                      disabled={pendingActionKey === `${item.operator_action.action}:${item.operator_action.resource_id}`}
+                      onClick={() => void handleControlAction(item.operator_action!)}
+                    >
+                      {pendingActionKey === `${item.operator_action.action}:${item.operator_action.resource_id}` ? "Running..." : item.operator_action.label}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {!runtimeDiagnostics?.attention_items?.length ? (
+              <div className="codex-empty-copy">No cross-loop attention items are active right now.</div>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Suppression</span>
+              <h2>Recovery backpressure and automation holds</h2>
+            </div>
+            <span className="codex-chip">{runtimeDiagnostics?.suppression?.summary.total ?? 0} items</span>
+          </div>
+          <div className="codex-inline-facts">
+            <span className="codex-chip">{runtimeDiagnostics?.suppression?.summary.retry_backoff ?? 0} backoff</span>
+            <span className="codex-chip">{runtimeDiagnostics?.suppression?.summary.circuit_breaker ?? 0} breakers</span>
+            <span className="codex-chip">{runtimeDiagnostics?.suppression?.summary.quarantine ?? 0} quarantine</span>
+            <span className="codex-chip">{runtimeDiagnostics?.suppression?.summary.repeated_failure ?? 0} repeated failures</span>
+          </div>
+          <div className="codex-run-list">
+            {(runtimeDiagnostics?.suppression?.items ?? []).map((item, index) => (
+              <div key={`${item.kind}:${item.task_id ?? index}`} className="codex-run-item">
+                <div className="codex-run-item__meta">
+                  <strong>{item.task_title ?? item.task_id ?? item.kind}</strong>
+                  <span>{item.kind.replaceAll("_", " ")}</span>
+                </div>
+                <span>{item.summary ?? "Suppressed work"}</span>
+                <span>{item.since_at ? `Since ${formatTimestamp(item.since_at)}` : item.detail ?? "No further detail recorded."}</span>
+                <div className="codex-detail-actions">
+                  {item.task_id ? (
+                    <button
+                      type="button"
+                      className="codex-button"
+                      onClick={() => {
+                        setPendingTaskFocus(item.task_id!);
+                        onNavigate("issues");
+                      }}
+                    >
+                      Open issue
+                    </button>
+                  ) : null}
+                  {item.operator_action ? (
+                    <button
+                      type="button"
+                      className="codex-button codex-button--primary"
+                      disabled={pendingActionKey === `${item.operator_action.action}:${item.operator_action.resource_id}`}
+                      onClick={() => void handleControlAction(item.operator_action!)}
+                    >
+                      {pendingActionKey === `${item.operator_action.action}:${item.operator_action.resource_id}` ? "Running..." : item.operator_action.label}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+            {!runtimeDiagnostics?.suppression?.items?.length ? (
+              <div className="codex-empty-copy">No automation holds are suppressing work right now.</div>
             ) : null}
           </div>
         </section>

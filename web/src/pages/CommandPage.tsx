@@ -16,6 +16,7 @@ import {
   runOrchestratorPass,
   createGoal,
   synthesizeGoal,
+  runControlOperatorAction,
   syncTaskGithubPr,
   updateProjectAutopilot,
   updateProjectProviderCapacity,
@@ -30,6 +31,7 @@ import type {
   AutopilotStatusResponse,
   BoardTask,
   CodexRetrievalSearchResponse,
+  ControlOperatorAction,
   DeliveryOverviewResponse,
   EnvironmentDoctorResponse,
   GoalPlanningResponse,
@@ -309,6 +311,9 @@ export function CommandPage({
         max_review_queue: autopilot.policy.max_review_queue ?? 0,
         max_blocked_queue: autopilot.policy.max_blocked_queue ?? 0,
         max_idle_cycles_before_alert: autopilot.policy.max_idle_cycles_before_alert ?? 0,
+        max_stale_runs: autopilot.policy.max_stale_runs ?? 0,
+        max_repeated_failure_incidents: autopilot.policy.max_repeated_failure_incidents ?? 0,
+        max_notification_failures: autopilot.policy.max_notification_failures ?? 0,
       });
       await loadCommand();
       await holdPendingState(startedAt);
@@ -316,6 +321,24 @@ export function CommandPage({
       setNotice(enabled ? "Autopilot enabled for this project." : "Autopilot disabled for this project.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Could not update autopilot.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
+  async function handleControlAction(action: ControlOperatorAction) {
+    const startedAt = Date.now();
+    const actionKey = `control:${action.action}:${action.resource_id}`;
+    setPendingKey(actionKey);
+    setNotice(null);
+    try {
+      await runControlOperatorAction(action);
+      await loadCommand();
+      await holdPendingState(startedAt);
+      await loadCommand();
+      setNotice(`${action.label} complete.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : `${action.label} failed.`);
     } finally {
       setPendingKey(null);
     }
@@ -527,6 +550,21 @@ export function CommandPage({
             <span className="codex-chip">{doctor?.preferred_provider_id ?? "provider?"}</span>
           </div>
           <p className="codex-muted-copy">{doctor?.progress.detail ?? "The doctor will explain why progress is moving or stalled."}</p>
+          {doctor?.progress.operator_actions?.length ? (
+            <div className="codex-detail-actions">
+              {doctor.progress.operator_actions.slice(0, 3).map((action) => (
+                <button
+                  key={`${action.action}:${action.resource_id}:${action.label}`}
+                  type="button"
+                  className="codex-button codex-button--primary"
+                  disabled={pendingKey !== null}
+                  onClick={() => void handleControlAction(action)}
+                >
+                  {pendingKey === `control:${action.action}:${action.resource_id}` ? "Running..." : action.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <div className="codex-check-list">
             {(doctor?.checks ?? []).slice(0, 4).map((check) => (
               <div key={check.code} className="codex-check-list__item">
@@ -538,6 +576,70 @@ export function CommandPage({
               </div>
             ))}
           </div>
+          {(doctor?.progress.reasons?.length ?? 0) > 0 ? (
+            <div className="codex-history-list">
+              {(doctor?.progress.reasons ?? []).slice(0, 4).map((reason) => (
+                <div key={reason.code} className="codex-history-item">
+                  <div className="codex-history-item__meta">
+                    <strong>{reason.summary}</strong>
+                    <span>{reason.severity}</span>
+                  </div>
+                  <span>{reason.detail}</span>
+                  {reason.operator_actions?.length ? (
+                    <div className="codex-detail-actions">
+                      {reason.operator_actions.slice(0, 2).map((action) => (
+                        <button
+                          key={`${reason.code}:${action.action}:${action.resource_id}`}
+                          type="button"
+                          className="codex-button"
+                          disabled={pendingKey !== null}
+                          onClick={() => void handleControlAction(action)}
+                        >
+                          {pendingKey === `control:${action.action}:${action.resource_id}` ? "Running..." : action.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {(autopilot?.governance_gate?.signals?.length ?? 0) > 0 ? (
+            <div className="codex-list-block">
+              <strong>Autopilot governance</strong>
+              <div className="codex-history-list">
+                {(autopilot?.governance_gate?.signals ?? []).slice(0, 5).map((signal) => (
+                  <div key={signal.code} className="codex-history-item">
+                    <div className="codex-history-item__meta">
+                      <strong>{signal.label}</strong>
+                      <span>
+                        {signal.count ?? 0}
+                        {signal.threshold ? ` / ${signal.threshold}` : ""}
+                        {signal.blocking ? " · blocking" : ""}
+                      </span>
+                    </div>
+                    <span>{signal.summary}</span>
+                    <span>{signal.detail}</span>
+                    {signal.operator_actions?.length ? (
+                      <div className="codex-detail-actions">
+                        {signal.operator_actions.slice(0, 2).map((action) => (
+                          <button
+                            key={`${signal.code}:${action.action}:${action.resource_id}`}
+                            type="button"
+                            className="codex-button"
+                            disabled={pendingKey !== null}
+                            onClick={() => void handleControlAction(action)}
+                          >
+                            {pendingKey === `control:${action.action}:${action.resource_id}` ? "Running..." : action.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {(doctor?.recommended_actions?.length ?? 0) > 0 ? (
             <div className="codex-list-block">
               <strong>Recommended next actions</strong>

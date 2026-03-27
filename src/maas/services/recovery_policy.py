@@ -11,6 +11,11 @@ from maas.services.alerts import (
 )
 from maas.services.dead_letter import fetch_dead_letter_queue
 from maas.services.failure_memory import fetch_repeated_failure_tasks
+from maas.services.operator_actions import (
+    dedupe_operator_actions,
+    quarantine_operator_action,
+    task_operator_action,
+)
 from maas.services.projects import resolve_project_id
 from maas.services.scheduler import adaptive_replan_feedback
 from maas.services.security import ensure_board_action_allowed
@@ -674,6 +679,122 @@ def fetch_project_recovery_overview(connection, project_id=None):
         "open_failure_alerts": _recovery_open_failure_alerts(connection, project_id),
         "open_stale_agent_alerts": _recovery_stale_agent_alerts(connection, project_id),
         "repeated_failure_incidents": _recovery_repeated_failure_incidents(connection, project_id),
+    }
+
+
+def fetch_suppression_summary(connection, project_id=None, limit=12):
+    project_id = _resolve_project_id(connection, project_id)
+    retry_backoff_items = _recovery_task_items(
+        connection,
+        project_id,
+        (
+            "tasks.status IN ('planned', 'ready', 'assigned', 'blocked') "
+            "AND (tasks.review_state = 'retry_backoff' OR tasks.next_retry_at IS NOT NULL)"
+        ),
+        [],
+        limit=None,
+    )
+    circuit_breaker_items = _circuit_breaker_tasks(connection, project_id, limit=None)
+    quarantine_items = _recovery_quarantine_entries(connection, project_id, limit=200)
+    repeated_failure_items = fetch_repeated_failure_tasks(connection, limit=None, project_id=project_id, actionable_only=True)
+
+    items = []
+    for task in retry_backoff_items:
+        items.append(
+            {
+                "kind": "retry_backoff",
+                "task_id": task["task_id"],
+                "task_title": task["title"],
+                "status": task["status"],
+                "review_state": task.get("review_state"),
+                "summary": "Task is suppressed behind retry backoff.",
+                "detail": task.get("next_retry_reason")
+                or "Automation is waiting for the retry cooldown before trying this task again.",
+                "since_at": task.get("next_retry_at") or task.get("updated_at"),
+                "operator_action": task_operator_action(
+                    "reset_retry_state",
+                    "Clear retry backoff",
+                    task["task_id"],
+                ),
+            }
+        )
+    for task in circuit_breaker_items:
+        items.append(
+            {
+                "kind": "circuit_breaker",
+                "task_id": task["task_id"],
+                "task_title": task["title"],
+                "status": task["status"],
+                "review_state": task.get("review_state"),
+                "summary": "Task is halted behind an open circuit breaker.",
+                "detail": task.get("replan_reason")
+                or "Repeated failures opened a circuit breaker and suppressed further automatic retries.",
+                "since_at": task.get("circuit_breaker_opened_at") or task.get("updated_at"),
+                "operator_action": task_operator_action(
+                    "reset_circuit_breaker",
+                    "Reset circuit breaker",
+                    task["task_id"],
+                ),
+            }
+        )
+    for entry in quarantine_items:
+        operator_action = None
+        if entry.get("task_id") and entry.get("task_status") == "blocked" and entry.get("task_review_state") in RECOVERABLE_FAILURE_REVIEW_STATES:
+            operator_action = quarantine_operator_action(
+                "restore_and_requeue_quarantine_entry",
+                "Restore and requeue quarantined work",
+                entry["queue_id"],
+                related_task_id=entry.get("task_id"),
+            )
+        items.append(
+            {
+                "kind": "quarantine",
+                "task_id": entry.get("task_id"),
+                "task_title": entry.get("task_title"),
+                "status": entry.get("task_status"),
+                "review_state": entry.get("task_review_state"),
+                "summary": "Execution artifacts were quarantined and the task is effectively suppressed.",
+                "detail": entry.get("summary")
+                or "Restore the quarantined output or keep it isolated before resuming autonomous work.",
+                "since_at": entry.get("created_at"),
+                "operator_action": operator_action,
+            }
+        )
+    for task in repeated_failure_items:
+        items.append(
+            {
+                "kind": "repeated_failure",
+                "task_id": task["task_id"],
+                "task_title": task.get("task_title"),
+                "status": "blocked",
+                "review_state": "repeated_failures",
+                "summary": "Task is suppressed by an open repeated-failure incident.",
+                "detail": "Resolve the repeated-failure incident before trusting automation to advance this task again.",
+                "since_at": task.get("latest_failure_at"),
+                "operator_action": task_operator_action(
+                    "resolve_repeated_failures",
+                    task.get("operator_action", {}).get("label") or "Resolve repeated failures",
+                    task["task_id"],
+                ),
+            }
+        )
+
+    total_items = len(items)
+    items.sort(key=lambda item: ((item.get("since_at") or ""), item.get("kind") or ""), reverse=True)
+    if limit is not None:
+        items = items[: max(1, int(limit))]
+    for item in items:
+        if item.get("operator_action"):
+            item["operator_action"] = dedupe_operator_actions([item["operator_action"]])[0]
+    return {
+        "summary": {
+            "total": total_items,
+            "retry_backoff": len(retry_backoff_items),
+            "circuit_breaker": len(circuit_breaker_items),
+            "quarantine": len(quarantine_items),
+            "repeated_failure": len(repeated_failure_items),
+        },
+        "items": items,
     }
 
 

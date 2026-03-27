@@ -10,6 +10,7 @@ from maas.services.git_workspaces import fetch_task_git_workspace
 from maas.services.goal_planning import fetch_goal_explainability
 from maas.services.memory import fetch_project_memory, retrieve_relevant_memory
 from maas.services.provider_jobs import fetch_provider_jobs
+from maas.services.recovery_policy import fetch_suppression_summary
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
@@ -333,6 +334,7 @@ def _run_row_to_dict(row, issue_keys):
         heartbeat_age_seconds,
         is_stale,
     )
+    observability = _run_observability(row, heartbeat_age_seconds, is_stale)
     return {
         "session_id": row["session_id"],
         "task_id": row["task_id"],
@@ -359,6 +361,7 @@ def _run_row_to_dict(row, issue_keys):
         "is_stale": is_stale,
         "diagnostic_summary": diagnostic_summary,
         "recommended_action": recommended_action,
+        "observability": observability,
         "artifact_count": row["artifact_count"] or 0,
         "failure_count": row["failure_count"] or 0,
     }
@@ -399,6 +402,59 @@ def _run_diagnostics(status, task_status, task_review_state, heartbeat_age_secon
         "Execution finished and the linked issue moved on to its next state.",
         "Open the issue if you need to inspect what changed or what this run unlocked.",
     )
+
+
+def _run_observability(row, heartbeat_age_seconds, is_stale):
+    last_activity_at = row["last_activity_at"] if "last_activity_at" in row.keys() else None
+    last_activity_action = row["last_activity_action"] if "last_activity_action" in row.keys() else None
+    activity_count = int(row["activity_count"] or 0) if "activity_count" in row.keys() else 0
+    status = row["status"]
+    if status == "active" and is_stale:
+        state = "stalled"
+        attention_level = "critical"
+        summary = "Heartbeat is stale while the run still appears active."
+        detail = "This usually means the session stopped advancing or the worker process lost contact."
+    elif status == "active":
+        state = "active"
+        attention_level = "info"
+        summary = "Run is active and still heartbeating."
+        detail = "Activity and heartbeat signals indicate the session is still making normal progress."
+    elif status in {"failed", "timed_out"}:
+        state = "failed"
+        attention_level = "critical"
+        summary = "Run ended unsuccessfully."
+        detail = "This session needs recovery, replanning, or operator confirmation before work continues."
+    elif status == "cancelled":
+        state = "cancelled"
+        attention_level = "warning"
+        summary = "Run was cancelled before completion."
+        detail = "The linked issue may still need recovery or a deliberate stop decision."
+    elif row["task_status"] == "review" or row["task_review_state"] == "review_requested":
+        state = "review"
+        attention_level = "warning"
+        summary = "Execution is complete and waiting on review."
+        detail = "Operator judgment is now the main gate on forward progress for this issue."
+    else:
+        state = "resolved"
+        attention_level = "info"
+        summary = "Run is no longer active."
+        detail = "Use the trace and artifacts for audit, reuse, or debugging."
+    if last_activity_at:
+        detail = "{0} Last run-scoped activity: {1}{2}.".format(
+            detail,
+            last_activity_action.replace("_", " ") if last_activity_action else "activity recorded",
+            " at {0}".format(last_activity_at),
+        )
+    return {
+        "state": state,
+        "attention_level": attention_level,
+        "summary": summary,
+        "detail": detail,
+        "last_activity_at": last_activity_at,
+        "last_activity_action": last_activity_action,
+        "activity_count": activity_count,
+        "heartbeat_age_seconds": heartbeat_age_seconds,
+    }
 
 
 def issue_key_lookup(connection, project_id=None):
@@ -679,6 +735,31 @@ def fetch_runs(connection, project_id, limit=200, status=None, search=None):
             sessions.last_heartbeat_at,
             sessions.started_at,
             sessions.ended_at,
+            (
+                SELECT activity_log.created_at
+                FROM activity_log
+                WHERE activity_log.project_id = sessions.project_id
+                  AND activity_log.task_id = sessions.task_id
+                  AND json_extract(activity_log.details_json, '$.session_id') = sessions.session_id
+                ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+                LIMIT 1
+            ) AS last_activity_at,
+            (
+                SELECT activity_log.action
+                FROM activity_log
+                WHERE activity_log.project_id = sessions.project_id
+                  AND activity_log.task_id = sessions.task_id
+                  AND json_extract(activity_log.details_json, '$.session_id') = sessions.session_id
+                ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+                LIMIT 1
+            ) AS last_activity_action,
+            (
+                SELECT COUNT(*)
+                FROM activity_log
+                WHERE activity_log.project_id = sessions.project_id
+                  AND activity_log.task_id = sessions.task_id
+                  AND json_extract(activity_log.details_json, '$.session_id') = sessions.session_id
+            ) AS activity_count,
             json_extract(start_log.details_json, '$.execution_mode') AS execution_mode,
             json_extract(start_log.details_json, '$.external_runtime') AS external_runtime,
             COUNT(DISTINCT artifacts.artifact_id) AS artifact_count,
@@ -730,11 +811,29 @@ def fetch_runs(connection, project_id, limit=200, status=None, search=None):
 
 def fetch_system_diagnostics(connection, project_id):
     run_payload = fetch_runs(connection, project_id, limit=100)
-    suspect_runs = [
+    suspect_run_count = connection.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM sessions
+        WHERE project_id = ?
+          AND (
+            status IN ('failed', 'timed_out', 'cancelled')
+            OR (
+                status = 'active'
+                AND last_heartbeat_at IS NOT NULL
+                AND datetime(last_heartbeat_at) <= datetime('now', ?)
+            )
+          )
+        """,
+        (project_id, "-{0} seconds".format(STALE_RUN_HEARTBEAT_SECONDS)),
+    ).fetchone()["count"]
+    all_suspect_runs = [
         item
         for item in run_payload["items"]
         if item["is_stale"] or item["status"] in {"failed", "timed_out", "cancelled"}
-    ][:10]
+    ]
+    suspect_runs = all_suspect_runs[:10]
+    suppression = fetch_suppression_summary(connection, project_id=project_id, limit=12)
 
     issue_keys = issue_key_lookup(connection, project_id)
     stale_agent_rows = connection.execute(
@@ -788,19 +887,69 @@ def fetch_system_diagnostics(connection, project_id):
         ((job["started_at"] or job["created_at"]) for job in running_jobs),
         default=None,
     )
+    attention_items = []
+    for run in suspect_runs[:6]:
+        attention_items.append(
+            {
+                "kind": "suspect_run",
+                "title": run["issue_key"] or run["task_title"] or run["session_id"],
+                "summary": run.get("diagnostic_summary") or run.get("status_message") or "Run needs inspection.",
+                "detail": run.get("observability", {}).get("detail") or run.get("recommended_action"),
+                "session_id": run["session_id"],
+                "task_id": run.get("task_id"),
+                "issue_key": run.get("issue_key"),
+                "operator_action": None,
+            }
+        )
+    for agent in stale_agents[:4]:
+        attention_items.append(
+            {
+                "kind": "stale_agent",
+                "title": agent["display_name"],
+                "summary": agent.get("diagnostic_summary") or "Agent heartbeat is stale.",
+                "detail": agent.get("recommended_action"),
+                "session_id": agent.get("focus_run_session_id"),
+                "task_id": agent.get("current_task_id"),
+                "issue_key": agent.get("current_issue_key"),
+                "operator_action": None,
+            }
+        )
+    for item in suppression["items"][:6]:
+        attention_items.append(
+            {
+                "kind": item["kind"],
+                "title": item.get("task_title") or item.get("task_id") or item.get("kind"),
+                "summary": item.get("summary"),
+                "detail": item.get("detail"),
+                "session_id": None,
+                "task_id": item.get("task_id"),
+                "issue_key": issue_keys.get(item["task_id"]) if item.get("task_id") else None,
+                "operator_action": item.get("operator_action"),
+            }
+        )
 
     return {
         "summary": {
-            "suspect_runs": len(suspect_runs),
+            "active_runs": run_payload["summary"]["active_runs"],
+            "suspect_runs": suspect_run_count,
             "stale_agents": len(stale_agents),
             "queued_jobs": len(queued_jobs),
             "running_jobs": len(running_jobs),
+            "suppressed_items": suppression["summary"]["total"],
             "oldest_queued_at": oldest_queued_at,
             "oldest_running_at": oldest_running_at,
         },
         "execution_state": _execution_explanation(connection, project_id),
+        "live_runs": {
+            "active_runs": run_payload["summary"]["active_runs"],
+            "stale_runs": run_payload["summary"]["stale_runs"],
+            "failed_runs": run_payload["summary"]["failed_runs"] + run_payload["summary"]["timed_out_runs"],
+            "completed_runs": run_payload["summary"]["completed_runs"],
+        },
         "suspect_runs": suspect_runs,
         "stale_agents": stale_agents,
+        "attention_items": attention_items[:12],
+        "suppression": suppression,
         "queue_pressure": {
             "queued_jobs": len(queued_jobs),
             "running_jobs": len(running_jobs),
@@ -1209,6 +1358,31 @@ def fetch_run_detail(connection, project_paths, project_id, session_id):
             sessions.last_heartbeat_at,
             sessions.started_at,
             sessions.ended_at,
+            (
+                SELECT activity_log.created_at
+                FROM activity_log
+                WHERE activity_log.project_id = sessions.project_id
+                  AND activity_log.task_id = sessions.task_id
+                  AND json_extract(activity_log.details_json, '$.session_id') = sessions.session_id
+                ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+                LIMIT 1
+            ) AS last_activity_at,
+            (
+                SELECT activity_log.action
+                FROM activity_log
+                WHERE activity_log.project_id = sessions.project_id
+                  AND activity_log.task_id = sessions.task_id
+                  AND json_extract(activity_log.details_json, '$.session_id') = sessions.session_id
+                ORDER BY activity_log.created_at DESC, activity_log.rowid DESC
+                LIMIT 1
+            ) AS last_activity_action,
+            (
+                SELECT COUNT(*)
+                FROM activity_log
+                WHERE activity_log.project_id = sessions.project_id
+                  AND activity_log.task_id = sessions.task_id
+                  AND json_extract(activity_log.details_json, '$.session_id') = sessions.session_id
+            ) AS activity_count,
             tasks.title AS task_title,
             tasks.status AS task_status,
             tasks.review_state AS task_review_state,
@@ -1251,6 +1425,9 @@ def fetch_run_detail(connection, project_paths, project_id, session_id):
                 "goal_title": None,
                 "execution_mode": start_details.get("execution_mode"),
                 "external_runtime": start_details.get("external_runtime"),
+                "last_activity_at": row["last_activity_at"],
+                "last_activity_action": row["last_activity_action"],
+                "activity_count": row["activity_count"],
                 "artifact_count": len(artifacts["items"]),
                 "failure_count": 0,
             },

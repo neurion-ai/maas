@@ -821,11 +821,13 @@ export function ProjectsPage({
                               (item.latest_verification_status
                                 ? ` · latest verification ${formatLabel(item.latest_verification_status)}`
                                 : "")}
-                            {item.git_workspace_prepared
-                              ? ` · workspace ${item.git_workspace_branch ?? "prepared"}`
-                              : item.git_workspace_supported
-                                ? " · workspace not prepared"
-                                : ""}
+                            {item.task_kind === "repo_area_plan"
+                              ? item.git_workspace_prepared
+                                ? ` · workspace ${item.git_workspace_branch ?? "prepared"}`
+                                : item.git_workspace_supported
+                                  ? " · workspace not prepared"
+                                  : ""
+                              : ""}
                           </p>
                         </div>
                         <div className="list-row__meta">

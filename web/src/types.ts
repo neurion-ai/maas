@@ -743,6 +743,28 @@ export interface RepoFileResponse {
   truncated: boolean;
 }
 
+export interface BrownfieldRepoPlanItem {
+  synthesis_key: string;
+  task_kind: string;
+  title: string;
+  source_label: string;
+  paths: string[];
+  command?: string | null;
+  task_id?: string | null;
+  issue_key?: string | null;
+  status?: string | null;
+  review_state?: string | null;
+  linked_items?: Array<{
+    task_id: string;
+    issue_key?: string | null;
+    title?: string | null;
+    status?: string | null;
+    review_state?: string | null;
+    dependency_type?: "blocks" | "informs" | "conflicts" | null;
+    direction?: "incoming" | "outgoing";
+  }>;
+}
+
 export interface OverviewOnboarding {
   mode: string;
   review_status: string;
@@ -787,28 +809,14 @@ export interface OverviewOnboarding {
     verification_task_count: number;
     repo_area_task_count: number;
     sample_paths: string[];
-    items: Array<{
-      synthesis_key: string;
-      task_kind: string;
-      title: string;
-      source_label: string;
-      paths: string[];
-      command?: string | null;
-    }>;
+    items: BrownfieldRepoPlanItem[];
   } | null;
   repo_plan_state?: {
     generated_task_count: number;
     verification_task_count: number;
     repo_area_task_count: number;
     sample_paths: string[];
-    items: Array<{
-      synthesis_key: string;
-      task_kind: string;
-      title: string;
-      source_label: string;
-      paths: string[];
-      command?: string | null;
-    }>;
+    items: BrownfieldRepoPlanItem[];
     active_task_count: number;
     created_count: number;
     updated_count: number;
@@ -2119,6 +2127,8 @@ export interface CodexIssueDetailResponse {
     status: string;
     priority: number;
     review_state?: string | null;
+    synthesis_origin?: string | null;
+    synthesis_key?: string | null;
     progress_pct?: number | null;
     retry_count?: number | null;
     auto_retry_limit?: number | null;
@@ -2177,6 +2187,42 @@ export interface CodexIssueDetailResponse {
   };
   goal_explainability?: NonNullable<GoalPlanningItem["plan"]> & {
     task: NonNullable<GoalPlanningItem["plan"]>["tasks"][number];
+  } | null;
+  brownfield_grounding?: {
+    review_status: string;
+    scoped_paths: string[];
+    validation_commands: string[];
+    repo_plan: {
+      generated_task_count: number;
+      active_task_count: number;
+      stale: boolean;
+      last_refreshed_at?: string | null;
+      last_refreshed_by?: string | null;
+    };
+    repo_plan_items: BrownfieldRepoPlanItem[];
+    codebase_areas: Array<{
+      name: string;
+      path?: string;
+      kind: string;
+      primary_language: string;
+      file_count: number;
+      summary?: string;
+      sample_files?: string[];
+    }>;
+    workflow_signals: Array<{
+      label: string;
+      path?: string;
+      detail?: string;
+    }>;
+    runbook_signals: Array<{
+      label: string;
+      kind: string;
+      name?: string;
+      path?: string;
+      command?: string | null;
+      detail?: string;
+      review_note?: string;
+    }>;
   } | null;
   memory_context?: Array<{
     artifact_id: string;

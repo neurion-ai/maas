@@ -7,7 +7,12 @@ from maas.services.bootstrap import apply_onboarding_review_overrides, default_o
 from maas.services.escalations import fetch_escalations
 from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_repeated_failure_tasks, repeated_failure_task_count
 from maas.services.projects import resolve_project
-from maas.services.repo_plan import build_repo_plan_preview
+from maas.services.repo_plan import (
+    _issue_key_lookup,
+    _repo_plan_relationship_map,
+    _repo_plan_task_rows,
+    build_repo_plan_preview,
+)
 
 
 BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
@@ -48,7 +53,20 @@ def _derive_onboarding_state(connection, project_row):
     raw_summary = onboarding.get("discovery_summary") or {}
     review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(raw_summary)
     discovery_summary = apply_onboarding_review_overrides(raw_summary, review_overrides)
-    repo_plan_preview = build_repo_plan_preview(discovery_summary)
+    repo_plan_task_rows = _repo_plan_task_rows(connection, project_row["project_id"])
+    issue_keys = _issue_key_lookup(connection, project_row["project_id"])
+    repo_plan_relationships = _repo_plan_relationship_map(
+        connection,
+        project_row["project_id"],
+        repo_plan_task_rows,
+        issue_keys,
+    )
+    repo_plan_preview = build_repo_plan_preview(
+        discovery_summary,
+        task_rows=repo_plan_task_rows,
+        issue_keys=issue_keys,
+        relationship_map=repo_plan_relationships,
+    )
     repo_plan_state = onboarding.get("repo_plan") or None
 
     if mode != "brownfield":

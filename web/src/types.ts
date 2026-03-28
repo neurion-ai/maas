@@ -750,16 +750,28 @@ export interface BrownfieldRepoPlanItem {
   source_label: string;
   paths: string[];
   command?: string | null;
+  validation_commands?: string[];
   task_id?: string | null;
   issue_key?: string | null;
   status?: string | null;
   review_state?: string | null;
+  latest_verification_status?: string | null;
+  latest_verification_at?: string | null;
+  latest_verification_command?: string | null;
+  git_workspace_supported?: boolean;
+  git_workspace_prepared?: boolean;
+  git_workspace_branch?: string | null;
+  git_workspace_dirty_files?: number;
+  git_workspace_last_diff_at?: string | null;
+  supporting_verification_recipe_count?: number;
+  covered_repo_area_count?: number;
   linked_items?: Array<{
     task_id: string;
     issue_key?: string | null;
     title?: string | null;
     status?: string | null;
     review_state?: string | null;
+    task_kind?: string | null;
     dependency_type?: "blocks" | "informs" | "conflicts" | null;
     direction?: "incoming" | "outgoing";
   }>;

@@ -105,6 +105,7 @@ Relevant design and roadmap documents:
 - [Codex MVP Explainability, Review, and Memory Plan](docs/implementation/20-codex-mvp-explainability-review-memory-plan.md)
 - [Codex MVP Control-Loop Governance and Observability Plan](docs/implementation/21-codex-mvp-control-loop-governance-observability-plan.md)
 - [Codex MVP Brownfield Depth Pass](docs/implementation/22-codex-mvp-brownfield-depth-pass.md)
+- [Codex MVP Brownfield Execution Leverage](docs/implementation/23-codex-mvp-brownfield-execution-leverage.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

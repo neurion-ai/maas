@@ -6,13 +6,16 @@ import json
 from maas.services.bootstrap import apply_onboarding_review_overrides, default_onboarding_review_overrides
 from maas.services.escalations import fetch_escalations
 from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_repeated_failure_tasks, repeated_failure_task_count
+from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.projects import resolve_project
 from maas.services.repo_plan import (
     _issue_key_lookup,
+    _project_supports_git_workspaces,
     _repo_plan_relationship_map,
     _repo_plan_task_rows,
     build_repo_plan_preview,
 )
+from maas.services.verification import fetch_latest_verification_by_task
 
 
 BROWNFIELD_REVIEW_TASK_TITLE = "Review imported project understanding"
@@ -61,13 +64,30 @@ def _derive_onboarding_state(connection, project_row):
         repo_plan_task_rows,
         issue_keys,
     )
+    latest_verification_by_task = fetch_latest_verification_by_task(connection, project_row["project_id"])
+    git_workspaces_by_task = fetch_latest_git_workspace_by_task(connection, project_id=project_row["project_id"])
+    git_workspace_supported = _project_supports_git_workspaces(connection, project_row["project_id"])
     repo_plan_preview = build_repo_plan_preview(
         discovery_summary,
         task_rows=repo_plan_task_rows,
         issue_keys=issue_keys,
         relationship_map=repo_plan_relationships,
+        latest_verification_by_task=latest_verification_by_task,
+        git_workspaces_by_task=git_workspaces_by_task,
+        git_workspace_supported=git_workspace_supported,
     )
-    repo_plan_state = onboarding.get("repo_plan") or None
+    stored_repo_plan_state = onboarding.get("repo_plan") or None
+    repo_plan_state = None
+    if stored_repo_plan_state is not None:
+        repo_plan_state = {
+            **stored_repo_plan_state,
+            "generated_task_count": repo_plan_preview["generated_task_count"],
+            "verification_task_count": repo_plan_preview["verification_task_count"],
+            "repo_area_task_count": repo_plan_preview["repo_area_task_count"],
+            "sample_paths": repo_plan_preview["sample_paths"],
+            "items": repo_plan_preview["items"],
+            "active_task_count": len([row for row in repo_plan_task_rows if row.get("status") != "cancelled"]),
+        }
 
     if mode != "brownfield":
         return {

@@ -11,6 +11,7 @@ import {
   runSupervisorPass,
   updateProjectReviewPolicy
 } from "../lib/controlRoomApi";
+import { prepareTaskGitWorkspace, refreshTaskGitDiff, runTaskVerification } from "../lib/boardApi";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
@@ -306,6 +307,13 @@ export function ProjectsPage({
   const selectedProviderCapacity = selectedPortfolioProject?.provider_capacity ?? DEFAULT_PROVIDER_CAPACITY;
   const selectedReviewPolicy = selectedPortfolioProject?.review_policy ?? DEFAULT_REVIEW_POLICY;
   const otherActiveProjects = activeProjects.filter((project) => project.project_id !== selectedProject?.project_id);
+  const brownfieldExecutionItems = useMemo(
+    () =>
+      selectedOverview?.onboarding?.repo_plan_state?.items ??
+      selectedOverview?.onboarding?.repo_plan_preview?.items ??
+      [],
+    [selectedOverview?.onboarding?.repo_plan_preview?.items, selectedOverview?.onboarding?.repo_plan_state?.items]
+  );
   const portfolioById = useMemo(
     () => new Map((portfolio?.projects ?? []).map((project) => [project.project_id, project])),
     [portfolio?.projects]
@@ -393,6 +401,39 @@ export function ProjectsPage({
       );
     } catch {
       setNotice("Orchestrator pass failed; keeping the latest available portfolio state.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  function openTask(taskId: string, status?: string | null) {
+    setPendingTaskFocus(taskId);
+    if (onNavigate) {
+      onNavigate(status === "review" || status === "blocked" ? "issues" : "work");
+    }
+  }
+
+  async function refreshSelectedProjectOverview() {
+    if (!selectedProject) {
+      return;
+    }
+    setSelectedOverview(await fetchOverview(selectedProject.project_id));
+  }
+
+  async function handleBrownfieldExecutionAction(
+    actionKey: string,
+    action: () => Promise<unknown>,
+    successNotice: string,
+    failureNotice: string
+  ) {
+    setPendingActionKey(actionKey);
+    setNotice(null);
+    try {
+      await action();
+      await refreshSelectedProjectOverview();
+      setNotice(successNotice);
+    } catch {
+      setNotice(failureNotice);
     } finally {
       setPendingActionKey(null);
     }
@@ -732,6 +773,119 @@ export function ProjectsPage({
                     <span>Reviewed at</span>
                     <strong>{selectedOverview?.onboarding?.reviewed_at ?? "Waiting on review"}</strong>
                   </div>
+                </div>
+              ) : null}
+              {onboardingSummary.mode === "brownfield" && brownfieldExecutionItems.length ? (
+                <div className="list-stack">
+                  <div className="list-row">
+                    <div>
+                      <span className="eyebrow">Execution packs</span>
+                      <strong>Run verification recipes or prepare scoped area work directly from imported plan items.</strong>
+                      <p>
+                        Each synthesized brownfield item now carries its runnable commands, linked scope, verification
+                        posture, and workspace readiness.
+                      </p>
+                    </div>
+                  </div>
+                  {brownfieldExecutionItems.slice(0, 4).map((item) => {
+                    const canRunVerification = !!item.task_id && (item.validation_commands?.length ?? 0) > 0;
+                    const canPrepareWorkspace =
+                      !!item.task_id && item.task_kind === "repo_area_plan" && item.git_workspace_supported;
+                    const actionKeyBase = item.task_id ?? item.synthesis_key;
+                    return (
+                      <div key={item.synthesis_key} className="list-row">
+                        <div>
+                          <strong>
+                            {item.title}
+                            {item.issue_key ? ` · ${item.issue_key}` : ""}
+                          </strong>
+                          <p>
+                            {item.task_kind === "verification_recipe"
+                              ? `${item.validation_commands?.length ?? 0} verification command${
+                                  (item.validation_commands?.length ?? 0) === 1 ? "" : "s"
+                                }`
+                              : `${item.paths?.length ?? 0} scoped path${(item.paths?.length ?? 0) === 1 ? "" : "s"}`}
+                            {item.covered_repo_area_count
+                              ? ` · informs ${item.covered_repo_area_count} repo area${
+                                  item.covered_repo_area_count === 1 ? "" : "s"
+                                }`
+                              : ""}
+                            {item.supporting_verification_recipe_count
+                              ? ` · ${item.supporting_verification_recipe_count} linked verification recipe${
+                                  item.supporting_verification_recipe_count === 1 ? "" : "s"
+                                }`
+                              : ""}
+                          </p>
+                          <p>
+                            {(item.validation_commands?.join(" · ") || item.paths?.join(", ") || "No scoped execution context recorded.") +
+                              (item.latest_verification_status
+                                ? ` · latest verification ${formatLabel(item.latest_verification_status)}`
+                                : "")}
+                            {item.git_workspace_prepared
+                              ? ` · workspace ${item.git_workspace_branch ?? "prepared"}`
+                              : item.git_workspace_supported
+                                ? " · workspace not prepared"
+                                : ""}
+                          </p>
+                        </div>
+                        <div className="list-row__meta">
+                          <span>{item.status ? formatLabel(item.status) : "Preview only"}</span>
+                          {item.task_id ? (
+                            <button
+                              type="button"
+                              className="text-link"
+                              onClick={() => openTask(item.task_id!, item.status)}
+                            >
+                              Open task
+                            </button>
+                          ) : null}
+                          {canRunVerification ? (
+                            <button
+                              type="button"
+                              className="text-link"
+                              disabled={pendingActionKey === `brownfield-verify:${actionKeyBase}`}
+                              onClick={() =>
+                                void handleBrownfieldExecutionAction(
+                                  `brownfield-verify:${actionKeyBase}`,
+                                  () => runTaskVerification(item.task_id!),
+                                  `Ran verification for ${item.issue_key ?? item.title}.`,
+                                  `Verification failed for ${item.issue_key ?? item.title}.`
+                                )
+                              }
+                            >
+                              {pendingActionKey === `brownfield-verify:${actionKeyBase}` ? "Running..." : "Run verification"}
+                            </button>
+                          ) : null}
+                          {canPrepareWorkspace ? (
+                            <button
+                              type="button"
+                              className="text-link"
+                              disabled={pendingActionKey === `brownfield-workspace:${actionKeyBase}`}
+                              onClick={() =>
+                                void handleBrownfieldExecutionAction(
+                                  `brownfield-workspace:${actionKeyBase}`,
+                                  () =>
+                                    item.git_workspace_prepared
+                                      ? refreshTaskGitDiff(item.task_id!)
+                                      : prepareTaskGitWorkspace(item.task_id!),
+                                  item.git_workspace_prepared
+                                    ? `Refreshed git diff for ${item.issue_key ?? item.title}.`
+                                    : `Prepared git workspace for ${item.issue_key ?? item.title}.`,
+                                  `Workspace action failed for ${item.issue_key ?? item.title}.`
+                                )
+                              }
+                            >
+                              {pendingActionKey === `brownfield-workspace:${actionKeyBase}`
+                                ? "Working..."
+                                : item.git_workspace_prepared
+                                  ? "Refresh diff"
+                                  : "Prepare workspace"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
               <div className="list-stack">

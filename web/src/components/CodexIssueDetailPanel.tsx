@@ -4,6 +4,7 @@ import type { BoardTask, CodexIssueDetailResponse, CodexRunConsolePreview, Codex
 import type { ArtifactDetail } from "../types";
 import { formatTimestamp, nextActionLabel, priorityLabel, statusLabel } from "../lib/codexMvp";
 import { setPendingRunFocus } from "../lib/runFocus";
+import { setPendingTaskFocus } from "../lib/taskFocus";
 
 function formatExecutionModeLabel(value?: string | null) {
   if (!value) {
@@ -89,6 +90,10 @@ export function CodexIssueDetailPanel({
   detail,
   issueKeyMap,
   actions,
+  pendingActionKey,
+  onRunVerification,
+  onPrepareGitWorkspace,
+  onRefreshGitDiff,
   onSelectTask,
   onNavigate,
 }: {
@@ -96,6 +101,10 @@ export function CodexIssueDetailPanel({
   detail: CodexIssueDetailResponse | null;
   issueKeyMap: Map<string, string>;
   actions?: ReactNode;
+  pendingActionKey?: string | null;
+  onRunVerification?: () => void;
+  onPrepareGitWorkspace?: () => void;
+  onRefreshGitDiff?: () => void;
   onSelectTask?: (taskId: string) => void;
   onNavigate?: (view: "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command") => void;
 }) {
@@ -334,8 +343,29 @@ export function CodexIssueDetailPanel({
                   {item.status ? ` · ${statusLabel(item.status, item.review_state)}` : ""}
                 </strong>
                 <span>
-                  {[item.command, ...(item.paths ?? [])].filter(Boolean).join(" · ") || "No explicit repo grounding recorded."}
+                  {[...(item.validation_commands ?? []), ...(item.paths ?? [])].filter(Boolean).join(" · ") ||
+                    "No explicit repo grounding recorded."}
                 </span>
+                {item.task_kind === "verification_recipe" ? (
+                  <span>
+                    {item.latest_verification_status
+                      ? `Latest verification ${item.latest_verification_status.replaceAll("_", " ")}${item.latest_verification_at ? ` · ${ageLabel(item.latest_verification_at)}` : ""}`
+                      : "Verification has not been run from this detail view yet."}
+                    {item.covered_repo_area_count ? ` · informs ${item.covered_repo_area_count} repo area${item.covered_repo_area_count === 1 ? "" : "s"}` : ""}
+                  </span>
+                ) : null}
+                {item.task_kind === "repo_area_plan" ? (
+                  <span>
+                    {item.git_workspace_supported
+                      ? item.git_workspace_prepared
+                        ? `Workspace ${item.git_workspace_branch ?? "prepared"}${item.git_workspace_dirty_files ? ` · ${item.git_workspace_dirty_files} dirty files` : ""}`
+                        : "Workspace not prepared yet."
+                      : "Git workspace unavailable for this imported area."}
+                    {item.supporting_verification_recipe_count
+                      ? ` · ${item.supporting_verification_recipe_count} linked verification recipe${item.supporting_verification_recipe_count === 1 ? "" : "s"}`
+                      : ""}
+                  </span>
+                ) : null}
                 {(item.linked_items?.length ?? 0) > 0 ? (
                   <span>
                     {item.linked_items
@@ -347,6 +377,55 @@ export function CodexIssueDetailPanel({
                       .filter(Boolean)
                       .join(" · ")}
                   </span>
+                ) : null}
+                {item.task_id ? (
+                  <div className="codex-detail-actions">
+                    {item.task_id !== detail?.task.task_id ? (
+                      <button
+                        type="button"
+                        className="codex-button"
+                        onClick={() => {
+                          setPendingTaskFocus(item.task_id ?? null);
+                          onNavigate?.(item.status === "review" || item.status === "blocked" ? "issues" : "work");
+                        }}
+                      >
+                        Open task
+                      </button>
+                    ) : null}
+                    {item.task_id === detail?.task.task_id && (item.validation_commands?.length ?? 0) > 0 && onRunVerification ? (
+                      <button
+                        type="button"
+                        className="codex-button"
+                        disabled={pendingActionKey === `run-verification:${item.task_id}`}
+                        onClick={() => onRunVerification()}
+                      >
+                        {pendingActionKey === `run-verification:${item.task_id}` ? "Running..." : "Run verification"}
+                      </button>
+                    ) : null}
+                    {item.task_id === detail?.task.task_id &&
+                    item.task_kind === "repo_area_plan" &&
+                    item.git_workspace_supported &&
+                    ((item.git_workspace_prepared && onRefreshGitDiff) || (!item.git_workspace_prepared && onPrepareGitWorkspace)) ? (
+                      <button
+                        type="button"
+                        className="codex-button"
+                        disabled={pendingActionKey === `git-workspace:${item.task_id}`}
+                        onClick={() => {
+                          if (item.git_workspace_prepared) {
+                            onRefreshGitDiff?.();
+                            return;
+                          }
+                          onPrepareGitWorkspace?.();
+                        }}
+                      >
+                        {pendingActionKey === `git-workspace:${item.task_id}`
+                          ? "Working..."
+                          : item.git_workspace_prepared
+                            ? "Refresh diff"
+                            : "Prepare workspace"}
+                      </button>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             ))}

@@ -6,7 +6,16 @@ import { boardCounts, formatTimestamp, issueKeyMap, priorityLabel, statusLabel }
 import { filterCodexTasks, useCodexIssueScope, useCodexScopeOptions } from "../lib/codexIssueScopes";
 import { batchReviewIssues, fetchCodexIssueDetail, fetchCodexIssueIndex } from "../lib/controlRoomApi";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
-import { haltTask, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
+import {
+  haltTask,
+  markTaskForReplan,
+  prepareTaskGitWorkspace,
+  recoverAndRequeueTask,
+  recoverTask,
+  refreshTaskGitDiff,
+  reviewTask,
+  runTaskVerification,
+} from "../lib/boardApi";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -653,6 +662,37 @@ export function CodexIssuesPage({
           detail={detail}
           issueKeyMap={keyMap}
           actions={detailActions}
+          pendingActionKey={pendingKey}
+          onRunVerification={
+            selectedTask
+              ? () =>
+                  void runAction(
+                    `run-verification:${selectedTask.task_id}`,
+                    () => runTaskVerification(selectedTask.task_id),
+                    `Ran verification for ${issueLabel(selectedTask, keyMap)}.`
+                  )
+              : undefined
+          }
+          onPrepareGitWorkspace={
+            selectedTask
+              ? () =>
+                  void runAction(
+                    `git-workspace:${selectedTask.task_id}`,
+                    () => prepareTaskGitWorkspace(selectedTask.task_id),
+                    `Prepared a git workspace for ${issueLabel(selectedTask, keyMap)}.`
+                  )
+              : undefined
+          }
+          onRefreshGitDiff={
+            selectedTask
+              ? () =>
+                  void runAction(
+                    `git-workspace:${selectedTask.task_id}`,
+                    () => refreshTaskGitDiff(selectedTask.task_id),
+                    `Refreshed git diff evidence for ${issueLabel(selectedTask, keyMap)}.`
+                  )
+              : undefined
+          }
           onSelectTask={setSelectedTaskId}
           onNavigate={onNavigate}
         />

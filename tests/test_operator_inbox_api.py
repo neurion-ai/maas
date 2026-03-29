@@ -9,6 +9,7 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.notifications import queue_notification_event
+from testsupport import api_client
 
 
 class OperatorInboxApiTest(unittest.TestCase):
@@ -231,7 +232,7 @@ class OperatorInboxApiTest(unittest.TestCase):
             finally:
                 connection.close()
 
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 response = client.get("/api/operator-inbox", params={"project_id": project_id})
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -289,7 +290,7 @@ class OperatorInboxApiTest(unittest.TestCase):
             finally:
                 connection.close()
 
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 response = client.get("/api/operator-inbox", params={"project_id": project_id})
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -346,7 +347,7 @@ class OperatorInboxApiTest(unittest.TestCase):
             finally:
                 connection.close()
 
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 response = client.get("/api/operator-inbox", params={"project_id": project_id})
             self.assertEqual(response.status_code, 200)
             payload = response.json()

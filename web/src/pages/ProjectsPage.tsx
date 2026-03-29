@@ -12,6 +12,7 @@ import {
   updateProjectReviewPolicy
 } from "../lib/controlRoomApi";
 import { prepareTaskGitWorkspace, refreshTaskGitDiff, runTaskVerification } from "../lib/boardApi";
+import { brownfieldRepoPlanItems } from "../lib/brownfield";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
@@ -309,9 +310,7 @@ export function ProjectsPage({
   const otherActiveProjects = activeProjects.filter((project) => project.project_id !== selectedProject?.project_id);
   const brownfieldExecutionItems = useMemo(
     () =>
-      selectedOverview?.onboarding?.repo_plan_state?.items ??
-      selectedOverview?.onboarding?.repo_plan_preview?.items ??
-      [],
+      brownfieldRepoPlanItems(selectedOverview?.onboarding),
     [selectedOverview?.onboarding?.repo_plan_preview?.items, selectedOverview?.onboarding?.repo_plan_state?.items]
   );
   const portfolioById = useMemo(

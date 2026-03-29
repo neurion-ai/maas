@@ -11,6 +11,7 @@ import {
   updateBrownfieldOnboardingReview
 } from "../lib/controlRoomApi";
 import { reviewTask } from "../lib/boardApi";
+import { brownfieldRepoPlanTrust } from "../lib/brownfield";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { OverviewResponse, RepoFileResponse, RepoTreeResponse, SupervisorRunResponse } from "../types";
 import { StatCard } from "../components/StatCard";
@@ -30,7 +31,7 @@ export function OverviewPage() {
   const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
   const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
   const livePulse = useLivePulse();
-  const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
+  const brownfieldTrust = brownfieldRepoPlanTrust(overview?.onboarding);
 
   useEffect(() => {
     let mounted = true;

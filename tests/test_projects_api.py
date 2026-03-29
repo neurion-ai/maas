@@ -13,6 +13,7 @@ from maas.services.autopilot import _AUTOPILOT_THREADS
 from maas.services.bootstrap import bootstrap_project
 from maas.services.provider_runtime import queue_provider_task
 from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
+from testsupport import api_client
 
 
 class ProjectsApiTest(unittest.TestCase):
@@ -120,7 +121,7 @@ lint = "imported:lint"
     def test_update_autopilot_persists_and_status_endpoint_reflects_it(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Primary Project", description="primary", project_type="custom")
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
 
                 response = client.post(

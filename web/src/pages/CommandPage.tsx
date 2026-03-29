@@ -22,6 +22,7 @@ import {
   updateProjectProviderCapacity,
 } from "../lib/controlRoomApi";
 import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap } from "../lib/codexMvp";
+import { brownfieldRepoPlanTrust } from "../lib/brownfield";
 import { consumePendingNotificationFocus } from "../lib/notificationFocus";
 import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { setPendingRunFocus } from "../lib/runFocus";
@@ -182,7 +183,7 @@ export function CommandPage({
 
   const queue = useMemo(() => [...tasks].sort((left, right) => right.priority - left.priority).slice(0, 6), [tasks]);
   const launchPosture = useMemo(() => describeLaunchPosture(project), [project]);
-  const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
+  const brownfieldTrust = brownfieldRepoPlanTrust(overview?.onboarding);
   const workflowActions = useMemo(() => {
     const seen = new Set<string>();
     const actions = [...(operatorWorkflow?.autopilot.operatorActions ?? []), ...(operatorWorkflow?.inbox.operatorActions ?? [])];

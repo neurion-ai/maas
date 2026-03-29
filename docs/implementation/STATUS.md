@@ -22,6 +22,7 @@ The operator-facing nouns should be kept tight:
 The intended primary surfaces are:
 
 - `Command`
+- `Theater`
 - `Work`
 - `Issues`
 - `Agents`
@@ -66,6 +67,7 @@ See:
 - [22-codex-mvp-brownfield-depth-pass.md](22-codex-mvp-brownfield-depth-pass.md)
 - [23-codex-mvp-brownfield-execution-leverage.md](23-codex-mvp-brownfield-execution-leverage.md)
 - [24-codex-mvp-brownfield-drift-refresh-trust.md](24-codex-mvp-brownfield-drift-refresh-trust.md)
+- [26-execution-theater-foundation.md](26-execution-theater-foundation.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

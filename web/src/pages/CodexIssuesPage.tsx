@@ -6,7 +6,16 @@ import { boardCounts, formatTimestamp, issueKeyMap, priorityLabel, statusLabel }
 import { filterCodexTasks, useCodexIssueScope, useCodexScopeOptions } from "../lib/codexIssueScopes";
 import { batchReviewIssues, fetchCodexIssueDetail, fetchCodexIssueIndex } from "../lib/controlRoomApi";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
-import { haltTask, markTaskForReplan, recoverAndRequeueTask, recoverTask, reviewTask } from "../lib/boardApi";
+import {
+  haltTask,
+  markTaskForReplan,
+  prepareTaskGitWorkspace,
+  recoverAndRequeueTask,
+  recoverTask,
+  refreshTaskGitDiff,
+  reviewTask,
+  runTaskVerification,
+} from "../lib/boardApi";
 import { getSelectedProjectId } from "../lib/projectScope";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -653,6 +662,37 @@ export function CodexIssuesPage({
           detail={detail}
           issueKeyMap={keyMap}
           actions={detailActions}
+          pendingActionKey={pendingKey}
+          onRunVerification={
+            selectedTask
+              ? (taskId) =>
+                  void runAction(
+                    `run-verification:${taskId}`,
+                    () => runTaskVerification(taskId),
+                    `Ran verification for ${keyMap.get(taskId) ?? taskId}.`
+                  )
+              : undefined
+          }
+          onPrepareGitWorkspace={
+            selectedTask
+              ? (taskId) =>
+                  void runAction(
+                    `git-workspace:${taskId}`,
+                    () => prepareTaskGitWorkspace(taskId),
+                    `Prepared a git workspace for ${keyMap.get(taskId) ?? taskId}.`
+                  )
+              : undefined
+          }
+          onRefreshGitDiff={
+            selectedTask
+              ? (taskId) =>
+                  void runAction(
+                    `git-workspace:${taskId}`,
+                    () => refreshTaskGitDiff(taskId),
+                    `Refreshed git diff evidence for ${keyMap.get(taskId) ?? taskId}.`
+                  )
+              : undefined
+          }
           onSelectTask={setSelectedTaskId}
           onNavigate={onNavigate}
         />

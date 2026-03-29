@@ -1,9 +1,12 @@
 """Repo-grounded brownfield plan synthesis and refresh."""
 
 import json
+import os
+import subprocess
 
 from maas.ids import generate_id
 from maas.services.bootstrap import apply_onboarding_review_overrides, default_onboarding_review_overrides
+from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.scheduler import refresh_ready_tasks
 from maas.services.security import ensure_board_action_allowed
@@ -69,6 +72,36 @@ def _validation_commands_from_acceptance(raw_value):
         seen.add(command)
         commands.append(command)
     return commands
+
+
+def _task_kind_from_synthesis_key(synthesis_key):
+    if (synthesis_key or "").startswith("runbook:"):
+        return "verification_recipe"
+    if (synthesis_key or "").startswith("area:"):
+        return "repo_area_plan"
+    return "repo_plan_step"
+
+
+def _project_supports_git_workspaces(connection, project_id):
+    project_row = connection.execute(
+        """
+        SELECT source_root
+        FROM projects
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()
+    source_root = os.path.abspath((project_row["source_root"] if project_row else "") or "")
+    if not source_root or not os.path.isdir(source_root):
+        return False
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=source_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    return result.returncode == 0
 
 
 def _issue_key_lookup(connection, project_id):
@@ -233,6 +266,7 @@ def _repo_plan_relationship_map(connection, project_id, task_rows, issue_keys):
                     "title": target_row.get("title") if target_row else None,
                     "status": target_row.get("status") if target_row else None,
                     "review_state": target_row.get("review_state") if target_row else None,
+                    "task_kind": _task_kind_from_synthesis_key(target_row.get("synthesis_key")) if target_row else None,
                     "dependency_type": dependency_type,
                     "direction": "outgoing",
                 }
@@ -245,6 +279,7 @@ def _repo_plan_relationship_map(connection, project_id, task_rows, issue_keys):
                     "title": source_row.get("title") if source_row else None,
                     "status": source_row.get("status") if source_row else None,
                     "review_state": source_row.get("review_state") if source_row else None,
+                    "task_kind": _task_kind_from_synthesis_key(source_row.get("synthesis_key")) if source_row else None,
                     "dependency_type": dependency_type,
                     "direction": "incoming",
                 }
@@ -252,7 +287,15 @@ def _repo_plan_relationship_map(connection, project_id, task_rows, issue_keys):
     return relationships
 
 
-def build_repo_plan_item_lookup(discovery_summary, task_rows=None, issue_keys=None, relationship_map=None):
+def build_repo_plan_item_lookup(
+    discovery_summary,
+    task_rows=None,
+    issue_keys=None,
+    relationship_map=None,
+    latest_verification_by_task=None,
+    git_workspaces_by_task=None,
+    git_workspace_supported=False,
+):
     specs = _build_repo_plan_specs(discovery_summary)
     existing_by_key = {
         row["synthesis_key"]: dict(row)
@@ -261,10 +304,39 @@ def build_repo_plan_item_lookup(discovery_summary, task_rows=None, issue_keys=No
     }
     relationship_map = relationship_map or {}
     issue_keys = issue_keys or {}
+    latest_verification_by_task = latest_verification_by_task or {}
+    git_workspaces_by_task = git_workspaces_by_task or {}
     items = {}
     for spec in specs:
         existing = existing_by_key.get(spec["synthesis_key"])
         task_id = existing.get("task_id") if existing else None
+        all_linked_items = relationship_map.get(task_id, []) if task_id else []
+        linked_items = all_linked_items[:4]
+        validation_commands = (
+            _validation_commands_from_acceptance(existing.get("acceptance_criteria_json"))
+            if existing
+            else ([spec["command"]] if spec.get("command") else [])
+        )
+        latest_verification = latest_verification_by_task.get(task_id) or {}
+        git_workspace = git_workspaces_by_task.get(task_id) or {}
+        supporting_verification_recipe_count = len(
+            [
+                item
+                for item in all_linked_items
+                if item.get("direction") == "incoming"
+                and item.get("dependency_type") == "informs"
+                and item.get("task_kind") == "verification_recipe"
+            ]
+        )
+        covered_repo_area_count = len(
+            [
+                item
+                for item in all_linked_items
+                if item.get("direction") == "outgoing"
+                and item.get("dependency_type") == "informs"
+                and item.get("task_kind") == "repo_area_plan"
+            ]
+        )
         items[spec["synthesis_key"]] = {
             "synthesis_key": spec["synthesis_key"],
             "task_kind": spec["task_kind"],
@@ -272,22 +344,44 @@ def build_repo_plan_item_lookup(discovery_summary, task_rows=None, issue_keys=No
             "source_label": spec["source_label"],
             "paths": spec.get("paths", [])[:3],
             "command": spec.get("command"),
+            "validation_commands": validation_commands,
             "task_id": task_id,
             "issue_key": issue_keys.get(task_id) if task_id else None,
             "status": existing.get("status") if existing else None,
             "review_state": existing.get("review_state") if existing else None,
-            "linked_items": relationship_map.get(task_id, [])[:4] if task_id else [],
+            "linked_items": linked_items,
+            "latest_verification_status": latest_verification.get("status"),
+            "latest_verification_at": latest_verification.get("finished_at"),
+            "latest_verification_command": latest_verification.get("command"),
+            "git_workspace_supported": bool(git_workspace_supported and task_id and spec["task_kind"] == "repo_area_plan"),
+            "git_workspace_prepared": bool(git_workspace),
+            "git_workspace_branch": git_workspace.get("branch_name"),
+            "git_workspace_dirty_files": git_workspace.get("dirty_file_count", 0),
+            "git_workspace_last_diff_at": git_workspace.get("updated_at"),
+            "supporting_verification_recipe_count": supporting_verification_recipe_count,
+            "covered_repo_area_count": covered_repo_area_count,
         }
     return items
 
 
-def build_repo_plan_preview(discovery_summary, task_rows=None, issue_keys=None, relationship_map=None):
+def build_repo_plan_preview(
+    discovery_summary,
+    task_rows=None,
+    issue_keys=None,
+    relationship_map=None,
+    latest_verification_by_task=None,
+    git_workspaces_by_task=None,
+    git_workspace_supported=False,
+):
     items = list(
         build_repo_plan_item_lookup(
             discovery_summary,
             task_rows=task_rows,
             issue_keys=issue_keys,
             relationship_map=relationship_map,
+            latest_verification_by_task=latest_verification_by_task,
+            git_workspaces_by_task=git_workspaces_by_task,
+            git_workspace_supported=git_workspace_supported,
         ).values()
     )
     return {
@@ -521,14 +615,22 @@ def refresh_repo_grounded_plan(connection, project_id, actor_id, commit=True, en
     _upsert_repo_plan_dependencies(connection, resolved_project_id, synthesized_task_ids, desired_specs)
     refresh_ready_tasks(connection, commit=False, project_id=resolved_project_id)
 
+    from maas.services.verification import fetch_latest_verification_by_task
+
     current_repo_plan_tasks = _repo_plan_task_rows(connection, resolved_project_id)
     issue_keys = _issue_key_lookup(connection, resolved_project_id)
     relationship_map = _repo_plan_relationship_map(connection, resolved_project_id, current_repo_plan_tasks, issue_keys)
+    latest_verification_by_task = fetch_latest_verification_by_task(connection, resolved_project_id)
+    git_workspaces_by_task = fetch_latest_git_workspace_by_task(connection, project_id=resolved_project_id)
+    git_workspace_supported = _project_supports_git_workspaces(connection, resolved_project_id)
     preview = build_repo_plan_preview(
         filtered_summary,
         task_rows=current_repo_plan_tasks,
         issue_keys=issue_keys,
         relationship_map=relationship_map,
+        latest_verification_by_task=latest_verification_by_task,
+        git_workspaces_by_task=git_workspaces_by_task,
+        git_workspace_supported=git_workspace_supported,
     )
 
     refreshed_at = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]
@@ -612,14 +714,22 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
         return None
 
     filtered_summary = _filtered_discovery_summary(config)
+    from maas.services.verification import fetch_latest_verification_by_task
+
     repo_task_rows = _repo_plan_task_rows(connection, project_id)
     issue_keys = issue_keys or _issue_key_lookup(connection, project_id)
     relationship_map = _repo_plan_relationship_map(connection, project_id, repo_task_rows, issue_keys)
+    latest_verification_by_task = fetch_latest_verification_by_task(connection, project_id)
+    git_workspaces_by_task = fetch_latest_git_workspace_by_task(connection, project_id=project_id)
+    git_workspace_supported = _project_supports_git_workspaces(connection, project_id)
     repo_plan_items = build_repo_plan_item_lookup(
         filtered_summary,
         task_rows=repo_task_rows,
         issue_keys=issue_keys,
         relationship_map=relationship_map,
+        latest_verification_by_task=latest_verification_by_task,
+        git_workspaces_by_task=git_workspaces_by_task,
+        git_workspace_supported=git_workspace_supported,
     )
     scoped_paths = _normalize_paths(
         [
@@ -635,6 +745,9 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
         task_rows=repo_task_rows,
         issue_keys=issue_keys,
         relationship_map=relationship_map,
+        latest_verification_by_task=latest_verification_by_task,
+        git_workspaces_by_task=git_workspaces_by_task,
+        git_workspace_supported=git_workspace_supported,
     )
     current_active_count = len([row for row in repo_task_rows if row.get("status") != "cancelled"])
     review_task = connection.execute(
@@ -664,11 +777,11 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
     if task_row.get("synthesis_origin") == REPO_PLAN_SYNTHESIS_ORIGIN:
         exact_item = repo_plan_items.get(synthesis_key)
         if exact_item is None:
-            inferred_kind = "repo_plan_step"
-            if (synthesis_key or "").startswith("runbook:"):
-                inferred_kind = "verification_recipe"
-            elif (synthesis_key or "").startswith("area:"):
-                inferred_kind = "repo_area_plan"
+            task_workspace = git_workspaces_by_task.get(task_row.get("task_id")) or {}
+            latest_verification = latest_verification_by_task.get(task_row.get("task_id")) or {}
+            inferred_kind = _task_kind_from_synthesis_key(synthesis_key)
+            all_linked_items = relationship_map.get(task_row.get("task_id"), [])
+            linked_items = all_linked_items[:4]
             exact_item = {
                 "synthesis_key": synthesis_key,
                 "task_kind": inferred_kind,
@@ -676,11 +789,40 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
                 "source_label": (synthesis_key or task_row.get("title") or "").split(":", 1)[-1],
                 "paths": scoped_paths[:3],
                 "command": validation_commands[0] if validation_commands else None,
+                "validation_commands": validation_commands,
                 "task_id": task_row.get("task_id"),
                 "issue_key": issue_keys.get(task_row.get("task_id")),
                 "status": task_row.get("status"),
                 "review_state": task_row.get("review_state"),
-                "linked_items": relationship_map.get(task_row.get("task_id"), [])[:4],
+                "linked_items": linked_items,
+                "latest_verification_status": latest_verification.get("status"),
+                "latest_verification_at": latest_verification.get("finished_at"),
+                "latest_verification_command": latest_verification.get("command"),
+                "git_workspace_supported": bool(
+                    git_workspace_supported and task_row.get("task_id") and inferred_kind == "repo_area_plan"
+                ),
+                "git_workspace_prepared": bool(task_workspace),
+                "git_workspace_branch": task_workspace.get("branch_name"),
+                "git_workspace_dirty_files": task_workspace.get("dirty_file_count", 0),
+                "git_workspace_last_diff_at": task_workspace.get("updated_at"),
+                "supporting_verification_recipe_count": len(
+                    [
+                        item
+                        for item in all_linked_items
+                        if item.get("direction") == "incoming"
+                        and item.get("dependency_type") == "informs"
+                        and item.get("task_kind") == "verification_recipe"
+                    ]
+                ),
+                "covered_repo_area_count": len(
+                    [
+                        item
+                        for item in all_linked_items
+                        if item.get("direction") == "outgoing"
+                        and item.get("dependency_type") == "informs"
+                        and item.get("task_kind") == "repo_area_plan"
+                    ]
+                ),
             }
         matched_repo_items.append(exact_item)
         seen_synthesis_keys.add(exact_item["synthesis_key"])

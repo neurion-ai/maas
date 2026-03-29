@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 
@@ -10,7 +11,17 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.escalations import request_escalation
+from maas.services.git_workspaces import prepare_task_git_workspace
 from maas.services.lifecycle import end_session, produce_artifact, start_session
+from maas.services.verification import run_task_verification
+
+
+def _init_git_repo(root):
+    subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "MAAS Tests"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 class DashboardApiTest(unittest.TestCase):
@@ -176,6 +187,129 @@ lint = "example:main"
             self.assertTrue(verification_item["task_id"])
             self.assertTrue(verification_item["issue_key"])
             self.assertGreaterEqual(len(verification_item["linked_items"]), 1)
+
+    def test_overview_repo_plan_items_expose_execution_leverage(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            _init_git_repo(tmpdir)
+
+            bootstrap_project(tmpdir, name="Brownfield Execution Leverage Test", description="dashboard execution leverage", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                verification_task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE synthesis_origin = 'repo_grounded_plan'
+                      AND synthesis_key LIKE 'runbook:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                repo_area_task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE synthesis_origin = 'repo_grounded_plan'
+                      AND synthesis_key LIKE 'area:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = '[{"type":"test_passes","command":"python -c \\"print(123)\\"","timeout_seconds":30}]'
+                    WHERE task_id = ?
+                    """,
+                    (verification_task["task_id"],),
+                )
+                connection.commit()
+
+                run_task_verification(connection, paths, verification_task["task_id"], "agent_allocator")
+                prepare_task_git_workspace(connection, paths, repo_area_task["task_id"], "agent_allocator")
+            finally:
+                connection.close()
+
+            overview_payload = client.get("/api/overview").json()
+            repo_plan_items = overview_payload["onboarding"]["repo_plan_state"]["items"]
+            verification_item = next(item for item in repo_plan_items if item["task_kind"] == "verification_recipe")
+            repo_area_item = next(item for item in repo_plan_items if item["task_kind"] == "repo_area_plan")
+
+            self.assertTrue(verification_item["validation_commands"])
+            self.assertEqual(verification_item["latest_verification_status"], "passed")
+            self.assertEqual(verification_item["latest_verification_command"], "python -c \"print(123)\"")
+            self.assertGreaterEqual(verification_item["covered_repo_area_count"], 1)
+            self.assertTrue(repo_area_item["git_workspace_supported"])
+            self.assertTrue(repo_area_item["git_workspace_prepared"])
+            self.assertTrue(repo_area_item["git_workspace_branch"].startswith("maas/"))
+            self.assertGreaterEqual(repo_area_item["supporting_verification_recipe_count"], 1)
+
+    def test_overview_marks_repo_area_workspace_supported_from_git_parent_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = os.path.join(tmpdir, "repo")
+            source_root = os.path.join(repo_root, "apps", "service")
+            os.makedirs(os.path.join(source_root, "src"), exist_ok=True)
+            with open(os.path.join(source_root, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(source_root, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(source_root, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            _init_git_repo(repo_root)
+
+            bootstrap_project(
+                source_root,
+                name="Brownfield Nested Git Support Test",
+                description="dashboard nested git support",
+                project_type="custom",
+            )
+            client = TestClient(create_app(source_root))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            overview_payload = client.get("/api/overview").json()
+            repo_area_item = next(
+                item
+                for item in overview_payload["onboarding"]["repo_plan_state"]["items"]
+                if item["task_kind"] == "repo_area_plan"
+            )
+            self.assertTrue(repo_area_item["git_workspace_supported"])
 
     def test_overview_filters_brownfield_summary_using_review_overrides(self):
         with tempfile.TemporaryDirectory() as tmpdir:

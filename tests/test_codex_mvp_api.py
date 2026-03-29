@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -12,9 +13,19 @@ from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.delivery import _git_repo_snapshot, fetch_delivery_overview, fetch_task_delivery_status
 from maas.services.environment_doctor import _git_status, fetch_environment_doctor
+from maas.services.git_workspaces import prepare_task_git_workspace
 from maas.services.codex_mvp import fetch_issue_detail, fetch_system_diagnostics
 from maas.services.goal_planning import create_goal, fetch_goal_planning, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
+from maas.services.verification import run_task_verification
+
+
+def _init_git_repo(root):
+    subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "MAAS Tests"], cwd=root, check=True)
+    subprocess.run(["git", "add", "."], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 class CodexMvpApiTest(unittest.TestCase):
     def _create_brownfield_repo(self, root):
@@ -2825,6 +2836,73 @@ lint = "imported:lint"
             self.assertEqual(grounding["repo_plan_items"][0]["task_id"], repo_task["task_id"])
             self.assertTrue(grounding["repo_plan_items"][0]["issue_key"])
             self.assertGreaterEqual(len(grounding["repo_plan_items"][0]["linked_items"]), 1)
+
+    def test_issue_detail_exposes_brownfield_execution_pack_state(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._create_brownfield_repo(tmpdir)
+            _init_git_repo(tmpdir)
+            bootstrap_project(tmpdir, name="Brownfield Execution Pack Detail Test", description="brownfield execution pack detail", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                verification_task = connection.execute(
+                    """
+                    SELECT project_id, task_id
+                    FROM tasks
+                    WHERE synthesis_origin = 'repo_grounded_plan'
+                      AND synthesis_key LIKE 'runbook:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                repo_area_task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                      AND synthesis_origin = 'repo_grounded_plan'
+                      AND synthesis_key LIKE 'area:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (verification_task["project_id"],),
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET acceptance_criteria_json = '[{"type":"test_passes","command":"python -c \\"print(123)\\"","timeout_seconds":30}]'
+                    WHERE task_id = ?
+                    """,
+                    (verification_task["task_id"],),
+                )
+                connection.commit()
+
+                run_task_verification(connection, paths, verification_task["task_id"], "agent_allocator")
+                prepare_task_git_workspace(connection, paths, repo_area_task["task_id"], "agent_allocator")
+                verification_detail = fetch_issue_detail(connection, paths, verification_task["project_id"], verification_task["task_id"])
+                area_detail = fetch_issue_detail(connection, paths, verification_task["project_id"], repo_area_task["task_id"])
+            finally:
+                connection.close()
+
+            verification_item = verification_detail["brownfield_grounding"]["repo_plan_items"][0]
+            self.assertTrue(verification_item["validation_commands"])
+            self.assertEqual(verification_item["latest_verification_status"], "passed")
+            self.assertEqual(verification_item["latest_verification_command"], "python -c \"print(123)\"")
+            self.assertGreaterEqual(verification_item["covered_repo_area_count"], 1)
+
+            area_item = area_detail["brownfield_grounding"]["repo_plan_items"][0]
+            self.assertTrue(area_item["git_workspace_supported"])
+            self.assertTrue(area_item["git_workspace_prepared"])
+            self.assertTrue(area_item["git_workspace_branch"].startswith("maas/"))
+            self.assertGreaterEqual(area_item["supporting_verification_recipe_count"], 1)
 
     def test_brownfield_grounding_counts_non_current_repo_plan_tasks(self):
         with tempfile.TemporaryDirectory() as tmpdir:

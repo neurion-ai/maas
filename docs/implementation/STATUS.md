@@ -45,7 +45,7 @@ Rules:
 - do not create competing active roadmap, status, queue, or runbook files
 - keep roadmap identifiers in GitHub issue titles when work maps to numbered items, for example `Roadmap #226: Goal-to-issue explainability and critical path view`
 
-`main` now includes the shipped post-`#224` slices through `#233`. The final remaining post-`#224` issue is `#234` / brownfield depth pass, which continues to live in GitHub issues and the project board instead of new active-plan docs.
+`main` now includes the shipped post-`#224` slices through `#234`. Follow-on batch planning now lives in GitHub issues and the project board instead of new active-plan docs.
 
 See:
 
@@ -64,6 +64,7 @@ See:
 - [20-codex-mvp-explainability-review-memory-plan.md](20-codex-mvp-explainability-review-memory-plan.md)
 - [21-codex-mvp-control-loop-governance-observability-plan.md](21-codex-mvp-control-loop-governance-observability-plan.md)
 - [22-codex-mvp-brownfield-depth-pass.md](22-codex-mvp-brownfield-depth-pass.md)
+- [23-codex-mvp-brownfield-execution-leverage.md](23-codex-mvp-brownfield-execution-leverage.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

@@ -38,6 +38,34 @@ def _normalize_paths(paths):
     return normalized
 
 
+def _resolve_brownfield_review_status(connection, project_id, onboarding, review_task=None):
+    onboarding = onboarding or {}
+    review_status = onboarding.get("review_status")
+    if review_status == "reviewed":
+        return "approved"
+    if review_status:
+        return review_status
+    task_row = review_task
+    if task_row is None:
+        task_row = connection.execute(
+            """
+            SELECT task_id, status, review_state
+            FROM tasks
+            WHERE project_id = ? AND title = ?
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (project_id, BROWNFIELD_REVIEW_TASK_TITLE),
+        ).fetchone()
+    if task_row is None:
+        return "review_pending"
+    if task_row["status"] == "done" or task_row["review_state"] == "approved":
+        return "approved"
+    if task_row["review_state"] == "changes_requested":
+        return "changes_requested"
+    return "review_pending"
+
+
 def _paths_overlap(left_paths, right_paths):
     left = _normalize_paths(left_paths)
     right = _normalize_paths(right_paths)
@@ -365,14 +393,16 @@ def build_repo_plan_lineage(connection, project_id, current_items_by_key, task_r
     }
 
 
-def build_repo_plan_trust(onboarding, lineage):
+def build_repo_plan_trust(onboarding, lineage, review_status=None):
     onboarding = onboarding or {}
     repo_plan_state = onboarding.get("repo_plan") or {}
     drift = onboarding.get("drift_summary") or {}
     drift_detected = bool(drift.get("detected"))
     drift_severity = drift.get("severity") or ("none" if not drift_detected else "medium")
     stale = bool(repo_plan_state.get("stale"))
-    review_status = onboarding.get("review_status") or "review_pending"
+    review_status = review_status or onboarding.get("review_status") or "review_pending"
+    if review_status == "reviewed":
+        review_status = "approved"
     stale_reason = repo_plan_state.get("stale_reason")
     last_refreshed_at = repo_plan_state.get("last_refreshed_at")
     superseded_count = (lineage or {}).get("superseded_task_count", 0)
@@ -948,7 +978,6 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
         git_workspace_supported=git_workspace_supported,
     )
     lineage = build_repo_plan_lineage(connection, project_id, repo_plan_items, task_rows=repo_task_rows, issue_keys=issue_keys)
-    trust = build_repo_plan_trust(onboarding, lineage)
     scoped_paths = _normalize_paths(
         [
             path
@@ -978,16 +1007,8 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
         """,
         (project_id, BROWNFIELD_REVIEW_TASK_TITLE),
     ).fetchone()
-    review_status = onboarding.get("review_status")
-    if not review_status:
-        if review_task is None:
-            review_status = "review_pending"
-        elif review_task["status"] == "done" or review_task["review_state"] == "approved":
-            review_status = "approved"
-        elif review_task["review_state"] == "changes_requested":
-            review_status = "changes_requested"
-        else:
-            review_status = "review_pending"
+    review_status = _resolve_brownfield_review_status(connection, project_id, onboarding, review_task=review_task)
+    trust = build_repo_plan_trust(onboarding, lineage, review_status=review_status)
 
     matched_repo_items = []
     synthesis_key = task_row.get("synthesis_key")

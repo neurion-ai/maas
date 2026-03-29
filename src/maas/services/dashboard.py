@@ -11,6 +11,7 @@ from maas.services.projects import resolve_project
 from maas.services.repo_plan import (
     build_repo_plan_lineage,
     build_repo_plan_item_lookup,
+    _resolve_brownfield_review_status,
     _issue_key_lookup,
     _project_supports_git_workspaces,
     _repo_plan_relationship_map,
@@ -59,6 +60,36 @@ def _derive_onboarding_state(connection, project_row):
     raw_summary = onboarding.get("discovery_summary") or {}
     review_overrides = onboarding.get("review_overrides") or default_onboarding_review_overrides(raw_summary)
     discovery_summary = apply_onboarding_review_overrides(raw_summary, review_overrides)
+    review_task = None
+    pending_gated_tasks = 0
+    review_status = onboarding.get("review_status") or ("not_applicable" if mode != "brownfield" else "review_pending")
+    if mode == "brownfield":
+        review_task = connection.execute(
+            """
+            SELECT task_id, status, review_state
+            FROM tasks
+            WHERE project_id = ? AND title = ?
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (project_row["project_id"], BROWNFIELD_REVIEW_TASK_TITLE),
+        ).fetchone()
+        pending_gated_tasks = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM tasks
+            WHERE project_id = ?
+              AND status = 'blocked'
+              AND review_state = ?
+            """,
+            (project_row["project_id"], BROWNFIELD_PENDING_REVIEW_STATE),
+        ).fetchone()["count"]
+        review_status = _resolve_brownfield_review_status(
+            connection,
+            project_row["project_id"],
+            onboarding,
+            review_task=review_task,
+        )
     repo_plan_task_rows = _repo_plan_task_rows(connection, project_row["project_id"])
     issue_keys = _issue_key_lookup(connection, project_row["project_id"])
     repo_plan_relationships = _repo_plan_relationship_map(
@@ -95,7 +126,7 @@ def _derive_onboarding_state(connection, project_row):
         task_rows=repo_plan_task_rows,
         issue_keys=issue_keys,
     )
-    repo_plan_trust = build_repo_plan_trust(onboarding, repo_plan_lineage)
+    repo_plan_trust = build_repo_plan_trust(onboarding, repo_plan_lineage, review_status=review_status)
     stored_repo_plan_state = onboarding.get("repo_plan") or None
     repo_plan_state = None
     if stored_repo_plan_state is not None:
@@ -114,7 +145,7 @@ def _derive_onboarding_state(connection, project_row):
     if mode != "brownfield":
         return {
             "mode": mode,
-            "review_status": onboarding.get("review_status") or "not_applicable",
+            "review_status": review_status,
             "review_required": False,
             "discovery_summary": discovery_summary,
             "review_overrides": review_overrides,
@@ -124,45 +155,13 @@ def _derive_onboarding_state(connection, project_row):
             "review_task_id": None,
             "review_task_status": None,
             "review_task_review_state": None,
-            "pending_gated_tasks": 0,
+            "pending_gated_tasks": pending_gated_tasks,
             "last_scanned_at": onboarding.get("last_scanned_at"),
             "last_scanned_by": onboarding.get("last_scanned_by"),
             "drift_summary": onboarding.get("drift_summary"),
             "reviewed_by": onboarding.get("reviewed_by"),
             "reviewed_at": onboarding.get("reviewed_at"),
         }
-
-    review_task = connection.execute(
-        """
-        SELECT task_id, status, review_state
-        FROM tasks
-        WHERE project_id = ? AND title = ?
-        ORDER BY created_at ASC
-        LIMIT 1
-        """,
-        (project_row["project_id"], BROWNFIELD_REVIEW_TASK_TITLE),
-    ).fetchone()
-    pending_gated_tasks = connection.execute(
-        """
-        SELECT COUNT(*) AS count
-        FROM tasks
-        WHERE project_id = ?
-          AND status = 'blocked'
-          AND review_state = ?
-        """,
-        (project_row["project_id"], BROWNFIELD_PENDING_REVIEW_STATE),
-    ).fetchone()["count"]
-
-    review_status = onboarding.get("review_status")
-    if not review_status:
-        if review_task is None:
-            review_status = "review_pending"
-        elif review_task["status"] == "done" or review_task["review_state"] == "approved":
-            review_status = "approved"
-        elif review_task["review_state"] == "changes_requested":
-            review_status = "changes_requested"
-        else:
-            review_status = "review_pending"
 
     return {
         "mode": "brownfield",

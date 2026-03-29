@@ -188,6 +188,51 @@ lint = "example:main"
             self.assertTrue(verification_item["issue_key"])
             self.assertGreaterEqual(len(verification_item["linked_items"]), 1)
 
+    def test_overview_repo_plan_trust_uses_normalized_review_status_when_config_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+
+            bootstrap_project(tmpdir, name="Brownfield Normalized Trust Test", description="dashboard brownfield normalized trust", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["onboarding"].pop("review_status", None)
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            overview_payload = client.get("/api/overview").json()
+            self.assertEqual(overview_payload["onboarding"]["review_status"], "approved")
+            self.assertTrue(overview_payload["onboarding"]["repo_plan_state"]["trust"]["safe_to_execute"])
+            self.assertEqual(overview_payload["onboarding"]["repo_plan_state"]["trust"]["state"], "fresh")
+
     def test_overview_repo_plan_items_expose_execution_leverage(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
@@ -267,6 +312,66 @@ lint = "example:main"
             self.assertTrue(repo_area_item["git_workspace_prepared"])
             self.assertTrue(repo_area_item["git_workspace_branch"].startswith("maas/"))
             self.assertGreaterEqual(repo_area_item["supporting_verification_recipe_count"], 1)
+
+    def test_overview_exposes_repo_plan_trust_and_lineage_after_refresh(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)
+            os.makedirs(os.path.join(tmpdir, "tests"), exist_ok=True)
+            with open(os.path.join(tmpdir, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(tmpdir, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(tmpdir, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            with open(os.path.join(tmpdir, "tests", "test_app.py"), "w", encoding="utf-8") as handle:
+                handle.write("def test_ok():\n    assert True\n")
+
+            bootstrap_project(tmpdir, name="Brownfield Trust Test", description="dashboard brownfield trust", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            approve_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(approve_response.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["onboarding"]["review_overrides"]["accepted_workflow_labels"] = []
+                config["onboarding"]["review_overrides"]["accepted_runbook_labels"] = []
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project["project_id"]),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            refresh_response = client.post(
+                f"/api/projects/{project['project_id']}/actions/refresh-repo-plan",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(refresh_response.status_code, 200)
+
+            overview_payload = client.get("/api/overview").json()
+            trust = overview_payload["onboarding"]["repo_plan_state"]["trust"]
+            lineage = overview_payload["onboarding"]["repo_plan_state"]["lineage"]
+
+            self.assertEqual(trust["state"], "fresh")
+            self.assertTrue(trust["safe_to_execute"])
+            self.assertGreaterEqual(lineage["superseded_task_count"], 1)
+            self.assertGreaterEqual(len(lineage["superseded_items"]), 1)
+            self.assertGreaterEqual(len(lineage["recent_refreshes"]), 1)
 
     def test_overview_marks_repo_area_workspace_supported_from_git_parent_directory(self):
         with tempfile.TemporaryDirectory() as tmpdir:

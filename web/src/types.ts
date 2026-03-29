@@ -765,6 +765,16 @@ export interface BrownfieldRepoPlanItem {
   git_workspace_last_diff_at?: string | null;
   supporting_verification_recipe_count?: number;
   covered_repo_area_count?: number;
+  lineage_status?: "current" | "superseded" | "historical";
+  superseded_by?: {
+    synthesis_key?: string | null;
+    task_id?: string | null;
+    issue_key?: string | null;
+    title?: string | null;
+    status?: string | null;
+    review_state?: string | null;
+    task_kind?: string | null;
+  } | null;
   linked_items?: Array<{
     task_id: string;
     issue_key?: string | null;
@@ -775,6 +785,21 @@ export interface BrownfieldRepoPlanItem {
     dependency_type?: "blocks" | "informs" | "conflicts" | null;
     direction?: "incoming" | "outgoing";
   }>;
+}
+
+export interface BrownfieldRepoPlanLineageItem {
+  task_id: string;
+  issue_key?: string | null;
+  title: string;
+  status?: string | null;
+  review_state?: string | null;
+  task_kind: string;
+  synthesis_key: string;
+  paths: string[];
+  validation_commands?: string[];
+  updated_at?: string | null;
+  lineage_status: "superseded" | "historical";
+  superseded_by?: BrownfieldRepoPlanItem["superseded_by"];
 }
 
 export interface OverviewOnboarding {
@@ -834,8 +859,48 @@ export interface OverviewOnboarding {
     updated_count: number;
     cancelled_count: number;
     stale: boolean;
+    stale_reason?: string | null;
     last_refreshed_at?: string | null;
     last_refreshed_by?: string | null;
+    lineage?: {
+      superseded_task_count: number;
+      historical_task_count: number;
+      superseded_items: BrownfieldRepoPlanLineageItem[];
+      historical_items: BrownfieldRepoPlanLineageItem[];
+      recent_refreshes: Array<{
+        refreshed_at: string;
+        refreshed_by: string;
+        created_count: number;
+        updated_count: number;
+        cancelled_count: number;
+        skipped_count: number;
+        generated_task_count: number;
+      }>;
+    };
+    trust?: {
+      state: "preview_only" | "fresh" | "watch" | "stale";
+      safe_to_execute: boolean;
+      stale: boolean;
+      drift_detected: boolean;
+      drift_severity: "none" | "low" | "medium" | "high";
+      summary: string;
+      detail: string;
+      recommended_action: string;
+      superseded_task_count: number;
+      historical_task_count: number;
+    };
+  } | null;
+  repo_plan_trust?: {
+    state: "preview_only" | "fresh" | "watch" | "stale";
+    safe_to_execute: boolean;
+    stale: boolean;
+    drift_detected: boolean;
+    drift_severity: "none" | "low" | "medium" | "high";
+    summary: string;
+    detail: string;
+    recommended_action: string;
+    superseded_task_count: number;
+    historical_task_count: number;
   } | null;
   review_task_id?: string | null;
   review_task_status?: string | null;
@@ -847,6 +912,10 @@ export interface OverviewOnboarding {
     detected?: boolean;
     scanned_at?: string;
     summary?: string;
+    severity?: "none" | "low" | "medium" | "high";
+    safe_to_execute?: boolean;
+    diagnosis?: string;
+    recommended_action?: string;
     changes?: string[];
     file_count_delta?: number;
     primary_language_before?: string | null;
@@ -859,6 +928,9 @@ export interface OverviewOnboarding {
     package_managers_removed?: string[];
     codebase_map_added?: string[];
     codebase_map_removed?: string[];
+    breaking_reasons?: string[];
+    material_reasons?: string[];
+    minor_reasons?: string[];
   } | null;
   reviewed_by?: string | null;
   reviewed_at?: string | null;
@@ -2208,8 +2280,11 @@ export interface CodexIssueDetailResponse {
       generated_task_count: number;
       active_task_count: number;
       stale: boolean;
+      stale_reason?: string | null;
       last_refreshed_at?: string | null;
       last_refreshed_by?: string | null;
+      trust?: NonNullable<OverviewOnboarding["repo_plan_trust"]>;
+      lineage?: NonNullable<NonNullable<OverviewOnboarding["repo_plan_state"]>["lineage"]>;
     };
     repo_plan_items: BrownfieldRepoPlanItem[];
     codebase_areas: Array<{

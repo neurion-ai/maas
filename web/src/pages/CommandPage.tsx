@@ -177,6 +177,7 @@ export function CommandPage({
 
   const queue = useMemo(() => [...tasks].sort((left, right) => right.priority - left.priority).slice(0, 6), [tasks]);
   const launchPosture = useMemo(() => describeLaunchPosture(project), [project]);
+  const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
 
   async function holdPendingState(startedAt: number) {
     const remaining = RUN_CONTROL_MIN_PENDING_MS - (Date.now() - startedAt);
@@ -522,6 +523,17 @@ export function CommandPage({
       />
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+      {overview?.onboarding?.mode === "brownfield" && brownfieldTrust && brownfieldTrust.state !== "fresh" ? (
+        <div className="codex-banner codex-banner--warn">
+          <strong>{brownfieldTrust.summary}</strong>
+          <div>{brownfieldTrust.detail}</div>
+          <div>
+            {brownfieldTrust.state.replaceAll("_", " ")} · drift {brownfieldTrust.drift_severity}
+            {" · "}
+            Recommended action: {brownfieldTrust.recommended_action}
+          </div>
+        </div>
+      ) : null}
 
       <div className="codex-three-column">
         <section className="codex-panel">

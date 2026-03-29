@@ -129,6 +129,7 @@ export function WorkPage({ onNavigate }: WorkPageProps) {
     overview?.onboarding?.mode === "brownfield" &&
     !!overview?.onboarding?.review_status &&
     !["approved", "reviewed", "not_applicable"].includes(overview.onboarding.review_status);
+  const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
   const reviewTaskId = overview?.onboarding?.review_task_id ?? null;
   const gatedBlockedTaskCount = useMemo(
     () =>
@@ -287,6 +288,38 @@ export function WorkPage({ onNavigate }: WorkPageProps) {
                 Select review task
               </button>
             ) : null}
+          </div>
+        </article>
+      ) : null}
+
+      {overview?.onboarding?.mode === "brownfield" && brownfieldTrust && brownfieldTrust.state !== "fresh" ? (
+        <article className="surface-card surface-card--dense workbench-callout">
+          <div className="surface-card__header surface-card__header--tight">
+            <div>
+              <span className="eyebrow">Brownfield trust</span>
+              <h2>{brownfieldTrust.summary}</h2>
+              <p>{brownfieldTrust.detail}</p>
+              <p>Recommended action: {brownfieldTrust.recommended_action}</p>
+            </div>
+            <span className={`status-pill ${brownfieldTrust.safe_to_execute ? "" : "status-pill--warn"}`.trim()}>
+              {brownfieldTrust.state.replaceAll("_", " ")} · drift {brownfieldTrust.drift_severity}
+            </span>
+          </div>
+          <div className="workbench-callout__actions">
+            <button
+              type="button"
+              className="hero-button hero-button--primary hero-button--compact"
+              onClick={() => onNavigate("home")}
+            >
+              Open cockpit
+            </button>
+            <button
+              type="button"
+              className="hero-button hero-button--ghost hero-button--compact"
+              onClick={() => onNavigate("projects")}
+            >
+              Open projects
+            </button>
           </div>
         </article>
       ) : null}

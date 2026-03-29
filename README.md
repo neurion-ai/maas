@@ -106,6 +106,7 @@ Relevant design and roadmap documents:
 - [Codex MVP Control-Loop Governance and Observability Plan](docs/implementation/21-codex-mvp-control-loop-governance-observability-plan.md)
 - [Codex MVP Brownfield Depth Pass](docs/implementation/22-codex-mvp-brownfield-depth-pass.md)
 - [Codex MVP Brownfield Execution Leverage](docs/implementation/23-codex-mvp-brownfield-execution-leverage.md)
+- [Codex MVP Brownfield Drift, Refresh, and Trust](docs/implementation/24-codex-mvp-brownfield-drift-refresh-trust.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

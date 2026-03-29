@@ -41,7 +41,9 @@ def _utc_now_iso():
 def _lane_for_issue(issue, delivery_item):
     status = issue.get("status")
     if delivery_item is not None and status == "done":
-        return "delivery"
+        if delivery_item.get("github_pr") or delivery_item.get("latest_draft"):
+            return "delivery"
+        return "done_recent"
     if delivery_item is not None and status == "review":
         if delivery_item.get("github_pr") or delivery_item.get("delivery_gate", {}).get("status") == "ready":
             return "delivery"
@@ -82,6 +84,20 @@ def _branch_recency_value(branch):
     if not timestamp:
         return ""
     return timestamp
+
+
+def _agent_current_run(agent_id, task_id_to_runs, task_id):
+    if not agent_id:
+        return None
+    if task_id:
+        for run in task_id_to_runs.get(task_id, []):
+            if run.get("agent_id") == agent_id:
+                return run
+    for task_runs in task_id_to_runs.values():
+        for run in task_runs:
+            if run.get("agent_id") == agent_id:
+                return run
+    return None
 
 
 def fetch_theater(connection, project_paths, project_id=None):
@@ -262,6 +278,7 @@ def fetch_theater(connection, project_paths, project_id=None):
 
     agents = []
     for agent in roster["agents"]:
+        current_run = _agent_current_run(agent.get("agent_id"), runs_by_task, agent.get("current_task_id"))
         agents.append(
             {
                 "agent_id": agent.get("agent_id"),
@@ -270,9 +287,7 @@ def fetch_theater(connection, project_paths, project_id=None):
                 "status": agent.get("status"),
                 "current_task_id": agent.get("current_task_id"),
                 "current_task_title": agent.get("current_task_title"),
-                "current_run_id": runs_by_task.get(agent.get("current_task_id"), [{}])[0].get("session_id")
-                if agent.get("current_task_id")
-                else None,
+                "current_run_id": current_run.get("session_id") if current_run else None,
                 "last_heartbeat_age_seconds": agent.get("heartbeat_age_seconds"),
                 "visual_state": _agent_visual_state(agent, issues_by_task, runs_by_task),
             }

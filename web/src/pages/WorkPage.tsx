@@ -18,6 +18,7 @@ import {
   setTaskRetryLimit
 } from "../lib/boardApi";
 import { consumePendingTaskFocus } from "../lib/taskFocus";
+import { brownfieldRepoPlanItems, brownfieldRepoPlanTrust } from "../lib/brownfield";
 import { fetchGoalTree, fetchOverview } from "../lib/controlRoomApi";
 import { useLivePulse } from "../lib/useLivePulse";
 import type { BoardFiltersInput, BoardResponse, FilterOption, GoalTreeNode, GoalTreeResponse, OverviewResponse } from "../types";
@@ -47,7 +48,7 @@ function findGoalPath(nodes: GoalTreeNode[], goalId?: string | null, trail: Goal
 }
 
 function matchRepoPlanItems(task: NonNullable<BoardResponse>["columns"][number]["tasks"][number], overview: OverviewResponse | null) {
-  const items = overview?.onboarding?.repo_plan_state?.items ?? overview?.onboarding?.repo_plan_preview?.items ?? [];
+  const items = brownfieldRepoPlanItems(overview?.onboarding);
   const scopedPaths = task.scoped_paths ?? [];
   if (!items.length) {
     return [];
@@ -129,7 +130,7 @@ export function WorkPage({ onNavigate }: WorkPageProps) {
     overview?.onboarding?.mode === "brownfield" &&
     !!overview?.onboarding?.review_status &&
     !["approved", "reviewed", "not_applicable"].includes(overview.onboarding.review_status);
-  const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
+  const brownfieldTrust = brownfieldRepoPlanTrust(overview?.onboarding);
   const reviewTaskId = overview?.onboarding?.review_task_id ?? null;
   const gatedBlockedTaskCount = useMemo(
     () =>

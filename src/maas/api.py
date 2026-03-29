@@ -430,7 +430,7 @@ def _selected_project_id(connection, project_id=None):
     return resolved
 
 
-def create_app(project_root="."):
+def create_app(project_root=".", enable_lifespan_autopilot=True):
     app = FastAPI(title="MAAS", version="0.1.0")
     paths = ProjectPaths(project_root)
     app.add_middleware(
@@ -441,13 +441,14 @@ def create_app(project_root="."):
         allow_headers=["*"],
     )
 
-    @app.on_event("startup")
-    def _startup_autopilot():
-        sync_enabled_autopilots(paths)
+    if enable_lifespan_autopilot:
+        @app.on_event("startup")
+        def _startup_autopilot():
+            sync_enabled_autopilots(paths)
 
-    @app.on_event("shutdown")
-    def _shutdown_autopilot():
-        stop_all_autopilots(paths)
+        @app.on_event("shutdown")
+        def _shutdown_autopilot():
+            stop_all_autopilots(paths)
 
     @app.get("/api/health")
     def health():

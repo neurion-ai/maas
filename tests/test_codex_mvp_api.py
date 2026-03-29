@@ -18,6 +18,7 @@ from maas.services.codex_mvp import fetch_issue_detail, fetch_system_diagnostics
 from maas.services.goal_planning import create_goal, fetch_goal_planning, synthesize_goal_issues, _goal_issue_specs
 from maas.services.memory import retrieve_relevant_memory
 from maas.services.verification import run_task_verification
+from testsupport import api_client
 
 
 def _init_git_repo(root):
@@ -328,7 +329,7 @@ lint = "imported:lint"
             finally:
                 connection.close()
 
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 response = client.post(
                     "/api/issues/actions/batch-review",
                     json={
@@ -391,7 +392,7 @@ lint = "imported:lint"
             finally:
                 connection.close()
 
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 response = client.get("/api/issues/index")
             self.assertEqual(response.status_code, 200)
             payload = response.json()
@@ -2434,7 +2435,7 @@ lint = "imported:lint"
     def test_goal_creation_rejects_parent_goal_from_another_project(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Cross Project Parent Test", description="cross project parent", project_type="custom")
-            with TestClient(create_app(tmpdir)) as client:
+            with api_client(tmpdir) as client:
                 second_project = client.post(
                     "/api/projects",
                     json={
@@ -2554,7 +2555,7 @@ lint = "imported:lint"
                 self.assertEqual(task_delivery_response.status_code, 200)
                 self.assertEqual(task_delivery_response.json()["delivery_gate"]["status"], "attention")
 
-                issue_detail_response = client.get(f"/api/issues/{task['task_id']}")
+                issue_detail_response = client.get(f"/api/issues/{task['task_id']}", params={"project_id": project_id})
                 self.assertEqual(issue_detail_response.status_code, 200)
                 issue_delivery = issue_detail_response.json()["delivery"]
                 self.assertEqual(issue_delivery["delivery_gate"]["status"], "attention")
@@ -2683,6 +2684,196 @@ lint = "imported:lint"
                 delivery_response = client.get(f"/api/tasks/{task['task_id']}/delivery")
                 self.assertEqual(delivery_response.status_code, 200)
                 self.assertEqual(delivery_response.json()["github_pr"]["number"], 17)
+
+    def test_brownfield_review_to_delivery_api_flow_stays_consistent(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = os.path.join(tmpdir, "workspace")
+            repo_root = os.path.join(tmpdir, "imported-repo")
+            os.makedirs(workspace_root, exist_ok=True)
+            os.makedirs(repo_root, exist_ok=True)
+            self._create_brownfield_repo(repo_root)
+            _init_git_repo(repo_root)
+            bootstrap_project(workspace_root, name="Primary Project", description="primary", project_type="custom")
+
+            with api_client(workspace_root) as client:
+                project_response = client.post(
+                    "/api/projects",
+                    json={
+                        "actor_id": "agent_allocator",
+                        "name": "Imported Repo",
+                        "description": "brownfield import",
+                        "project_type": "custom",
+                        "mode": "auto",
+                        "source_root": repo_root,
+                    },
+                )
+                self.assertEqual(project_response.status_code, 200)
+                project_id = project_response.json()["project"]["project_id"]
+
+                overview_response = client.get("/api/overview", params={"project_id": project_id})
+                self.assertEqual(overview_response.status_code, 200)
+                onboarding = overview_response.json()["onboarding"]
+                review_task_id = onboarding["review_task_id"]
+                self.assertEqual(onboarding["review_status"], "review_pending")
+
+                inbox_before = client.get("/api/operator-inbox", params={"project_id": project_id})
+                self.assertEqual(inbox_before.status_code, 200)
+                before_conflicts = {item["subtype"] for item in inbox_before.json()["buckets"]["policy_conflicts"]}
+                self.assertIn("brownfield_review_pending", before_conflicts)
+
+                approve_response = client.post(
+                    f"/api/tasks/{review_task_id}/actions/review",
+                    json={"actor_id": "agent_reviewer", "decision": "approve"},
+                )
+                self.assertEqual(approve_response.status_code, 200)
+
+                paths = project_paths(workspace_root)
+                connection = connect(paths)
+                try:
+                    task = connection.execute(
+                        """
+                        SELECT task_id, project_id
+                        FROM tasks
+                        WHERE project_id = ?
+                          AND synthesis_origin = 'repo_grounded_plan'
+                        ORDER BY created_at ASC
+                        LIMIT 1
+                        """,
+                        (project_id,),
+                    ).fetchone()
+                    self.assertIsNotNone(task)
+                    connection.execute(
+                        """
+                        UPDATE tasks
+                        SET status = 'review',
+                            review_state = 'review_requested',
+                            acceptance_criteria_json = ?
+                        WHERE task_id = ?
+                        """,
+                        (
+                            json.dumps([{"type": "test_passes", "command": "pytest tests/test_app.py"}]),
+                            task["task_id"],
+                        ),
+                    )
+                    artifact_path = os.path.join(paths.artifacts_dir, "brownfield-delivery-sync.txt")
+                    os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+                    with open(artifact_path, "w", encoding="utf-8") as handle:
+                        handle.write("diff --git a/src/app.py b/src/app.py\n+print('brownfield delivery')\n")
+                    connection.execute(
+                        """
+                        INSERT INTO artifacts (
+                            artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+                        ) VALUES (?, ?, ?, NULL, 'git_diff', ?, '{}')
+                        """,
+                        (generate_id("art"), task["project_id"], task["task_id"], artifact_path),
+                    )
+                    connection.execute(
+                        """
+                        INSERT INTO verification_runs (
+                            verification_run_id, project_id, task_id, command, status, exit_code, output_excerpt,
+                            artifact_id, actor_id, started_at, finished_at
+                        ) VALUES (
+                            ?, ?, ?, 'pytest tests/test_app.py', 'passed', 0, 'brownfield delivery ok',
+                            NULL, 'agent_reviewer', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                        )
+                        """,
+                        (generate_id("vrf"), task["project_id"], task["task_id"]),
+                    )
+                    connection.commit()
+                finally:
+                    connection.close()
+
+                inbox_after = client.get("/api/operator-inbox", params={"project_id": project_id})
+                self.assertEqual(inbox_after.status_code, 200)
+                after_conflicts = {item["subtype"] for item in inbox_after.json()["buckets"]["policy_conflicts"]}
+                self.assertNotIn("brownfield_review_pending", after_conflicts)
+                self.assertNotIn("brownfield_review_changes_requested", after_conflicts)
+
+                git_snapshot = {
+                    "is_git_repo": True,
+                    "branch": "feature/brownfield-delivery-sync",
+                    "default_branch": "main",
+                    "dirty": False,
+                    "gh_installed": True,
+                }
+                list_calls = {"count": 0}
+
+                def fake_run(command, **kwargs):
+                    args = tuple(command)
+                    completed = mock.Mock()
+                    completed.returncode = 0
+                    completed.stdout = ""
+                    completed.stderr = ""
+                    if args[:3] == ("gh", "pr", "list"):
+                        list_calls["count"] += 1
+                        completed.stdout = "[]" if list_calls["count"] == 1 else json.dumps(
+                            [
+                                {
+                                    "number": 23,
+                                    "url": "https://example.test/pr/23",
+                                    "state": "OPEN",
+                                    "isDraft": True,
+                                    "title": "[MAAS] Brownfield delivery sync",
+                                    "headRefName": "feature/brownfield-delivery-sync",
+                                    "baseRefName": "main",
+                                }
+                            ]
+                        )
+                    elif args[:3] == ("gh", "pr", "create"):
+                        completed.stdout = "https://example.test/pr/23\n"
+                    elif args[:3] == ("gh", "pr", "view"):
+                        completed.stdout = json.dumps(
+                            {
+                                "number": 23,
+                                "url": "https://example.test/pr/23",
+                                "state": "OPEN",
+                                "isDraft": True,
+                                "title": "[MAAS] Brownfield delivery sync",
+                                "headRefName": "feature/brownfield-delivery-sync",
+                                "baseRefName": "main",
+                            }
+                        )
+                    else:  # pragma: no cover - guards the expected call set
+                        raise AssertionError(f"unexpected command: {command}")
+                    return completed
+
+                with mock.patch("maas.services.delivery._git_repo_snapshot", return_value=git_snapshot), mock.patch(
+                    "maas.services.delivery.subprocess.run", side_effect=fake_run
+                ):
+                    sync_response = client.post(
+                        f"/api/tasks/{task['task_id']}/actions/sync-github-pr",
+                        params={"project_id": project_id},
+                        json={"actor_id": "agent_allocator"},
+                    )
+                    self.assertEqual(sync_response.status_code, 200)
+                    sync_payload = sync_response.json()
+                    self.assertEqual(sync_payload["mode"], "created")
+                    self.assertEqual(sync_payload["delivery_gate"]["status"], "ready")
+                    self.assertEqual(sync_payload["github_pr"]["number"], 23)
+
+                    delivery_response = client.get(f"/api/tasks/{task['task_id']}/delivery", params={"project_id": project_id})
+                    self.assertEqual(delivery_response.status_code, 200)
+                    self.assertEqual(delivery_response.json()["delivery_gate"]["status"], "ready")
+                    self.assertEqual(delivery_response.json()["github_pr"]["number"], 23)
+
+                    overview_delivery_response = client.get("/api/delivery", params={"project_id": project_id})
+                    self.assertEqual(overview_delivery_response.status_code, 200)
+                    delivery_item = next(
+                        item
+                        for item in overview_delivery_response.json()["items"]
+                        if item["task_id"] == task["task_id"]
+                    )
+                    self.assertEqual(delivery_item["delivery_gate"]["status"], "ready")
+                    self.assertEqual(delivery_item["github_pr"]["number"], 23)
+
+                issue_detail_response = client.get(
+                    f"/api/issues/{task['task_id']}",
+                    params={"project_id": project_id},
+                )
+                self.assertEqual(issue_detail_response.status_code, 200)
+                issue_delivery = issue_detail_response.json()["delivery"]
+                self.assertEqual(issue_delivery["delivery_gate"]["status"], "ready")
+                self.assertEqual(issue_delivery["github_pr"]["number"], 23)
 
     def test_sync_github_pr_rejects_failed_delivery_gate(self):
         with tempfile.TemporaryDirectory() as tmpdir:

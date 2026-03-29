@@ -975,7 +975,7 @@ def create_app(project_root="."):
     def operator_inbox(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_operator_inbox(connection, _selected_project_id(connection, project_id))
+            return fetch_operator_inbox(connection, _selected_project_id(connection, project_id), paths)
         finally:
             connection.close()
 

@@ -22,6 +22,7 @@ import {
   updateProjectProviderCapacity,
 } from "../lib/controlRoomApi";
 import { boardCounts, describeLaunchPosture, formatTimestamp, issueKeyMap } from "../lib/codexMvp";
+import { consumePendingNotificationFocus } from "../lib/notificationFocus";
 import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
@@ -35,6 +36,7 @@ import type {
   DeliveryOverviewResponse,
   EnvironmentDoctorResponse,
   GoalPlanningResponse,
+  OperatorInboxResponse,
   OverviewResponse,
   PortfolioProject,
   TimelineEvent,
@@ -51,11 +53,13 @@ function issueLabel(task: BoardTask, fallbackKeys: Map<string, string>) {
 
 export function CommandPage({
   onNavigate,
+  operatorInbox,
   operatorWorkflow,
   onOpenOperatorItem,
   operatorWorkflowWarning,
 }: {
   onNavigate: (view: ViewTarget) => void;
+  operatorInbox: OperatorInboxResponse | null;
   operatorWorkflow: OperatorWorkflowState | null;
   onOpenOperatorItem: (item: OperatorLoopItem) => void;
   operatorWorkflowWarning?: string | null;
@@ -82,6 +86,7 @@ export function CommandPage({
   const [goalNotice, setGoalNotice] = useState<string | null>(null);
   const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(() => getSelectedProjectId());
+  const [focusedNotificationId, setFocusedNotificationId] = useState<string | null>(null);
   const livePulse = useLivePulse();
 
   useEffect(() => subscribeProjectScope(setSelectedProjectId), []);
@@ -178,6 +183,45 @@ export function CommandPage({
   const queue = useMemo(() => [...tasks].sort((left, right) => right.priority - left.priority).slice(0, 6), [tasks]);
   const launchPosture = useMemo(() => describeLaunchPosture(project), [project]);
   const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
+  const workflowActions = useMemo(() => {
+    const seen = new Set<string>();
+    const actions = [...(operatorWorkflow?.autopilot.operatorActions ?? []), ...(operatorWorkflow?.inbox.operatorActions ?? [])];
+    return actions.filter((action) => {
+      const key = `${action.action}:${action.resource_type}:${action.resource_id}:${JSON.stringify(action.payload ?? {})}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }, [operatorWorkflow]);
+  const notificationAttention = useMemo(
+    () => {
+      const items = ((operatorInbox?.buckets.notification_failures ?? []) as Array<{
+        resource_id?: string;
+        title?: string;
+        subtype?: string;
+        summary?: string;
+        recommended_action?: string;
+        operator_actions?: ControlOperatorAction[];
+        metadata?: Record<string, unknown>;
+      }>).slice();
+      items.sort((left, right) => {
+        const leftFocused = left.resource_id === focusedNotificationId ? 1 : 0;
+        const rightFocused = right.resource_id === focusedNotificationId ? 1 : 0;
+        return rightFocused - leftFocused;
+      });
+      return items.slice(0, focusedNotificationId ? 4 : 3);
+    },
+    [focusedNotificationId, operatorInbox]
+  );
+
+  useEffect(() => {
+    const nextFocusId = consumePendingNotificationFocus();
+    if (nextFocusId) {
+      setFocusedNotificationId(nextFocusId);
+    }
+  }, [operatorInbox?.generated_at, selectedProjectId]);
 
   async function holdPendingState(startedAt: number) {
     const remaining = RUN_CONTROL_MIN_PENDING_MS - (Date.now() - startedAt);
@@ -333,11 +377,29 @@ export function CommandPage({
     setPendingKey(actionKey);
     setNotice(null);
     try {
-      await runControlOperatorAction(action);
+      const result = await runControlOperatorAction(action);
       await loadCommand();
       await holdPendingState(startedAt);
       await loadCommand();
-      setNotice(`${action.label} complete.`);
+      if (
+        action.action === "process_next_notification" &&
+        result &&
+        typeof result === "object" &&
+        "processed" in result &&
+        !result.processed
+      ) {
+        setNotice("No due notification delivery was available to process.");
+      } else if (
+        action.action === "process_notification" &&
+        result &&
+        typeof result === "object" &&
+        "status" in result &&
+        typeof result.status === "string"
+      ) {
+        setNotice(`Notification delivery processed with status ${result.status}.`);
+      } else {
+        setNotice(`${action.label} complete.`);
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : `${action.label} failed.`);
     } finally {
@@ -521,6 +583,21 @@ export function CommandPage({
           </div>
         }
       />
+      {workflowActions.length ? (
+        <div className="codex-detail-actions">
+          {workflowActions.slice(0, 4).map((action) => (
+            <button
+              key={`workflow:${action.action}:${action.resource_type}:${action.resource_id}:${action.label}`}
+              type="button"
+              className="codex-button codex-button--primary"
+              disabled={pendingKey !== null}
+              onClick={() => void handleControlAction(action)}
+            >
+              {pendingKey === `control:${action.action}:${action.resource_id}` ? "Running..." : action.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
       {overview?.onboarding?.mode === "brownfield" && brownfieldTrust && brownfieldTrust.state !== "fresh" ? (
@@ -637,6 +714,41 @@ export function CommandPage({
                         {signal.operator_actions.slice(0, 2).map((action) => (
                           <button
                             key={`${signal.code}:${action.action}:${action.resource_id}`}
+                            type="button"
+                            className="codex-button"
+                            disabled={pendingKey !== null}
+                            onClick={() => void handleControlAction(action)}
+                          >
+                            {pendingKey === `control:${action.action}:${action.resource_id}` ? "Running..." : action.label}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {notificationAttention.length ? (
+            <div className="codex-list-block">
+              <strong>Notification delivery recovery</strong>
+              <div className="codex-history-list">
+                {notificationAttention.map((item) => (
+                  <div
+                    key={`${item.resource_id ?? item.title}:${item.subtype ?? "notification"}`}
+                    className="codex-history-item"
+                  >
+                    <div className="codex-history-item__meta">
+                      <strong>{item.title ?? "Notification delivery needs attention"}</strong>
+                      <span>{String(item.metadata?.delivery_state ?? item.subtype ?? "failed").replaceAll("_", " ")}</span>
+                    </div>
+                    <span>{item.summary ?? "Notification delivery is delayed or exhausted and needs operator review."}</span>
+                    {item.recommended_action ? <span>{item.recommended_action}</span> : null}
+                    {item.operator_actions?.length ? (
+                      <div className="codex-detail-actions">
+                        {item.operator_actions.slice(0, 2).map((action) => (
+                          <button
+                            key={`${item.resource_id ?? item.title}:${action.action}:${action.resource_id}`}
                             type="button"
                             className="codex-button"
                             disabled={pendingKey !== null}

@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 import json
 
-from maas.services.autopilot import fetch_autopilot_runtime, fetch_project_autopilot_policy
+from maas.services.autopilot import fetch_autopilot_runtime, fetch_autopilot_status, fetch_project_autopilot_policy
 from maas.services.board import fetch_issue_index
 from maas.services.codex_mvp import fetch_system_diagnostics
 from maas.services.notifications import (
@@ -11,9 +11,17 @@ from maas.services.notifications import (
     build_notification_outbox_summary,
     fetch_notification_outbox,
 )
+from maas.services.operator_actions import (
+    dedupe_operator_actions,
+    notification_operator_action,
+    project_autopilot_action,
+    project_launch_posture_action,
+    project_notification_action,
+)
 from maas.services.projects import resolve_project
 from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.recovery_policy import fetch_project_recovery_overview
+from maas.services.repo_plan import _resolve_brownfield_review_status
 
 
 def _load_project_config(raw_config):
@@ -24,8 +32,19 @@ def _load_project_config(raw_config):
     return payload if isinstance(payload, dict) else {}
 
 
-def _inbox_item(bucket, subtype, severity, title, summary, resource_type, resource_id, recommended_action, metadata=None):
-    return {
+def _inbox_item(
+    bucket,
+    subtype,
+    severity,
+    title,
+    summary,
+    resource_type,
+    resource_id,
+    recommended_action,
+    metadata=None,
+    operator_actions=None,
+):
+    item = {
         "bucket": bucket,
         "subtype": subtype,
         "severity": severity,
@@ -36,6 +55,9 @@ def _inbox_item(bucket, subtype, severity, title, summary, resource_type, resour
         "recommended_action": recommended_action,
         "metadata": metadata or {},
     }
+    if operator_actions:
+        item["operator_actions"] = dedupe_operator_actions(operator_actions)
+    return item
 
 
 def _review_items(issue_index):
@@ -194,6 +216,18 @@ def _policy_conflict_items(connection, project_id):
     project_row = resolve_project(connection, project_id, include_archived=False)
     config = _load_project_config(project_row["config_json"] if project_row else "{}")
     onboarding = config.get("onboarding") or {}
+    review_task = None
+    review_task_id = onboarding.get("review_task_id")
+    if review_task_id:
+        review_task = connection.execute(
+            """
+            SELECT task_id, status, review_state
+            FROM tasks
+            WHERE task_id = ?
+            """,
+            (review_task_id,),
+        ).fetchone()
+    onboarding_review_status = _resolve_brownfield_review_status(connection, project_id, onboarding, review_task=review_task)
     if autopilot_policy.get("enabled") and queue_snapshot.get("queue_mode") == "paused":
         items.append(
             _inbox_item(
@@ -206,6 +240,16 @@ def _policy_conflict_items(connection, project_id):
                 project_id,
                 "Either disable autopilot or resume launches so the project can make forward progress.",
                 metadata={"project_id": project_id, "queue_mode": queue_snapshot.get("queue_mode"), "autopilot_enabled": True},
+                operator_actions=[
+                    project_launch_posture_action(
+                        project_id,
+                        "Resume launches",
+                        "running",
+                        max(1, int(queue_snapshot.get("max_running_jobs") or 1)),
+                        preferred_provider_id=queue_snapshot.get("preferred_provider_id"),
+                    ),
+                    project_autopilot_action(project_id, "Disable autopilot", {**autopilot_policy, "enabled": False}),
+                ],
             )
         )
     if autopilot_policy.get("enabled") and queue_snapshot.get("queue_mode") == "draining":
@@ -220,6 +264,15 @@ def _policy_conflict_items(connection, project_id):
                 project_id,
                 "Switch queue posture back to running when you want autopilot to launch fresh work again.",
                 metadata={"project_id": project_id, "queue_mode": queue_snapshot.get("queue_mode"), "autopilot_enabled": True},
+                operator_actions=[
+                    project_launch_posture_action(
+                        project_id,
+                        "Resume launches",
+                        "running",
+                        max(1, int(queue_snapshot.get("max_running_jobs") or 1)),
+                        preferred_provider_id=queue_snapshot.get("preferred_provider_id"),
+                    )
+                ],
             )
         )
     if autopilot_policy.get("enabled") and int(queue_snapshot.get("max_running_jobs") or 0) <= 0:
@@ -234,23 +287,45 @@ def _policy_conflict_items(connection, project_id):
                 project_id,
                 "Increase max running jobs or disable autopilot for this project.",
                 metadata={"project_id": project_id, "max_running_jobs": queue_snapshot.get("max_running_jobs"), "autopilot_enabled": True},
+                operator_actions=[
+                    project_launch_posture_action(
+                        project_id,
+                        "Set capacity to 1 and resume launches",
+                        "running",
+                        1,
+                        preferred_provider_id=queue_snapshot.get("preferred_provider_id"),
+                    ),
+                    project_autopilot_action(project_id, "Disable autopilot", {**autopilot_policy, "enabled": False}),
+                ],
             )
         )
-    if autopilot_policy.get("enabled") and onboarding.get("mode") == "brownfield" and onboarding.get("review_status") == "review_pending":
+    if autopilot_policy.get("enabled") and onboarding.get("mode") == "brownfield" and onboarding_review_status in {"review_pending", "changes_requested"}:
         items.append(
             _inbox_item(
                 "policy_conflicts",
-                "brownfield_review_pending",
+                "brownfield_review_changes_requested"
+                if onboarding_review_status == "changes_requested"
+                else "brownfield_review_pending",
                 "critical",
-                "Brownfield onboarding review is still pending",
-                "Autonomy is enabled, but imported understanding still requires explicit operator approval.",
+                "Brownfield onboarding review needs changes"
+                if onboarding_review_status == "changes_requested"
+                else "Brownfield onboarding review is still pending",
+                (
+                    "Autonomy is enabled, but imported understanding was sent back with changes requested."
+                    if onboarding_review_status == "changes_requested"
+                    else "Autonomy is enabled, but imported understanding still requires explicit operator approval."
+                ),
                 "project",
                 project_id,
-                "Approve or adjust the brownfield onboarding review before expecting wider autonomous execution.",
+                (
+                    "Reconfirm the brownfield import inputs, then approve the review before expecting wider autonomous execution."
+                    if onboarding_review_status == "changes_requested"
+                    else "Approve or adjust the brownfield onboarding review before expecting wider autonomous execution."
+                ),
                 metadata={
                     "project_id": project_id,
-                    "review_status": onboarding.get("review_status"),
-                    "review_task_id": onboarding.get("review_task_id"),
+                    "review_status": onboarding_review_status,
+                    "review_task_id": review_task_id,
                     "onboarding_mode": onboarding.get("mode"),
                 },
             )
@@ -267,6 +342,16 @@ def _notification_failure_items(connection, project_id):
             continue
         event_severity = digest.get("severity") or "warning"
         severity = "critical" if digest.get("retry_budget_exhausted") or event_severity == "critical" else "warning"
+        operator_actions = []
+        notification_ids = [item for item in (digest.get("notification_ids") or []) if item]
+        if digest.get("delivery_state") in {"retry_ready", "retry_exhausted"} and len(notification_ids) == 1:
+            operator_actions.append(
+                notification_operator_action(
+                    "process_notification",
+                    "Retry this delivery now",
+                    notification_ids[0],
+                )
+            )
         items.append(
             _inbox_item(
                 "notification_failures",
@@ -275,14 +360,15 @@ def _notification_failure_items(connection, project_id):
                 digest.get("title") or "Notification delivery needs attention",
                 digest.get("last_error")
                 or "Notification delivery is delayed or exhausted and needs operator review.",
-                "notification",
-                digest.get("notification_ids", [None])[0],
+                "notification_digest",
+                digest.get("dedupe_key") or notification_ids[0] if notification_ids else digest.get("title"),
                 (
                     "Inspect delivery policy and clear the failed endpoint before requeueing."
                     if digest.get("retry_budget_exhausted")
                     else "Inspect the failing webhook or wait for the scheduled retry window."
                 ),
                 metadata={"project_id": project_id, **digest},
+                operator_actions=operator_actions,
             )
         )
     return items
@@ -318,8 +404,14 @@ def _workflow_item(item):
             "sessionId": resource_id,
             "projectId": item.get("metadata", {}).get("project_id"),
         }
-    elif resource_type in {"notification", "project", "dead_letter_entry", "failure_incident", "review_packet"}:
-        target_view = "issues" if item.get("bucket") in {"review", "blocked_recovery"} else "command" if item.get("bucket") == "policy_conflicts" else "system"
+    elif resource_type in {"notification", "notification_digest", "project", "dead_letter_entry", "failure_incident", "review_packet"}:
+        target_view = (
+            "issues"
+            if item.get("bucket") in {"review", "blocked_recovery"}
+            else "command"
+            if item.get("bucket") in {"policy_conflicts", "notification_failures"}
+            else "system"
+        )
         route = {
             "view": target_view,
             "resourceType": resource_type,
@@ -338,10 +430,13 @@ def _workflow_item(item):
     }
     return {
         "id": "{0}:{1}:{2}".format(item.get("bucket"), item.get("subtype"), resource_id or item.get("title")),
+        "bucket": item.get("bucket"),
         "tone": _tone_for_severity(item.get("severity")),
         "label": label_map.get(item.get("bucket"), "Inspect"),
         "title": item.get("title") or "Operator attention required",
         "detail": item.get("summary") or item.get("recommended_action") or "Inspect the current system state.",
+        "recommendedAction": item.get("recommended_action"),
+        "operatorActions": item.get("operator_actions") or [],
         "route": route,
     }
 
@@ -398,9 +493,9 @@ def _summarize_inbox(summary):
                 failed_notification_count,
                 "" if failed_notification_count == 1 else "ies",
             ),
-            "detail": "Work can continue, but the async operator loop is degraded until delivery failures are cleared or retried.",
-            "recommendedView": "system",
-            "recommendedLabel": "Open System",
+            "detail": "Work can continue, but operator visibility is degraded until delivery failures are cleared or retried.",
+            "recommendedView": "command",
+            "recommendedLabel": "Open Command",
         }
     return {
         "headline": "Operator inbox is clear",
@@ -410,10 +505,27 @@ def _summarize_inbox(summary):
     }
 
 
-def _summarize_autopilot(policy, runtime, queue_snapshot, issue_index, notification_summary):
+def _workflow_operator_actions(items, limit=3):
+    collected = []
+    for item in items or []:
+        collected.extend(item.get("operatorActions") or [])
+    return dedupe_operator_actions(collected)[:limit]
+
+
+def _summarize_autopilot(project_id, policy, runtime, queue_snapshot, issue_index, notification_summary, why_idle=None, governance_gate=None):
     queue_mode = queue_snapshot.get("queue_mode") or "running"
     review_count = issue_index["summary"]["review"]
     recovery_count = issue_index["summary"]["blocked_failures"] + issue_index["summary"]["blocked_dependencies"]
+    runtime_status = runtime.get("runtime_status") or runtime.get("status") or "idle"
+    lease_active = bool(runtime.get("lease_active") or runtime.get("owns_lease") or runtime.get("running"))
+    governance_gate = governance_gate or {}
+    operator_actions = dedupe_operator_actions(
+        [
+            action
+            for signal in (governance_gate.get("signals") or [])
+            for action in (signal.get("operator_actions") or [])
+        ]
+    )
     facts = [
         "Loop {0}".format(runtime.get("loop_count") or 0),
         "Heartbeat {0}".format(runtime.get("last_heartbeat_at") or "never"),
@@ -429,6 +541,18 @@ def _summarize_autopilot(policy, runtime, queue_snapshot, issue_index, notificat
             "summary": "Launches are paused, so assigned work will not start even if autopilot is enabled.",
             "detail": "Resume launches before expecting newly assigned work to move forward.",
             "facts": facts,
+            "operatorActions": dedupe_operator_actions(
+                operator_actions
+                + [
+                    project_launch_posture_action(
+                        project_id,
+                        "Resume launches",
+                        "running",
+                        max(1, int(queue_snapshot.get("max_running_jobs") or 1)),
+                        preferred_provider_id=queue_snapshot.get("preferred_provider_id"),
+                    )
+                ]
+            )[:3],
         }
     if queue_mode == "draining":
         return {
@@ -437,6 +561,18 @@ def _summarize_autopilot(policy, runtime, queue_snapshot, issue_index, notificat
             "summary": "The loop is still active, but newly assigned work will not launch while the queue is draining.",
             "detail": "Current runs can finish, but fresh assigned work will wait until posture returns to running.",
             "facts": facts,
+            "operatorActions": dedupe_operator_actions(
+                operator_actions
+                + [
+                    project_launch_posture_action(
+                        project_id,
+                        "Resume launches",
+                        "running",
+                        max(1, int(queue_snapshot.get("max_running_jobs") or 1)),
+                        preferred_provider_id=queue_snapshot.get("preferred_provider_id"),
+                    )
+                ]
+            )[:3],
         }
     if not policy.get("enabled"):
         return {
@@ -445,9 +581,20 @@ def _summarize_autopilot(policy, runtime, queue_snapshot, issue_index, notificat
             "summary": "Autopilot is disabled for this project.",
             "detail": "MAAS will only advance when the operator runs cycles manually.",
             "facts": facts,
+            "operatorActions": [
+                project_autopilot_action(project_id, "Enable autopilot", {**policy, "enabled": True})
+            ],
         }
-    runtime_status = runtime.get("status") or "idle"
-    if runtime.get("lease_active"):
+    if governance_gate.get("blocked"):
+        return {
+            "tone": "danger",
+            "label": "Autopilot gated",
+            "summary": governance_gate.get("summary") or "Autopilot is blocked by control-loop policy.",
+            "detail": governance_gate.get("detail") or why_idle or "Clear the blocking governance signal before resuming autonomy.",
+            "facts": facts,
+            "operatorActions": operator_actions[:3],
+        }
+    if lease_active:
         if runtime_status == "error":
             return {
                 "tone": "danger",
@@ -455,6 +602,7 @@ def _summarize_autopilot(policy, runtime, queue_snapshot, issue_index, notificat
                 "summary": "The autopilot runner hit an error on the last cycle.",
                 "detail": runtime.get("last_error") or "Inspect the operator inbox and system diagnostics before resuming.",
                 "facts": facts,
+                "operatorActions": operator_actions[:3],
             }
         return {
             "tone": "default",
@@ -472,25 +620,38 @@ def _summarize_autopilot(policy, runtime, queue_snapshot, issue_index, notificat
                 else "MAAS is actively advancing work in the background."
             ),
             "facts": facts,
+            "operatorActions": operator_actions[:3],
         }
     if runtime_status == "waiting":
         return {
             "tone": "warn",
             "label": "Autopilot waiting",
             "summary": "Autopilot is enabled but this process does not currently own the active lease.",
-            "detail": "Another MAAS process may own the project loop, or the lease is waiting to be reacquired after a restart.",
+            "detail": why_idle
+            or "Another MAAS process may own the project loop, or the lease is waiting to be reacquired after a restart.",
             "facts": facts,
+            "operatorActions": operator_actions[:3],
+        }
+    if operator_actions:
+        return {
+            "tone": "warn",
+            "label": "Autopilot needs attention",
+            "summary": governance_gate.get("summary") or "Autopilot is within policy, but the control loop needs intervention.",
+            "detail": why_idle or governance_gate.get("detail") or "Clear the current control-loop pressure before relying on autonomous progress.",
+            "facts": facts,
+            "operatorActions": operator_actions[:3],
         }
     return {
         "tone": "default",
         "label": "Autopilot armed",
         "summary": "Autopilot is enabled and waiting for the next cycle.",
-        "detail": "No blocker is recorded at the loop level; the next cycle should continue normal autonomous progress.",
+        "detail": why_idle or "No blocker is recorded at the loop level; the next cycle should continue normal autonomous progress.",
         "facts": facts,
+        "operatorActions": [],
     }
 
 
-def fetch_operator_inbox(connection, project_id):
+def fetch_operator_inbox(connection, project_id, project_paths=None):
     issue_index = fetch_issue_index(connection, project_id=project_id)
     system_diagnostics = fetch_system_diagnostics(connection, project_id=project_id)
     recovery_overview = fetch_project_recovery_overview(connection, project_id=project_id)
@@ -505,6 +666,11 @@ def fetch_operator_inbox(connection, project_id):
         "status": "idle",
         "lease_active": False,
     }
+    autopilot_status = None
+    if project_paths is not None:
+        autopilot_status = fetch_autopilot_status(connection, project_paths, project_id)
+        autopilot_policy = autopilot_status["policy"]
+        autopilot_runtime = autopilot_status["runtime"]
     queue_snapshot = queue_capacity_snapshot(connection, project_id)
     notification_items = fetch_notification_outbox(connection, project_id=project_id, limit=100, include_archived=False)
     notification_summary = build_notification_outbox_summary(notification_items)
@@ -524,6 +690,18 @@ def fetch_operator_inbox(connection, project_id):
     severity_order = {"critical": 0, "warning": 1, "info": 2}
     items.sort(key=lambda item: (severity_order.get(item["severity"], 3), item["bucket"], item["title"]))
     workflow_items = [_workflow_item(item) for item in items[:12]]
+    workflow_operator_actions = _workflow_operator_actions(workflow_items)
+    if any(item.get("metadata", {}).get("delivery_state") in {"retry_ready", "retry_exhausted"} for item in buckets["notification_failures"]):
+        workflow_operator_actions = dedupe_operator_actions(
+            workflow_operator_actions
+            + [
+                project_notification_action(
+                    "process_next_notification",
+                    "Process next due delivery",
+                    project_id,
+                )
+            ]
+        )[:4]
     inbox_summary = {
         "total_items": len(items),
         "review": issue_index["summary"]["review"],
@@ -552,14 +730,18 @@ def fetch_operator_inbox(connection, project_id):
                 "policyConflictCount": inbox_summary["policy_conflicts"],
                 "recommendedView": inbox_copy["recommendedView"],
                 "recommendedLabel": inbox_copy["recommendedLabel"],
+                "operatorActions": workflow_operator_actions,
                 "items": workflow_items,
             },
             "autopilot": _summarize_autopilot(
+                project_id,
                 autopilot_policy,
                 autopilot_runtime,
                 queue_snapshot,
                 issue_index,
                 notification_summary,
+                why_idle=(autopilot_status or {}).get("why_idle"),
+                governance_gate=(autopilot_status or {}).get("governance_gate"),
             ),
         },
         "project": {

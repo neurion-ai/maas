@@ -657,6 +657,8 @@ lint = "imported:lint"
             payload = response.json()
 
             self.assertTrue(payload["drift"]["detected"])
+            self.assertEqual(payload["drift"]["severity"], "medium")
+            self.assertFalse(payload["drift"]["safe_to_execute"])
             self.assertEqual(payload["review_status"], "review_pending")
             self.assertEqual(payload["review_task_status"], "review")
             self.assertIn("docs", payload["drift"]["repo_areas_added"])
@@ -664,8 +666,11 @@ lint = "imported:lint"
             overview_payload = client.get("/api/overview", params={"project_id": project_id}).json()
             self.assertEqual(overview_payload["onboarding"]["review_status"], "review_pending")
             self.assertTrue(overview_payload["onboarding"]["drift_summary"]["detected"])
+            self.assertEqual(overview_payload["onboarding"]["drift_summary"]["severity"], "medium")
             self.assertIn("docs", overview_payload["onboarding"]["drift_summary"]["repo_areas_added"])
             self.assertIsNotNone(overview_payload["onboarding"]["last_scanned_at"])
+            self.assertTrue(overview_payload["onboarding"]["repo_plan_state"]["stale"])
+            self.assertEqual(overview_payload["onboarding"]["repo_plan_state"]["stale_reason"], "imported_repo_drift")
 
             connection = connect(project_paths(workspace_root))
             try:
@@ -684,6 +689,58 @@ lint = "imported:lint"
                 connection.close()
 
             self.assertEqual(alert["status"], "open")
+
+    def test_brownfield_rescan_keeps_current_plan_when_drift_is_low_severity(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = os.path.join(tmpdir, "workspace")
+            repo_root = os.path.join(tmpdir, "imported-repo")
+            os.makedirs(workspace_root, exist_ok=True)
+            os.makedirs(repo_root, exist_ok=True)
+            self._create_brownfield_repo(repo_root)
+            bootstrap_project(workspace_root, name="Primary Project", description="primary", project_type="custom")
+            client = TestClient(create_app(workspace_root))
+
+            project_payload = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Imported Repo",
+                    "description": "brownfield import",
+                    "project_type": "custom",
+                    "mode": "auto",
+                    "source_root": repo_root,
+                },
+            ).json()
+            project_id = project_payload["project"]["project_id"]
+
+            review_task_id = client.get("/api/overview", params={"project_id": project_id}).json()["onboarding"]["review_task_id"]
+            approve_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(approve_response.status_code, 200)
+
+            with open(os.path.join(repo_root, "src", "extra.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('extra')\n")
+
+            response = client.post(
+                f"/api/projects/{project_id}/actions/rescan-brownfield",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+
+            self.assertTrue(payload["drift"]["detected"])
+            self.assertEqual(payload["drift"]["severity"], "low")
+            self.assertTrue(payload["drift"]["safe_to_execute"])
+            self.assertEqual(payload["review_status"], "approved")
+            self.assertIsNone(payload["review_task_status"])
+
+            overview_payload = client.get("/api/overview", params={"project_id": project_id}).json()
+            self.assertEqual(overview_payload["onboarding"]["review_status"], "approved")
+            self.assertFalse(overview_payload["onboarding"]["repo_plan_state"]["stale"])
+            self.assertEqual(overview_payload["onboarding"]["repo_plan_trust"]["state"], "watch")
+            self.assertTrue(overview_payload["onboarding"]["repo_plan_trust"]["safe_to_execute"])
 
     def test_update_onboarding_review_persists_overrides_and_reopens_review(self):
         with tempfile.TemporaryDirectory() as tmpdir:

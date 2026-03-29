@@ -74,6 +74,17 @@ def _validation_commands_from_acceptance(raw_value):
     return commands
 
 
+def _task_paths_from_row(task_row):
+    return _normalize_paths(
+        [
+            path
+            for criterion in _parse_acceptance_criteria(task_row.get("acceptance_criteria_json"))
+            if isinstance(criterion, dict) and criterion.get("type") == "source_path_exists"
+            for path in criterion.get("paths") or []
+        ]
+    )
+
+
 def _task_kind_from_synthesis_key(synthesis_key):
     if (synthesis_key or "").startswith("runbook:"):
         return "verification_recipe"
@@ -223,7 +234,9 @@ def _repo_plan_task_rows(connection, project_id):
                 priority,
                 review_state,
                 synthesis_key,
-                acceptance_criteria_json
+                acceptance_criteria_json,
+                created_at,
+                updated_at
             FROM tasks
             WHERE project_id = ?
               AND synthesis_origin = ?
@@ -232,6 +245,206 @@ def _repo_plan_task_rows(connection, project_id):
             (project_id, REPO_PLAN_SYNTHESIS_ORIGIN),
         ).fetchall()
     ]
+
+
+def _lineage_reference_for_item(item):
+    if item is None:
+        return None
+    return {
+        "synthesis_key": item.get("synthesis_key"),
+        "task_id": item.get("task_id"),
+        "issue_key": item.get("issue_key"),
+        "title": item.get("title"),
+        "status": item.get("status"),
+        "review_state": item.get("review_state"),
+        "task_kind": item.get("task_kind"),
+    }
+
+
+def _candidate_lineage_score(task_row, candidate):
+    if candidate.get("task_kind") != _task_kind_from_synthesis_key(task_row.get("synthesis_key")):
+        return -1
+    score = 0
+    task_paths = _task_paths_from_row(task_row)
+    candidate_paths = candidate.get("paths") or []
+    if _paths_overlap(task_paths, candidate_paths):
+        score += 4
+    task_commands = _validation_commands_from_acceptance(task_row.get("acceptance_criteria_json"))
+    candidate_commands = candidate.get("validation_commands") or ([] if not candidate.get("command") else [candidate["command"]])
+    if task_commands and candidate_commands and any(command in candidate_commands for command in task_commands):
+        score += 5
+    source_label = (task_row.get("synthesis_key") or "").split(":", 1)[-1]
+    if source_label and source_label == candidate.get("source_label"):
+        score += 2
+    if task_row.get("synthesis_key") == candidate.get("synthesis_key"):
+        score += 3
+    return score
+
+
+def _match_superseding_repo_plan_item(task_row, current_items):
+    best_match = None
+    best_score = -1
+    for item in current_items:
+        score = _candidate_lineage_score(task_row, item)
+        if score > best_score:
+            best_match = item
+            best_score = score
+    return best_match if best_score > 0 else None
+
+
+def build_repo_plan_lineage(connection, project_id, current_items_by_key, task_rows=None, issue_keys=None):
+    issue_keys = issue_keys or _issue_key_lookup(connection, project_id)
+    task_rows = task_rows or _repo_plan_task_rows(connection, project_id)
+    current_items_by_key = current_items_by_key or {}
+    current_items = list(current_items_by_key.values())
+    superseded_items = []
+    historical_items = []
+    for row in task_rows:
+        current_item = current_items_by_key.get(row.get("synthesis_key"))
+        if current_item is not None and current_item.get("task_id") == row.get("task_id"):
+            continue
+        successor = _match_superseding_repo_plan_item(row, current_items)
+        lineage_status = (
+            "superseded"
+            if row.get("review_state") == REPO_PLAN_STALE_REVIEW_STATE or row.get("status") == "cancelled"
+            else "historical"
+        )
+        payload = {
+            "task_id": row.get("task_id"),
+            "issue_key": issue_keys.get(row.get("task_id")),
+            "title": row.get("title"),
+            "status": row.get("status"),
+            "review_state": row.get("review_state"),
+            "task_kind": _task_kind_from_synthesis_key(row.get("synthesis_key")),
+            "synthesis_key": row.get("synthesis_key"),
+            "paths": _task_paths_from_row(row)[:3],
+            "validation_commands": _validation_commands_from_acceptance(row.get("acceptance_criteria_json")),
+            "updated_at": row.get("updated_at"),
+            "lineage_status": lineage_status,
+            "superseded_by": _lineage_reference_for_item(successor),
+        }
+        if lineage_status == "superseded":
+            superseded_items.append(payload)
+        else:
+            historical_items.append(payload)
+
+    refresh_history = []
+    for row in connection.execute(
+        """
+        SELECT actor_id, detail_json, created_at
+        FROM audit_trail
+        WHERE project_id = ?
+          AND action_type = 'refresh_repo_grounded_plan'
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 5
+        """,
+        (project_id,),
+    ).fetchall():
+        try:
+            detail = json.loads(row["detail_json"] or "{}")
+        except ValueError:
+            detail = {}
+        refresh_history.append(
+            {
+                "refreshed_at": row["created_at"],
+                "refreshed_by": row["actor_id"],
+                "created_count": len(detail.get("created_task_ids") or []),
+                "updated_count": len(detail.get("updated_task_ids") or []),
+                "cancelled_count": len(detail.get("cancelled_task_ids") or []),
+                "skipped_count": len(detail.get("skipped_task_ids") or []),
+                "generated_task_count": detail.get("generated_task_count") or 0,
+            }
+        )
+
+    return {
+        "superseded_task_count": len(superseded_items),
+        "historical_task_count": len(historical_items),
+        "superseded_items": superseded_items[:6],
+        "historical_items": historical_items[:6],
+        "recent_refreshes": refresh_history,
+    }
+
+
+def build_repo_plan_trust(onboarding, lineage):
+    onboarding = onboarding or {}
+    repo_plan_state = onboarding.get("repo_plan") or {}
+    drift = onboarding.get("drift_summary") or {}
+    drift_detected = bool(drift.get("detected"))
+    drift_severity = drift.get("severity") or ("none" if not drift_detected else "medium")
+    stale = bool(repo_plan_state.get("stale"))
+    review_status = onboarding.get("review_status") or "review_pending"
+    stale_reason = repo_plan_state.get("stale_reason")
+    last_refreshed_at = repo_plan_state.get("last_refreshed_at")
+    superseded_count = (lineage or {}).get("superseded_task_count", 0)
+    historical_count = (lineage or {}).get("historical_task_count", 0)
+
+    if not last_refreshed_at:
+        return {
+            "state": "preview_only",
+            "safe_to_execute": False,
+            "stale": stale,
+            "drift_detected": drift_detected,
+            "drift_severity": drift_severity,
+            "summary": "Repo-grounded brownfield work is still a preview until the plan has been refreshed at least once.",
+            "detail": "Approve the onboarding review and refresh the repo-grounded plan before relying on synthesized brownfield tasks.",
+            "recommended_action": "Refresh the repo-grounded plan after the brownfield review is approved.",
+            "superseded_task_count": superseded_count,
+            "historical_task_count": historical_count,
+        }
+
+    if stale:
+        if stale_reason == "review_overrides_changed":
+            detail = "Review overrides changed after the last refresh, so the current brownfield plan no longer matches the accepted imported scope."
+            action = "Reconfirm the brownfield review inputs, then refresh the repo-grounded plan."
+        elif drift_detected:
+            detail = drift.get("diagnosis") or "Imported repository drift changed the inputs that grounded the current brownfield plan."
+            action = "Review the imported drift and refresh the repo-grounded plan before acting on stale recommendations."
+        else:
+            detail = "The imported understanding changed after the last repo-plan refresh."
+            action = "Refresh the repo-grounded plan before acting on imported recommendations."
+        return {
+            "state": "stale",
+            "safe_to_execute": False,
+            "stale": True,
+            "drift_detected": drift_detected,
+            "drift_severity": drift_severity,
+            "summary": "Brownfield grounding is stale relative to the latest imported understanding.",
+            "detail": detail,
+            "recommended_action": action,
+            "superseded_task_count": superseded_count,
+            "historical_task_count": historical_count,
+        }
+
+    if drift_detected and drift.get("safe_to_execute"):
+        return {
+            "state": "watch",
+            "safe_to_execute": True,
+            "stale": False,
+            "drift_detected": True,
+            "drift_severity": drift_severity,
+            "summary": drift.get("summary") or "Low-severity brownfield drift was detected after the last scan.",
+            "detail": drift.get("diagnosis") or "The imported repo changed, but the current brownfield recommendations are still considered safe to execute.",
+            "recommended_action": "Monitor the imported drift and rescan again if the affected area broadens.",
+            "superseded_task_count": superseded_count,
+            "historical_task_count": historical_count,
+        }
+
+    return {
+        "state": "fresh",
+        "safe_to_execute": review_status == "approved",
+        "stale": False,
+        "drift_detected": drift_detected,
+        "drift_severity": drift_severity,
+        "summary": "Brownfield grounding matches the latest approved imported understanding.",
+        "detail": (
+            "Historical synthesized tasks remain visible for context."
+            if superseded_count or historical_count
+            else "No superseded brownfield plan steps are waiting for operator interpretation."
+        ),
+        "recommended_action": "Use the repo-grounded plan and linked issue detail as the current imported execution baseline.",
+        "superseded_task_count": superseded_count,
+        "historical_task_count": historical_count,
+    }
 
 
 def _repo_plan_relationship_map(connection, project_id, task_rows, issue_keys):
@@ -360,6 +573,8 @@ def build_repo_plan_item_lookup(
             "git_workspace_last_diff_at": git_workspace.get("updated_at"),
             "supporting_verification_recipe_count": supporting_verification_recipe_count,
             "covered_repo_area_count": covered_repo_area_count,
+            "lineage_status": "current",
+            "superseded_by": None,
         }
     return items
 
@@ -641,6 +856,7 @@ def refresh_repo_grounded_plan(connection, project_id, actor_id, commit=True, en
         "updated_count": len(updated_task_ids),
         "cancelled_count": len(cancelled_task_ids),
         "stale": False,
+        "stale_reason": None,
         "last_refreshed_at": refreshed_at,
         "last_refreshed_by": actor_id,
     }
@@ -731,6 +947,8 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
         git_workspaces_by_task=git_workspaces_by_task,
         git_workspace_supported=git_workspace_supported,
     )
+    lineage = build_repo_plan_lineage(connection, project_id, repo_plan_items, task_rows=repo_task_rows, issue_keys=issue_keys)
+    trust = build_repo_plan_trust(onboarding, lineage)
     scoped_paths = _normalize_paths(
         [
             path
@@ -782,6 +1000,7 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
             inferred_kind = _task_kind_from_synthesis_key(synthesis_key)
             all_linked_items = relationship_map.get(task_row.get("task_id"), [])
             linked_items = all_linked_items[:4]
+            current_match = _match_superseding_repo_plan_item(task_row, list(repo_plan_items.values()))
             exact_item = {
                 "synthesis_key": synthesis_key,
                 "task_kind": inferred_kind,
@@ -823,6 +1042,18 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
                         and item.get("task_kind") == "repo_area_plan"
                     ]
                 ),
+                "lineage_status": (
+                    "superseded"
+                    if task_row.get("review_state") == REPO_PLAN_STALE_REVIEW_STATE or task_row.get("status") == "cancelled"
+                    else "historical"
+                ),
+                "superseded_by": _lineage_reference_for_item(current_match),
+            }
+        else:
+            exact_item = {
+                **exact_item,
+                "lineage_status": "current",
+                "superseded_by": None,
             }
         matched_repo_items.append(exact_item)
         seen_synthesis_keys.add(exact_item["synthesis_key"])
@@ -864,8 +1095,11 @@ def build_brownfield_grounding(connection, project_id, task_row, issue_keys=None
             "generated_task_count": current_repo_plan_preview["generated_task_count"],
             "active_task_count": current_active_count,
             "stale": bool(repo_plan_state.get("stale")),
+            "stale_reason": repo_plan_state.get("stale_reason"),
             "last_refreshed_at": repo_plan_state.get("last_refreshed_at"),
             "last_refreshed_by": repo_plan_state.get("last_refreshed_by"),
+            "trust": trust,
+            "lineage": lineage,
         },
         "repo_plan_items": matched_repo_items[:6],
         "codebase_areas": codebase_areas,

@@ -65,6 +65,7 @@ See:
 - [21-codex-mvp-control-loop-governance-observability-plan.md](21-codex-mvp-control-loop-governance-observability-plan.md)
 - [22-codex-mvp-brownfield-depth-pass.md](22-codex-mvp-brownfield-depth-pass.md)
 - [23-codex-mvp-brownfield-execution-leverage.md](23-codex-mvp-brownfield-execution-leverage.md)
+- [24-codex-mvp-brownfield-drift-refresh-trust.md](24-codex-mvp-brownfield-drift-refresh-trust.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

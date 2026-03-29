@@ -272,10 +272,64 @@ def _discovery_drift(previous_summary, current_summary, scanned_at):
         changes.append("Removed codebase map entries: {0}".format(", ".join(codebase_map_removed[:4])))
 
     detected = bool(changes)
+    breaking_reasons = []
+    material_reasons = []
+    minor_reasons = []
+    if primary_language_before != primary_language_after:
+        breaking_reasons.append("Primary language changed")
+    if package_managers_added or package_managers_removed:
+        breaking_reasons.append("Package manager footprint changed")
+    if workflow_labels_removed:
+        breaking_reasons.append("Imported workflow signals were removed")
+    if repo_areas_removed:
+        breaking_reasons.append("Imported repo areas were removed")
+    if codebase_map_removed:
+        breaking_reasons.append("Tracked codebase map entries were removed")
+    if workflow_labels_added:
+        material_reasons.append("New workflow signals were added")
+    if repo_areas_added:
+        material_reasons.append("New repo areas were added")
+    if codebase_map_added:
+        material_reasons.append("New codebase map entries were added")
+    if abs(file_count_delta) >= max(25, int((file_count_before or 0) * 0.2)):
+        material_reasons.append("Scanned file count changed materially")
+    elif file_count_delta:
+        minor_reasons.append("Scanned file count changed modestly")
+
+    if not detected:
+        severity = "none"
+        safe_to_execute = True
+        diagnosis = "No brownfield drift detected."
+        recommended_action = "No review refresh is required."
+    elif breaking_reasons:
+        severity = "high"
+        safe_to_execute = False
+        diagnosis = "{0}. Existing brownfield recommendations may no longer match the imported repo.".format(
+            "; ".join(breaking_reasons[:2])
+        )
+        recommended_action = "Re-review the brownfield import and refresh the repo-grounded plan before acting on imported tasks."
+    elif material_reasons:
+        severity = "medium"
+        safe_to_execute = False
+        diagnosis = "{0}. The brownfield plan should be refreshed before operators trust imported recommendations.".format(
+            "; ".join(material_reasons[:2])
+        )
+        recommended_action = "Inspect the drift, confirm the updated understanding, and refresh the repo-grounded plan."
+    else:
+        severity = "low"
+        safe_to_execute = True
+        diagnosis = "{0}. The current brownfield recommendations are still safe to execute, but the drift should be monitored.".format(
+            "; ".join(minor_reasons[:1]) or "Minor imported changes were detected"
+        )
+        recommended_action = "Keep the current brownfield plan, but rescan again if the affected area broadens."
     return {
         "detected": detected,
         "scanned_at": scanned_at,
         "summary": changes[0] if changes else "No brownfield drift detected.",
+        "severity": severity,
+        "safe_to_execute": safe_to_execute,
+        "diagnosis": diagnosis,
+        "recommended_action": recommended_action,
         "changes": changes,
         "file_count_delta": file_count_delta,
         "primary_language_before": primary_language_before,
@@ -288,6 +342,9 @@ def _discovery_drift(previous_summary, current_summary, scanned_at):
         "package_managers_removed": package_managers_removed,
         "codebase_map_added": codebase_map_added,
         "codebase_map_removed": codebase_map_removed,
+        "breaking_reasons": breaking_reasons,
+        "material_reasons": material_reasons,
+        "minor_reasons": minor_reasons,
     }
 
 
@@ -808,11 +865,12 @@ def rescan_brownfield_project(connection, project_paths, project_id, actor_id):
     onboarding["last_scanned_by"] = actor_id
     onboarding["drift_summary"] = drift
     review_task = None
-    if drift["detected"]:
+    if drift["detected"] and not drift.get("safe_to_execute"):
         onboarding["review_status"] = "review_pending"
         if onboarding.get("repo_plan"):
             repo_plan = dict(onboarding.get("repo_plan") or {})
             repo_plan["stale"] = True
+            repo_plan["stale_reason"] = "imported_repo_drift"
             onboarding["repo_plan"] = repo_plan
         review_task = _reopen_brownfield_review_task(connection, project_id)
         if review_task is not None:
@@ -832,6 +890,8 @@ def rescan_brownfield_project(connection, project_paths, project_id, actor_id):
         "brownfield_rescanned",
         (
             "Brownfield repository rescanned; drift detected and review reopened."
+            if drift["detected"] and not drift.get("safe_to_execute")
+            else "Brownfield repository rescanned; low-severity drift detected but current guidance remains usable."
             if drift["detected"]
             else "Brownfield repository rescanned with no material drift detected."
         ),
@@ -902,6 +962,7 @@ def update_brownfield_onboarding_review(connection, project_paths, project_id, a
     if onboarding.get("repo_plan"):
         repo_plan = dict(onboarding.get("repo_plan") or {})
         repo_plan["stale"] = True
+        repo_plan["stale_reason"] = "review_overrides_changed"
         onboarding["repo_plan"] = repo_plan
     onboarding["reviewed_by"] = actor_id
     onboarding["reviewed_at"] = connection.execute("SELECT CURRENT_TIMESTAMP AS ts").fetchone()["ts"]

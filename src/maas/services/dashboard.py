@@ -9,10 +9,13 @@ from maas.services.failure_memory import enrich_failures_with_quarantine, fetch_
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.projects import resolve_project
 from maas.services.repo_plan import (
+    build_repo_plan_lineage,
+    build_repo_plan_item_lookup,
     _issue_key_lookup,
     _project_supports_git_workspaces,
     _repo_plan_relationship_map,
     _repo_plan_task_rows,
+    build_repo_plan_trust,
     build_repo_plan_preview,
 )
 from maas.services.verification import fetch_latest_verification_by_task
@@ -76,6 +79,23 @@ def _derive_onboarding_state(connection, project_row):
         git_workspaces_by_task=git_workspaces_by_task,
         git_workspace_supported=git_workspace_supported,
     )
+    repo_plan_items = build_repo_plan_item_lookup(
+        discovery_summary,
+        task_rows=repo_plan_task_rows,
+        issue_keys=issue_keys,
+        relationship_map=repo_plan_relationships,
+        latest_verification_by_task=latest_verification_by_task,
+        git_workspaces_by_task=git_workspaces_by_task,
+        git_workspace_supported=git_workspace_supported,
+    )
+    repo_plan_lineage = build_repo_plan_lineage(
+        connection,
+        project_row["project_id"],
+        repo_plan_items,
+        task_rows=repo_plan_task_rows,
+        issue_keys=issue_keys,
+    )
+    repo_plan_trust = build_repo_plan_trust(onboarding, repo_plan_lineage)
     stored_repo_plan_state = onboarding.get("repo_plan") or None
     repo_plan_state = None
     if stored_repo_plan_state is not None:
@@ -87,6 +107,8 @@ def _derive_onboarding_state(connection, project_row):
             "sample_paths": repo_plan_preview["sample_paths"],
             "items": repo_plan_preview["items"],
             "active_task_count": len([row for row in repo_plan_task_rows if row.get("status") != "cancelled"]),
+            "lineage": repo_plan_lineage,
+            "trust": repo_plan_trust,
         }
 
     if mode != "brownfield":
@@ -98,6 +120,7 @@ def _derive_onboarding_state(connection, project_row):
             "review_overrides": review_overrides,
             "repo_plan_preview": repo_plan_preview,
             "repo_plan_state": repo_plan_state,
+            "repo_plan_trust": repo_plan_trust,
             "review_task_id": None,
             "review_task_status": None,
             "review_task_review_state": None,
@@ -149,6 +172,7 @@ def _derive_onboarding_state(connection, project_row):
         "review_overrides": review_overrides,
         "repo_plan_preview": repo_plan_preview,
         "repo_plan_state": repo_plan_state,
+        "repo_plan_trust": repo_plan_trust,
         "review_task_id": review_task["task_id"] if review_task else onboarding.get("review_task_id"),
         "review_task_status": review_task["status"] if review_task else None,
         "review_task_review_state": review_task["review_state"] if review_task else None,

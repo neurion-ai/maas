@@ -306,6 +306,15 @@ export function CodexIssueDetailPanel({
             <strong>Brownfield grounding</strong>
             <span>{brownfieldGrounding.review_status.replaceAll("_", " ")}</span>
           </div>
+          {brownfieldGrounding.repo_plan.trust ? (
+            <div className="codex-review-note">
+              <strong>{brownfieldGrounding.repo_plan.trust.summary}</strong>
+              {" · "}
+              {brownfieldGrounding.repo_plan.trust.detail}
+              {" · "}
+              Recommended action: {brownfieldGrounding.repo_plan.trust.recommended_action}
+            </div>
+          ) : null}
           <div className="codex-run-list codex-run-list--compact">
             <div className="codex-output-item">
               <strong>
@@ -317,12 +326,35 @@ export function CodexIssueDetailPanel({
                 {brownfieldGrounding.repo_plan.active_task_count} active synthesized task
                 {brownfieldGrounding.repo_plan.active_task_count === 1 ? "" : "s"}
               </span>
+              {brownfieldGrounding.repo_plan.trust ? (
+                <span>
+                  {brownfieldGrounding.repo_plan.trust.state.replaceAll("_", " ")} · drift{" "}
+                  {brownfieldGrounding.repo_plan.trust.drift_severity} ·{" "}
+                  {brownfieldGrounding.repo_plan.trust.safe_to_execute ? "safe to execute" : "refresh before acting"}
+                </span>
+              ) : null}
               <span>
                 {brownfieldGrounding.repo_plan.last_refreshed_at
                   ? `Last refreshed ${ageLabel(brownfieldGrounding.repo_plan.last_refreshed_at)} by ${brownfieldGrounding.repo_plan.last_refreshed_by ?? "unknown actor"}`
                   : "Repo-grounded plan has not been refreshed yet."}
               </span>
             </div>
+            {brownfieldGrounding.repo_plan.lineage ? (
+              <div className="codex-output-item">
+                <strong>Historical lineage</strong>
+                <span>
+                  {brownfieldGrounding.repo_plan.lineage.superseded_task_count} superseded ·{" "}
+                  {brownfieldGrounding.repo_plan.lineage.historical_task_count} historical
+                </span>
+                {brownfieldGrounding.repo_plan.lineage.recent_refreshes[0] ? (
+                  <span>
+                    Latest refresh by {brownfieldGrounding.repo_plan.lineage.recent_refreshes[0].refreshed_by} ·{" "}
+                    {ageLabel(brownfieldGrounding.repo_plan.lineage.recent_refreshes[0].refreshed_at)} ·{" "}
+                    {brownfieldGrounding.repo_plan.lineage.recent_refreshes[0].cancelled_count} superseded
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {brownfieldGrounding.scoped_paths.length ? (
               <div className="codex-output-item">
                 <strong>Scoped paths</strong>
@@ -346,6 +378,14 @@ export function CodexIssueDetailPanel({
                   {[...(item.validation_commands ?? []), ...(item.paths ?? [])].filter(Boolean).join(" · ") ||
                     "No explicit repo grounding recorded."}
                 </span>
+                {item.lineage_status && item.lineage_status !== "current" ? (
+                  <span>
+                    {item.lineage_status === "superseded" ? "Historical task superseded" : "Historical task no longer in the current repo plan"}
+                    {item.superseded_by?.issue_key || item.superseded_by?.title
+                      ? ` · successor ${item.superseded_by?.issue_key ?? item.superseded_by?.title}`
+                      : ""}
+                  </span>
+                ) : null}
                 {item.task_kind === "verification_recipe" ? (
                   <span>
                     {item.latest_verification_status

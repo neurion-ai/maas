@@ -30,6 +30,7 @@ export function OverviewPage() {
   const [repoFile, setRepoFile] = useState<RepoFileResponse | null>(null);
   const [pendingRepoPath, setPendingRepoPath] = useState<string | null>(null);
   const livePulse = useLivePulse();
+  const brownfieldTrust = overview?.onboarding?.repo_plan_state?.trust ?? overview?.onboarding?.repo_plan_trust ?? null;
 
   useEffect(() => {
     let mounted = true;
@@ -447,6 +448,27 @@ export function OverviewPage() {
                       ) : (
                         <p>Preview only until onboarding is approved and the synthesized backlog is refreshed.</p>
                       )}
+                      {brownfieldTrust ? <p>{brownfieldTrust.summary}</p> : null}
+                      {brownfieldTrust ? <p>{brownfieldTrust.detail}</p> : null}
+                      {brownfieldTrust ? <p>Recommended action: {brownfieldTrust.recommended_action}</p> : null}
+                      {overview.onboarding.repo_plan_state?.lineage?.recent_refreshes?.[0] ? (
+                        <p>
+                          Latest refresh: {overview.onboarding.repo_plan_state.lineage.recent_refreshes[0].created_count} created ·{" "}
+                          {overview.onboarding.repo_plan_state.lineage.recent_refreshes[0].updated_count} updated ·{" "}
+                          {overview.onboarding.repo_plan_state.lineage.recent_refreshes[0].cancelled_count} superseded
+                        </p>
+                      ) : null}
+                      {(overview.onboarding.repo_plan_state?.lineage?.superseded_items?.length ?? 0) > 0
+                        ? overview.onboarding.repo_plan_state?.lineage?.superseded_items.slice(0, 3).map((item) => (
+                            <p key={item.task_id}>
+                              <strong>{item.issue_key ?? item.title}</strong>
+                              {" superseded"}
+                              {item.superseded_by?.issue_key || item.superseded_by?.title
+                                ? ` by ${item.superseded_by?.issue_key ?? item.superseded_by?.title}`
+                                : ""}
+                            </p>
+                          ))
+                        : null}
                       {overview.onboarding.repo_plan_preview.items?.map((item) => (
                         <p key={item.synthesis_key}>
                           <strong>{item.title}</strong>
@@ -469,6 +491,17 @@ export function OverviewPage() {
                     </div>
                     <div className="data-list__meta">
                       <span>{overview.onboarding.repo_plan_state?.active_task_count ?? 0} active synthesized tasks</span>
+                      {brownfieldTrust ? (
+                        <span>
+                          {brownfieldTrust.state.replaceAll("_", " ")} · drift {brownfieldTrust.drift_severity}
+                        </span>
+                      ) : null}
+                      {overview.onboarding.repo_plan_state?.lineage ? (
+                        <span>
+                          {overview.onboarding.repo_plan_state.lineage.superseded_task_count} superseded ·{" "}
+                          {overview.onboarding.repo_plan_state.lineage.historical_task_count} historical
+                        </span>
+                      ) : null}
                       {overview.onboarding.review_status === "approved" ? (
                         <button
                           type="button"

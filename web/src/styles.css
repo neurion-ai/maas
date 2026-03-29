@@ -5565,6 +5565,200 @@ body {
   padding: 10px 0;
 }
 
+.codex-theater-page {
+  gap: 18px;
+}
+
+.codex-theater-summary {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.codex-theater-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.codex-theater-lanes {
+  display: grid;
+  gap: 14px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(250px, 1fr);
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.codex-theater-lane {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.codex-theater-lane__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.codex-theater-lane__body {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.codex-theater-card {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent 8%);
+  padding: 14px;
+  text-align: left;
+  transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+}
+
+.codex-theater-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+}
+
+.codex-theater-card.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.codex-theater-card--good {
+  background: color-mix(in srgb, var(--accent-soft) 68%, var(--panel-strong));
+}
+
+.codex-theater-card--warn {
+  background: color-mix(in srgb, var(--warning-soft) 72%, var(--panel-strong));
+}
+
+.codex-theater-card--danger {
+  background: color-mix(in srgb, var(--danger-soft) 74%, var(--panel-strong));
+}
+
+.codex-theater-card__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.codex-theater-card__issue-key {
+  color: var(--muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.codex-theater-card__meta,
+.codex-theater-card__chips,
+.codex-theater-branch__meta,
+.codex-theater-branch__chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.codex-theater-bottom {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 2.2fr) minmax(300px, 1fr);
+}
+
+.codex-theater-tree {
+  display: grid;
+  gap: 14px;
+}
+
+.codex-theater-tree__group {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-theater-tree__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.codex-theater-tree__items {
+  display: grid;
+  gap: 10px;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+
+.codex-theater-branch {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, transparent 8%);
+  padding: 14px;
+  text-align: left;
+}
+
+.codex-theater-branch.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.codex-theater-branch--good {
+  background: color-mix(in srgb, var(--accent-soft) 54%, var(--panel));
+}
+
+.codex-theater-branch--warn {
+  background: color-mix(in srgb, var(--warning-soft) 58%, var(--panel));
+}
+
+.codex-theater-branch__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.codex-theater-focus {
+  align-content: start;
+}
+
+.codex-theater-focus-chip {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, transparent 8%);
+  padding: 12px;
+  text-align: left;
+}
+
+.codex-theater-focus-chip--good {
+  background: color-mix(in srgb, var(--accent-soft) 48%, var(--panel));
+}
+
+.codex-theater-focus-chip--warn {
+  background: color-mix(in srgb, var(--warning-soft) 52%, var(--panel));
+}
+
+.codex-theater-focus-chip--danger {
+  background: color-mix(in srgb, var(--danger-soft) 56%, var(--panel));
+}
+
 @media (max-width: 1280px) {
   .codex-metric-grid,
   .codex-three-column,
@@ -5617,6 +5811,10 @@ body {
   }
 
   .codex-review-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .codex-theater-bottom {
     grid-template-columns: 1fr;
   }
 }

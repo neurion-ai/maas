@@ -24,9 +24,10 @@ import { CodexSystemPage } from "./pages/CodexSystemPage";
 import { CodexWorkPage } from "./pages/CodexWorkPage";
 import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { TheaterPage } from "./pages/TheaterPage";
 import type { OperatorInboxResponse, ProjectSummary } from "./types";
 
-type View = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
+type View = "command" | "theater" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
 type ThemeMode = "light" | "dark";
 
 const THEME_STORAGE_KEY = "maas:theme";
@@ -37,6 +38,11 @@ const PRIMARY_VIEWS: Array<{ id: Exclude<View, "settings">; label: string; summa
     id: "command",
     label: "Command",
     summary: "What needs judgment, what is moving, and what just landed."
+  },
+  {
+    id: "theater",
+    label: "Theater",
+    summary: "Live issue ownership, run posture, and branch lineage in one execution map."
   },
   {
     id: "work",
@@ -612,6 +618,12 @@ function AppShell() {
               operatorWorkflow={operatorWorkflow}
               operatorWorkflowWarning={operatorWorkflowWarning}
               onOpenOperatorItem={handleAttentionItem}
+            />
+          ) : null}
+          {activeView === "theater" ? (
+            <TheaterPage
+              key={`theater:${activeProject?.project_id ?? "none"}`}
+              onNavigate={setActiveView}
             />
           ) : null}
           {activeView === "work" ? <CodexWorkPage key={`work:${activeProject?.project_id ?? "none"}`} onNavigate={setActiveView} /> : null}

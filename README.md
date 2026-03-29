@@ -35,6 +35,7 @@ Autonomous execution only becomes useful when the surrounding control loop is tr
 ## Operator Surfaces
 
 - `Command`: what needs judgment now
+- `Theater`: live issue ownership, run posture, and branch lineage in one execution map
 - `Work`: shared `List | Board` view of issues plus detail and execution history
 - `Issues`: approvals, blocked work, failed runs, grouped review, and recovery actions
 - `Agents`: active ownership, execution threads, spawned work, and health
@@ -56,7 +57,7 @@ Autonomous execution only becomes useful when the surrounding control loop is tr
 Today MAAS is a substantial local prototype built around:
 
 - a Python/FastAPI backend with SQLite-backed state
-- a React control plane for Command, Work, Issues, Agents, Runs, System, and Projects
+- a React control plane for Command, Theater, Work, Issues, Agents, Runs, System, and Projects
 - goal intake, issue synthesis, autopilot, review, recovery, retrieval, delivery-prep, and GitHub sync flows
 - a GitHub Project-driven execution workflow for tracked issues, PRs, and review state
 - live and simulated Codex execution paths with operator-visible logs, traces, and artifacts
@@ -107,6 +108,7 @@ Relevant design and roadmap documents:
 - [Codex MVP Brownfield Depth Pass](docs/implementation/22-codex-mvp-brownfield-depth-pass.md)
 - [Codex MVP Brownfield Execution Leverage](docs/implementation/23-codex-mvp-brownfield-execution-leverage.md)
 - [Codex MVP Brownfield Drift, Refresh, and Trust](docs/implementation/24-codex-mvp-brownfield-drift-refresh-trust.md)
+- [Execution Theater Foundation](docs/implementation/26-execution-theater-foundation.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

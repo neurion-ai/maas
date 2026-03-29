@@ -50,6 +50,7 @@ import type {
   DeliverySyncResponse,
   EnvironmentDoctorResponse,
   SupervisorRunResponse,
+  TheaterResponse,
   TaskDeliveryStatusResponse,
   TimelineResponse
 } from "../types";
@@ -124,6 +125,47 @@ const OVERVIEW_FALLBACK: OverviewResponse = {
   ],
   recent_failures: [],
   repeated_failures: []
+};
+
+const THEATER_FALLBACK: TheaterResponse = {
+  generated_at: new Date().toISOString(),
+  project: null,
+  summary: {
+    issue_count: 0,
+    active_issue_count: 0,
+    agent_count: 0,
+    active_run_count: 0,
+    branch_count: 0,
+    pull_request_count: 0,
+    git_supported: false,
+    branch_data_state: "empty",
+    brownfield_trust: null,
+  },
+  issues: [],
+  agents: [],
+  runs: [],
+  branches: [],
+  pull_requests: [],
+  links: {
+    issue_to_agent: [],
+    issue_to_run: [],
+    issue_to_branch: [],
+    branch_to_pr: [],
+    branch_to_base: [],
+  },
+  layout: {
+    issue_lanes: [
+      { key: "planned", label: "Planned" },
+      { key: "ready", label: "Ready" },
+      { key: "assigned", label: "Assigned" },
+      { key: "in_progress", label: "In Progress" },
+      { key: "review", label: "Review" },
+      { key: "blocked", label: "Blocked" },
+      { key: "delivery", label: "Delivery" },
+      { key: "done_recent", label: "Done" },
+    ],
+    branch_groups: [],
+  },
 };
 
 const GOAL_TREE_FALLBACK: GoalTreeResponse = {
@@ -1151,6 +1193,10 @@ export async function refreshRepoPlan(projectId: string) {
 
 export function fetchOverview(projectId?: string | null, signal?: AbortSignal, onFallback?: () => void) {
   return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK, signal, onFallback, projectId);
+}
+
+export function fetchTheater(projectId?: string | null, signal?: AbortSignal, onFallback?: () => void) {
+  return fetchJson<TheaterResponse>("/api/theater", THEATER_FALLBACK, signal, onFallback, projectId);
 }
 
 export function fetchRepoTree(path = "", signal?: AbortSignal, onFallback?: () => void) {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
 import { assignNextTask, fetchAgentRoster, fetchCodexAgentDetail, fetchCodexRunDetail, recoverAgent } from "../lib/controlRoomApi";
+import { consumePendingAgentFocus } from "../lib/agentFocus";
 import { formatTimestamp } from "../lib/codexMvp";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
@@ -30,7 +31,7 @@ function formatAgentRole(agent: AgentRosterEntry) {
 
 export function CodexAgentsPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [agents, setAgents] = useState<AgentRosterEntry[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => consumePendingAgentFocus());
   const [detail, setDetail] = useState<CodexAgentDetailResponse | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRunDetail, setSelectedRunDetail] = useState<CodexRunDetailResponse | null>(null);

@@ -1152,6 +1152,165 @@ export interface OverviewResponse {
   repeated_failures: RepeatedFailureItem[];
 }
 
+export interface TheaterProjectSummary {
+  project_id: string;
+  name: string;
+  description: string;
+  project_type: string;
+  source_root?: string | null;
+  onboarding_mode?: string | null;
+}
+
+export interface TheaterIssue {
+  task_id: string;
+  issue_key?: string | null;
+  title: string;
+  status: string;
+  priority: number;
+  review_state?: string | null;
+  goal_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  agent_status?: string | null;
+  current_run_session_id?: string | null;
+  current_run_status?: string | null;
+  current_run_stale: boolean;
+  delivery_state?: "ready" | "attention" | "blocked" | null;
+  delivery_summary?: string | null;
+  github_pr_state?: string | null;
+  github_pr_url?: string | null;
+  blocked_reason?: string | null;
+  age_hours?: number | null;
+  review_age_hours?: number | null;
+  scoped_paths: string[];
+  validation_commands: string[];
+  latest_verification_status?: string | null;
+  latest_verification_at?: string | null;
+  latest_verification_command?: string | null;
+  git_workspace_supported: boolean;
+  git_workspace_prepared: boolean;
+  git_workspace_branch?: string | null;
+  git_workspace_path?: string | null;
+  git_workspace_dirty_files?: number;
+  git_workspace_base_ref?: string | null;
+  git_workspace_head_commit?: string | null;
+  git_workspace_updated_at?: string | null;
+  lane_key:
+    | "planned"
+    | "ready"
+    | "assigned"
+    | "in_progress"
+    | "review"
+    | "blocked"
+    | "delivery"
+    | "done_recent";
+  sort_weight: number;
+}
+
+export interface TheaterAgent {
+  agent_id: string;
+  name: string;
+  role: string;
+  status: string;
+  current_task_id?: string | null;
+  current_task_title?: string | null;
+  current_run_id?: string | null;
+  last_heartbeat_age_seconds?: number | null;
+  visual_state: "idle" | "working" | "blocked" | "review_wait" | "attention";
+}
+
+export interface TheaterRun {
+  run_id: string;
+  task_id?: string | null;
+  issue_key?: string | null;
+  task_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  status: string;
+  is_live: boolean;
+  is_stale: boolean;
+  execution_mode?: string | null;
+  status_message?: string | null;
+  recommended_action?: string | null;
+  started_at?: string | null;
+  ended_at?: string | null;
+  last_heartbeat_at?: string | null;
+  heartbeat_age_seconds?: number | null;
+}
+
+export interface TheaterBranch {
+  branch_id: string;
+  branch_name: string;
+  task_id?: string | null;
+  issue_key?: string | null;
+  issue_title?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  run_id?: string | null;
+  run_status?: string | null;
+  task_status?: string | null;
+  worktree_path?: string | null;
+  base_branch?: string | null;
+  head_commit?: string | null;
+  dirty_file_count?: number;
+  change_summary?: string | null;
+  latest_activity_at?: string | null;
+  is_active: boolean;
+  pr_id?: string | null;
+  depth: number;
+}
+
+export interface TheaterPullRequest {
+  pr_id: string;
+  number?: number | null;
+  url?: string | null;
+  state?: string | null;
+  is_draft: boolean;
+  title?: string | null;
+  head_branch?: string | null;
+  base_branch?: string | null;
+  task_id?: string | null;
+  issue_key?: string | null;
+}
+
+export interface TheaterResponse {
+  generated_at: string;
+  project: TheaterProjectSummary | null;
+  summary: {
+    issue_count: number;
+    active_issue_count: number;
+    agent_count: number;
+    active_run_count: number;
+    branch_count: number;
+    pull_request_count: number;
+    git_supported: boolean;
+    branch_data_state: "available" | "unsupported" | "empty";
+    brownfield_trust?: "preview_only" | "fresh" | "watch" | "stale" | null;
+  };
+  issues: TheaterIssue[];
+  agents: TheaterAgent[];
+  runs: TheaterRun[];
+  branches: TheaterBranch[];
+  pull_requests: TheaterPullRequest[];
+  links: {
+    issue_to_agent: Array<{ issue_id: string; agent_id: string }>;
+    issue_to_run: Array<{ issue_id: string; run_id: string }>;
+    issue_to_branch: Array<{ issue_id: string; branch_id: string }>;
+    branch_to_pr: Array<{ branch_id: string; pr_id: string }>;
+    branch_to_base: Array<{ branch_id: string; base_branch: string }>;
+  };
+  layout: {
+    issue_lanes: Array<{
+      key: TheaterIssue["lane_key"];
+      label: string;
+    }>;
+    branch_groups: Array<{
+      base_branch: string;
+      branch_ids: string[];
+    }>;
+  };
+}
+
 export interface FailureItem {
   failure_id?: string;
   task_id?: string | null;

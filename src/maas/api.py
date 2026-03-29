@@ -115,6 +115,7 @@ from maas.services.steering import (
     review_task,
 )
 from maas.services.system_dialogs import pick_directory_via_native_dialog
+from maas.services.theater import fetch_theater
 from maas.supervisor import run_supervisor_once
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs, run_task_verification
@@ -912,6 +913,14 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
         connection = connect(paths)
         try:
             return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
+        finally:
+            connection.close()
+
+    @app.get("/api/theater")
+    def theater(project_id: str = None):
+        connection = connect(paths)
+        try:
+            return fetch_theater(connection, paths, project_id=_selected_project_id(connection, project_id))
         finally:
             connection.close()
 

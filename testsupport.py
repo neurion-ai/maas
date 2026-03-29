@@ -5,6 +5,8 @@ from contextlib import contextmanager
 from fastapi.testclient import TestClient
 
 from maas.api import create_app
+from maas.paths import ProjectPaths
+from maas.services.autopilot import stop_all_autopilots
 
 
 @contextmanager
@@ -16,3 +18,4 @@ def api_client(project_root=".", **kwargs):
         yield client
     finally:
         client.close()
+        stop_all_autopilots(ProjectPaths(project_root))

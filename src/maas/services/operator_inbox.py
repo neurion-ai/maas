@@ -691,7 +691,7 @@ def fetch_operator_inbox(connection, project_id, project_paths=None):
     items.sort(key=lambda item: (severity_order.get(item["severity"], 3), item["bucket"], item["title"]))
     workflow_items = [_workflow_item(item) for item in items[:12]]
     workflow_operator_actions = _workflow_operator_actions(workflow_items)
-    if any(item.get("metadata", {}).get("delivery_state") in {"retry_ready", "retry_exhausted"} for item in buckets["notification_failures"]):
+    if any(item.get("metadata", {}).get("delivery_state") == "retry_ready" for item in buckets["notification_failures"]):
         workflow_operator_actions = dedupe_operator_actions(
             workflow_operator_actions
             + [

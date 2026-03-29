@@ -665,31 +665,31 @@ export function CodexIssuesPage({
           pendingActionKey={pendingKey}
           onRunVerification={
             selectedTask
-              ? () =>
+              ? (taskId) =>
                   void runAction(
-                    `run-verification:${selectedTask.task_id}`,
-                    () => runTaskVerification(selectedTask.task_id),
-                    `Ran verification for ${issueLabel(selectedTask, keyMap)}.`
+                    `run-verification:${taskId}`,
+                    () => runTaskVerification(taskId),
+                    `Ran verification for ${keyMap.get(taskId) ?? taskId}.`
                   )
               : undefined
           }
           onPrepareGitWorkspace={
             selectedTask
-              ? () =>
+              ? (taskId) =>
                   void runAction(
-                    `git-workspace:${selectedTask.task_id}`,
-                    () => prepareTaskGitWorkspace(selectedTask.task_id),
-                    `Prepared a git workspace for ${issueLabel(selectedTask, keyMap)}.`
+                    `git-workspace:${taskId}`,
+                    () => prepareTaskGitWorkspace(taskId),
+                    `Prepared a git workspace for ${keyMap.get(taskId) ?? taskId}.`
                   )
               : undefined
           }
           onRefreshGitDiff={
             selectedTask
-              ? () =>
+              ? (taskId) =>
                   void runAction(
-                    `git-workspace:${selectedTask.task_id}`,
-                    () => refreshTaskGitDiff(selectedTask.task_id),
-                    `Refreshed git diff evidence for ${issueLabel(selectedTask, keyMap)}.`
+                    `git-workspace:${taskId}`,
+                    () => refreshTaskGitDiff(taskId),
+                    `Refreshed git diff evidence for ${keyMap.get(taskId) ?? taskId}.`
                   )
               : undefined
           }

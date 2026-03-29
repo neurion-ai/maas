@@ -268,6 +268,49 @@ lint = "example:main"
             self.assertTrue(repo_area_item["git_workspace_branch"].startswith("maas/"))
             self.assertGreaterEqual(repo_area_item["supporting_verification_recipe_count"], 1)
 
+    def test_overview_marks_repo_area_workspace_supported_from_git_parent_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = os.path.join(tmpdir, "repo")
+            source_root = os.path.join(repo_root, "apps", "service")
+            os.makedirs(os.path.join(source_root, "src"), exist_ok=True)
+            with open(os.path.join(source_root, "README.md"), "w", encoding="utf-8") as handle:
+                handle.write("# Imported Project\n")
+            with open(os.path.join(source_root, "pyproject.toml"), "w", encoding="utf-8") as handle:
+                handle.write(
+                    """
+[project]
+name = "imported-project"
+
+[project.scripts]
+lint = "example:main"
+""".strip()
+                )
+            with open(os.path.join(source_root, "src", "app.py"), "w", encoding="utf-8") as handle:
+                handle.write("print('hello')\n")
+            _init_git_repo(repo_root)
+
+            bootstrap_project(
+                source_root,
+                name="Brownfield Nested Git Support Test",
+                description="dashboard nested git support",
+                project_type="custom",
+            )
+            client = TestClient(create_app(source_root))
+            review_task_id = client.get("/api/overview").json()["onboarding"]["review_task_id"]
+            review_response = client.post(
+                f"/api/tasks/{review_task_id}/actions/review",
+                json={"actor_id": "agent_reviewer", "decision": "approve"},
+            )
+            self.assertEqual(review_response.status_code, 200)
+
+            overview_payload = client.get("/api/overview").json()
+            repo_area_item = next(
+                item
+                for item in overview_payload["onboarding"]["repo_plan_state"]["items"]
+                if item["task_kind"] == "repo_area_plan"
+            )
+            self.assertTrue(repo_area_item["git_workspace_supported"])
+
     def test_overview_filters_brownfield_summary_using_review_overrides(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             os.makedirs(os.path.join(tmpdir, "src"), exist_ok=True)

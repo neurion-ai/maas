@@ -102,9 +102,9 @@ export function CodexIssueDetailPanel({
   issueKeyMap: Map<string, string>;
   actions?: ReactNode;
   pendingActionKey?: string | null;
-  onRunVerification?: () => void;
-  onPrepareGitWorkspace?: () => void;
-  onRefreshGitDiff?: () => void;
+  onRunVerification?: (taskId: string) => void;
+  onPrepareGitWorkspace?: (taskId: string) => void;
+  onRefreshGitDiff?: (taskId: string) => void;
   onSelectTask?: (taskId: string) => void;
   onNavigate?: (view: "work" | "issues" | "agents" | "runs" | "system" | "projects" | "command") => void;
 }) {
@@ -397,7 +397,7 @@ export function CodexIssueDetailPanel({
                         type="button"
                         className="codex-button"
                         disabled={pendingActionKey === `run-verification:${item.task_id}`}
-                        onClick={() => onRunVerification()}
+                        onClick={() => onRunVerification(item.task_id!)}
                       >
                         {pendingActionKey === `run-verification:${item.task_id}` ? "Running..." : "Run verification"}
                       </button>
@@ -412,10 +412,10 @@ export function CodexIssueDetailPanel({
                         disabled={pendingActionKey === `git-workspace:${item.task_id}`}
                         onClick={() => {
                           if (item.git_workspace_prepared) {
-                            onRefreshGitDiff?.();
+                            onRefreshGitDiff?.(item.task_id!);
                             return;
                           }
-                          onPrepareGitWorkspace?.();
+                          onPrepareGitWorkspace?.(item.task_id!);
                         }}
                       >
                         {pendingActionKey === `git-workspace:${item.task_id}`

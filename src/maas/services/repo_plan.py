@@ -2,6 +2,7 @@
 
 import json
 import os
+import subprocess
 
 from maas.ids import generate_id
 from maas.services.bootstrap import apply_onboarding_review_overrides, default_onboarding_review_overrides
@@ -91,9 +92,16 @@ def _project_supports_git_workspaces(connection, project_id):
         (project_id,),
     ).fetchone()
     source_root = os.path.abspath((project_row["source_root"] if project_row else "") or "")
-    if not source_root:
+    if not source_root or not os.path.isdir(source_root):
         return False
-    return os.path.exists(os.path.join(source_root, ".git"))
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=source_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+    )
+    return result.returncode == 0
 
 
 def _issue_key_lookup(connection, project_id):

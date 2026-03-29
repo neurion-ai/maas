@@ -10,6 +10,7 @@ import {
   fetchProjects,
   restoreProject,
 } from "./lib/controlRoomApi";
+import { setPendingNotificationFocus } from "./lib/notificationFocus";
 import type { OperatorLoopItem, OperatorWorkflowState } from "./lib/operatorLoop";
 import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId } from "./lib/projectScope";
 import { setPendingRunFocus } from "./lib/runFocus";
@@ -23,7 +24,7 @@ import { CodexSystemPage } from "./pages/CodexSystemPage";
 import { CodexWorkPage } from "./pages/CodexWorkPage";
 import { ProjectsPage, type ProjectFormState } from "./pages/ProjectsPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import type { ProjectSummary } from "./types";
+import type { OperatorInboxResponse, ProjectSummary } from "./types";
 
 type View = "command" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
 type ThemeMode = "light" | "dark";
@@ -113,6 +114,7 @@ function AppShell() {
   );
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [attentionOpen, setAttentionOpen] = useState(false);
+  const [operatorInbox, setOperatorInbox] = useState<OperatorInboxResponse | null>(null);
   const [operatorWorkflow, setOperatorWorkflow] = useState<OperatorWorkflowState | null>(null);
   const [operatorWorkflowWarning, setOperatorWorkflowWarning] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -182,6 +184,7 @@ function AppShell() {
   }, [livePulse]);
 
   useEffect(() => {
+    setOperatorInbox(null);
     setOperatorWorkflow(null);
     setOperatorWorkflowWarning(null);
     setAttentionOpen(false);
@@ -235,6 +238,7 @@ function AppShell() {
     const controller = new AbortController();
     async function loadAttention() {
       if (!selectedProjectId) {
+        setOperatorInbox(null);
         setOperatorWorkflow(null);
         setOperatorWorkflowWarning(null);
         announcedAttentionIds.current = new Set();
@@ -245,6 +249,7 @@ function AppShell() {
       const payload = await fetchOperatorInbox(controller.signal, () => {
         fellBack = true;
       });
+      setOperatorInbox(payload);
       const workflow = payload.workflow;
       setOperatorWorkflow(workflow);
       setOperatorWorkflowWarning(
@@ -270,6 +275,7 @@ function AppShell() {
     }
 
     void loadAttention().catch(() => {
+      setOperatorInbox(null);
       setOperatorWorkflow(null);
       setOperatorWorkflowWarning("Operator inbox is unavailable right now.");
     });
@@ -406,6 +412,9 @@ function AppShell() {
     }
     if (route.resourceType === "session" && route.resourceId) {
       setPendingRunFocus(route.resourceId);
+    }
+    if (route.resourceType === "notification_digest" && route.resourceId) {
+      setPendingNotificationFocus(route.resourceId);
     }
     setActiveView(route.view);
     setAttentionOpen(false);
@@ -599,6 +608,7 @@ function AppShell() {
             <CommandPage
               key={`command:${activeProject?.project_id ?? "none"}`}
               onNavigate={setActiveView}
+              operatorInbox={operatorInbox}
               operatorWorkflow={operatorWorkflow}
               operatorWorkflowWarning={operatorWorkflowWarning}
               onOpenOperatorItem={handleAttentionItem}

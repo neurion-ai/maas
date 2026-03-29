@@ -772,6 +772,7 @@ export function fetchOperatorInbox(signal?: AbortSignal, onFallback?: () => void
           policyConflictCount: 0,
           recommendedView: "command",
           recommendedLabel: "Open Command",
+          operatorActions: [],
           items: [],
         },
         autopilot: {
@@ -780,6 +781,7 @@ export function fetchOperatorInbox(signal?: AbortSignal, onFallback?: () => void
           summary: "Refreshing project execution posture.",
           detail: "The operator loop will appear here once project state loads.",
           facts: [],
+          operatorActions: [],
         },
       },
       project: {
@@ -1894,12 +1896,11 @@ export async function runAlertOperatorAction(operatorAction: AlertOperatorAction
 export async function runControlOperatorAction(operatorAction: ControlOperatorAction) {
   if (operatorAction.action === "run_orchestrator") {
     const payload = operatorAction.payload ?? {};
-    await runOrchestratorPass(
+    return runOrchestratorPass(
       Number(payload.allocate_limit ?? 6),
       Number(payload.provider_job_limit ?? 4),
       Boolean(payload.auto_launch_assigned_work ?? true)
     );
-    return;
   }
   if (operatorAction.action === "cancel_run") {
     await cancelCodexRun(operatorAction.resource_id);
@@ -1942,6 +1943,12 @@ export async function runControlOperatorAction(operatorAction: ControlOperatorAc
       max_notification_failures: Number(operatorAction.payload?.max_notification_failures ?? 0),
     });
     return;
+  }
+  if (operatorAction.action === "process_notification") {
+    return processNotification(operatorAction.resource_id);
+  }
+  if (operatorAction.action === "process_next_notification") {
+    return processNextNotification(operatorAction.resource_type === "project" ? operatorAction.resource_id : undefined);
   }
   if (operatorAction.action === "recover_task") {
     await recoverTask(operatorAction.resource_id);

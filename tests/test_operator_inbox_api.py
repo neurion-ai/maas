@@ -164,6 +164,8 @@ class OperatorInboxApiTest(unittest.TestCase):
             self.assertGreaterEqual(payload["summary"]["blocked_recovery"], 1)
             self.assertGreaterEqual(payload["summary"]["policy_conflicts"], 3)
             self.assertEqual(payload["summary"]["notification_failures"], 1)
+            self.assertEqual(payload["workflow"]["inbox"]["recommendedView"], "issues")
+            self.assertTrue(payload["workflow"]["inbox"]["operatorActions"])
 
             review_ids = {item["resource_id"] for item in payload["buckets"]["review"]}
             stale_run_ids = {item["resource_id"] for item in payload["buckets"]["stale_runs"]}
@@ -181,6 +183,23 @@ class OperatorInboxApiTest(unittest.TestCase):
             self.assertEqual(notification_item["subtype"], "retry_exhausted")
             self.assertEqual(notification_item["metadata"]["delivery_state"], "retry_exhausted")
             self.assertTrue(notification_item["metadata"]["retry_budget_exhausted"])
+            self.assertEqual(notification_item["operator_actions"][0]["action"], "process_notification")
+            self.assertEqual(notification_item["resource_type"], "notification_digest")
+
+            workflow_notification_item = next(
+                item for item in payload["workflow"]["inbox"]["items"] if item["bucket"] == "notification_failures"
+            )
+            self.assertEqual(workflow_notification_item["route"]["view"], "command")
+            self.assertEqual(workflow_notification_item["operatorActions"][0]["action"], "process_notification")
+            self.assertEqual(workflow_notification_item["route"]["resourceType"], "notification_digest")
+            self.assertEqual(
+                payload["workflow"]["inbox"]["operatorActions"][-1]["action"],
+                "process_next_notification",
+            )
+
+            autopilot_summary = payload["workflow"]["autopilot"]
+            self.assertEqual(autopilot_summary["label"], "Autopilot constrained")
+            self.assertEqual(autopilot_summary["operatorActions"][0]["action"], "update_launch_posture")
 
     def test_operator_inbox_uses_review_age_not_task_creation_age_for_overdue_reviews(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -219,6 +238,212 @@ class OperatorInboxApiTest(unittest.TestCase):
             review_item = next(item for item in payload["buckets"]["review"] if item["resource_id"] == task["task_id"])
             self.assertEqual(review_item["subtype"], "review_requested")
             self.assertFalse(review_item["metadata"]["overdue"])
+
+    def test_operator_inbox_normalizes_brownfield_review_status_from_review_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Brownfield Review Normalize Test", description="normalize review status", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_row = connection.execute(
+                    "SELECT project_id, config_json FROM projects LIMIT 1"
+                ).fetchone()
+                project_id = project_row["project_id"]
+                review_task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["autopilot"] = {
+                    "enabled": True,
+                    "interval_seconds": 15,
+                    "allocate_limit": 4,
+                    "provider_job_limit": 2,
+                    "auto_launch_assigned_work": True,
+                    "process_notifications": True,
+                    "notification_batch_limit": 2,
+                }
+                config["onboarding"] = {
+                    "mode": "brownfield",
+                    "review_task_id": review_task["task_id"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'done', review_state = 'approved', updated_at = CURRENT_TIMESTAMP
+                    WHERE task_id = ?
+                    """,
+                    (review_task["task_id"],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with TestClient(create_app(tmpdir)) as client:
+                response = client.get("/api/operator-inbox", params={"project_id": project_id})
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            conflict_subtypes = {item["subtype"] for item in payload["buckets"]["policy_conflicts"]}
+            self.assertNotIn("brownfield_review_pending", conflict_subtypes)
+
+    def test_operator_inbox_keeps_brownfield_conflict_for_changes_requested_review(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Brownfield Review Changes Requested Test", description="changes requested", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_row = connection.execute(
+                    "SELECT project_id, config_json FROM projects LIMIT 1"
+                ).fetchone()
+                project_id = project_row["project_id"]
+                review_task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["autopilot"] = {
+                    "enabled": True,
+                    "interval_seconds": 15,
+                    "allocate_limit": 4,
+                    "provider_job_limit": 2,
+                    "auto_launch_assigned_work": True,
+                    "process_notifications": True,
+                    "notification_batch_limit": 2,
+                }
+                config["onboarding"] = {
+                    "mode": "brownfield",
+                    "review_task_id": review_task["task_id"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review', review_state = 'changes_requested', updated_at = CURRENT_TIMESTAMP
+                    WHERE task_id = ?
+                    """,
+                    (review_task["task_id"],),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with TestClient(create_app(tmpdir)) as client:
+                response = client.get("/api/operator-inbox", params={"project_id": project_id})
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            conflict_item = next(
+                item for item in payload["buckets"]["policy_conflicts"] if item["subtype"] == "brownfield_review_changes_requested"
+            )
+            self.assertEqual(conflict_item["metadata"]["review_status"], "changes_requested")
+
+    def test_operator_inbox_only_surfaces_process_next_for_retry_ready_notification_failures(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Notification Retry Ready Test", description="retry gating", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_row = connection.execute(
+                    "SELECT project_id, config_json FROM projects LIMIT 1"
+                ).fetchone()
+                project_id = project_row["project_id"]
+                task = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(project_row["config_json"] or "{}")
+                config["notifications"] = {
+                    "webhook_urls": ["https://example.test/hooks/maas"],
+                    "minimum_severity": "warning",
+                    "enabled_events": ["escalation_requested"],
+                }
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                exhausted_notification_id = queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "critical",
+                    "Exhausted delivery",
+                    "Retry budget is exhausted.",
+                    resource_type="task",
+                    resource_id=task["task_id"],
+                    payload={"kind": "exhausted"},
+                )[0]
+                connection.execute(
+                    """
+                    UPDATE notification_outbox
+                    SET status = 'failed',
+                        attempts = 5,
+                        last_error = 'exhausted',
+                        next_attempt_at = NULL,
+                        last_attempt_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE notification_id = ?
+                    """,
+                    (exhausted_notification_id,),
+                )
+                connection.commit()
+                exhausted_payload = fetch_operator_inbox(connection, project_id, paths)
+                exhausted_actions = exhausted_payload["workflow"]["inbox"]["operatorActions"]
+                self.assertFalse(any(action["action"] == "process_next_notification" for action in exhausted_actions))
+
+                ready_notification_id = queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "warning",
+                    "Ready delivery",
+                    "Retry can run now.",
+                    resource_type="task",
+                    resource_id=task["task_id"],
+                    payload={"kind": "ready"},
+                )[0]
+                connection.execute(
+                    """
+                    UPDATE notification_outbox
+                    SET status = 'failed',
+                        attempts = 1,
+                        last_error = 'temporary',
+                        next_attempt_at = NULL,
+                        last_attempt_at = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE notification_id = ?
+                    """,
+                    (ready_notification_id,),
+                )
+                connection.commit()
+                ready_payload = fetch_operator_inbox(connection, project_id, paths)
+                ready_actions = ready_payload["workflow"]["inbox"]["operatorActions"]
+                self.assertTrue(any(action["action"] == "process_next_notification" for action in ready_actions))
+            finally:
+                connection.close()
 
 
 if __name__ == "__main__":

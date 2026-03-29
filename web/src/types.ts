@@ -352,6 +352,8 @@ export interface ControlOperatorAction {
     | "cancel_run"
     | "update_launch_posture"
     | "update_autopilot"
+    | "process_notification"
+    | "process_next_notification"
     | "recover_task"
     | "recover_and_requeue_task"
     | "mark_task_for_replan"
@@ -360,7 +362,7 @@ export interface ControlOperatorAction {
     | "reset_circuit_breaker"
     | "restore_and_requeue_quarantine_entry";
   label: string;
-  resource_type: "project" | "task" | "quarantine" | "run";
+  resource_type: "project" | "task" | "quarantine" | "run" | "notification";
   resource_id: string;
   related_task_id?: string | null;
   payload?: Record<string, unknown>;
@@ -1409,11 +1411,14 @@ export type OperatorLoopView = "command" | "issues" | "runs" | "system" | "proje
 export type OperatorLoopTone = "default" | "warn" | "danger";
 
 export interface OperatorWorkflowItem {
+  bucket?: string;
   id: string;
   tone: OperatorLoopTone;
   label: string;
   title: string;
   detail: string;
+  recommendedAction?: string;
+  operatorActions?: ControlOperatorAction[];
   route: {
     view: OperatorLoopView;
     taskId?: string;
@@ -1436,6 +1441,7 @@ export interface OperatorWorkflowState {
     policyConflictCount?: number;
     recommendedView: OperatorLoopView;
     recommendedLabel: string;
+    operatorActions?: ControlOperatorAction[];
     items: OperatorWorkflowItem[];
   };
   autopilot: {
@@ -1444,6 +1450,7 @@ export interface OperatorWorkflowState {
     summary: string;
     detail: string;
     facts: string[];
+    operatorActions?: ControlOperatorAction[];
   };
 }
 

@@ -69,8 +69,16 @@ def project_orchestrator_action(
     )
 
 
+def project_notification_action(action, label, project_id):
+    return operator_action(action, label, "project", project_id)
+
+
 def task_operator_action(action, label, task_id):
     return operator_action(action, label, "task", task_id)
+
+
+def notification_operator_action(action, label, notification_id):
+    return operator_action(action, label, "notification", notification_id)
 
 
 def quarantine_operator_action(action, label, queue_id, related_task_id=None):

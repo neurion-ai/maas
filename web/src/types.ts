@@ -1299,7 +1299,7 @@ export interface TheaterResponse {
     git_supported: boolean;
     branch_data_state: "available" | "unsupported" | "empty";
     brownfield_trust?: "preview_only" | "fresh" | "watch" | "stale" | null;
-    degraded_reasons?: Array<"branch_lineage_unsupported" | "branch_lineage_empty" | "branch_lineage_capped">;
+    degraded_reasons?: Array<"branch_lineage_unsupported">;
     lineage_render_limits?: {
       active_cap: number;
       history_cap: number;

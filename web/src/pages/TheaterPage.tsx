@@ -114,14 +114,10 @@ function branchStatusLabel(branch: TheaterBranch, pr?: { state?: string | null; 
   return branch.task_status?.replaceAll("_", " ") ?? "active";
 }
 
-function degradedReasonLabel(reason: "branch_lineage_unsupported" | "branch_lineage_empty" | "branch_lineage_capped") {
+function degradedReasonLabel(reason: "branch_lineage_unsupported") {
   if (reason === "branch_lineage_unsupported") {
     return "Git lineage is unavailable for this project.";
   }
-  if (reason === "branch_lineage_empty") {
-    return "No branch or worktree lineage exists yet.";
-  }
-  return "Theater is capping lineage rendering to keep the tree responsive.";
 }
 
 export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
@@ -855,7 +851,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
             ))}
             {!payload?.branches.length &&
             payload?.summary.branch_data_state !== "unsupported" &&
-            !payload?.summary.degraded_reasons?.includes("branch_lineage_empty") ? (
+            !payload?.summary.degraded_reasons?.includes("branch_lineage_unsupported") ? (
               <div className="codex-empty-copy">No branch or worktree lineage exists yet.</div>
             ) : null}
           </div>

@@ -5580,6 +5580,79 @@ body {
   gap: 14px;
 }
 
+.codex-theater-field {
+  position: relative;
+  display: grid;
+  gap: 16px;
+}
+
+.codex-theater-agent-dock {
+  display: grid;
+  gap: 12px;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent 16%);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent-soft) 16%, transparent), transparent 44%),
+    color-mix(in srgb, var(--panel) 95%, transparent 5%);
+  padding: 14px;
+}
+
+.codex-theater-agent-dock__header,
+.codex-theater-agent-dock__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.codex-theater-agent-dock__grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.codex-theater-agent-dock__group {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-theater-agent-dock__slots,
+.codex-theater-card__agent-slots {
+  display: flex;
+  min-height: 54px;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.codex-theater-agent-anchor {
+  width: 116px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px dashed color-mix(in srgb, var(--line) 72%, transparent 28%);
+  background: color-mix(in srgb, var(--panel-strong) 84%, transparent 16%);
+}
+
+.codex-theater-agent-anchor--good {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--line));
+}
+
+.codex-theater-agent-anchor--warn {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+}
+
+.codex-theater-agent-anchor--danger {
+  border-color: color-mix(in srgb, var(--danger) 44%, var(--line));
+}
+
+.codex-theater-agent-anchor--empty {
+  width: 100%;
+  min-width: 120px;
+  opacity: 0.56;
+}
+
 .codex-theater-lanes {
   display: grid;
   gap: 14px;
@@ -5667,6 +5740,87 @@ body {
   flex-wrap: wrap;
   color: var(--muted);
   font-size: 0.8rem;
+}
+
+.codex-theater-card__agent-row {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent 18%);
+}
+
+.codex-theater-card__agent-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.codex-theater-agent-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: clip;
+}
+
+.codex-theater-agent-token {
+  position: absolute;
+  display: grid;
+  gap: 2px;
+  min-width: 116px;
+  max-width: 152px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent 30%);
+  background: color-mix(in srgb, var(--panel-strong) 96%, transparent 4%);
+  padding: 9px 12px;
+  box-shadow: 0 14px 34px rgba(12, 18, 32, 0.14);
+  color: inherit;
+  text-align: left;
+  transform: translate(-50%, -50%);
+  transition:
+    left 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    top 240ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 140ms ease,
+    box-shadow 140ms ease,
+    background 140ms ease;
+  pointer-events: auto;
+}
+
+.codex-theater-agent-token strong {
+  font-size: 0.82rem;
+}
+
+.codex-theater-agent-token span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: capitalize;
+}
+
+.codex-theater-agent-token.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent), 0 16px 40px rgba(12, 18, 32, 0.16);
+}
+
+.codex-theater-agent-token--good {
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--panel-strong));
+}
+
+.codex-theater-agent-token--warn {
+  background: color-mix(in srgb, var(--warning-soft) 78%, var(--panel-strong));
+}
+
+.codex-theater-agent-token--danger {
+  background: color-mix(in srgb, var(--danger-soft) 78%, var(--panel-strong));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codex-theater-agent-token,
+  .codex-theater-card {
+    transition: none;
+  }
 }
 
 .codex-theater-bottom {
@@ -5767,6 +5921,10 @@ body {
   .codex-resolved-list,
   .codex-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .codex-theater-agent-dock__grid {
+    grid-template-columns: 1fr;
   }
 }
 

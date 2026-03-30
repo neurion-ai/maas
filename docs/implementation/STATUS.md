@@ -68,6 +68,7 @@ See:
 - [23-codex-mvp-brownfield-execution-leverage.md](23-codex-mvp-brownfield-execution-leverage.md)
 - [24-codex-mvp-brownfield-drift-refresh-trust.md](24-codex-mvp-brownfield-drift-refresh-trust.md)
 - [26-execution-theater-foundation.md](26-execution-theater-foundation.md)
+- [27-execution-theater-field-agent-motion.md](27-execution-theater-field-agent-motion.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

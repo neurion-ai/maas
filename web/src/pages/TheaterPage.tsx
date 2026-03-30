@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchTheater } from "../lib/controlRoomApi";
 import { formatTimestamp, priorityLabel, statusLabel } from "../lib/codexMvp";
 import { consumePendingAgentFocus, setPendingAgentFocus } from "../lib/agentFocus";
@@ -9,6 +9,15 @@ import { useLivePulse } from "../lib/useLivePulse";
 import type { TheaterAgent, TheaterBranch, TheaterIssue, TheaterResponse, TheaterRun } from "../types";
 
 type ViewTarget = "command" | "theater" | "work" | "issues" | "agents" | "runs" | "system" | "projects" | "settings";
+type TheaterDockState = "attention" | "working" | "review_wait" | "idle";
+
+const THEATER_DOCK_ORDER: TheaterDockState[] = ["attention", "working", "review_wait", "idle"];
+const THEATER_DOCK_LABELS: Record<TheaterDockState, string> = {
+  attention: "Needs attention",
+  working: "Working off field",
+  review_wait: "Waiting on review",
+  idle: "Idle reserve",
+};
 
 function heartbeatLabel(seconds?: number | null) {
   if (seconds == null) {
@@ -56,6 +65,39 @@ function agentTone(agent: TheaterAgent) {
   return "default";
 }
 
+function dockStateForAgent(agent: TheaterAgent): TheaterDockState {
+  if (agent.visual_state === "attention" || agent.visual_state === "blocked") {
+    return "attention";
+  }
+  if (agent.visual_state === "working") {
+    return "working";
+  }
+  if (agent.visual_state === "review_wait") {
+    return "review_wait";
+  }
+  return "idle";
+}
+
+function agentStatusLabel(agent: TheaterAgent, run?: TheaterRun | null) {
+  if (run?.is_stale) {
+    return "stale run";
+  }
+  if (run?.is_live) {
+    return run.status.replaceAll("_", " ");
+  }
+  return agent.visual_state.replaceAll("_", " ");
+}
+
+function issueRunLabel(issue: TheaterIssue) {
+  if (issue.current_run_stale) {
+    return "Stale run";
+  }
+  if (issue.current_run_status) {
+    return issue.current_run_status.replaceAll("_", " ");
+  }
+  return "No run";
+}
+
 export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [payload, setPayload] = useState<TheaterResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -64,7 +106,12 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => consumePendingAgentFocus());
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
+  const [fieldLayoutVersion, setFieldLayoutVersion] = useState(0);
+  const [agentPositions, setAgentPositions] = useState<Record<string, { left: number; top: number }>>({});
   const livePulse = useLivePulse();
+  const fieldRef = useRef<HTMLDivElement | null>(null);
+  const lanesRef = useRef<HTMLDivElement | null>(null);
+  const anchorRefs = useRef(new Map<string, HTMLDivElement>());
 
   useEffect(() => subscribeProjectScope(setSelectedProjectId), []);
 
@@ -111,6 +158,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     () => new Map((payload?.pull_requests ?? []).map((pr) => [pr.pr_id, pr])),
     [payload?.pull_requests]
   );
+  const runsById = useMemo(() => new Map((payload?.runs ?? []).map((run) => [run.run_id, run])), [payload?.runs]);
   const issueToBranch = useMemo(() => {
     const mapping = new Map<string, string>();
     for (const link of payload?.links.issue_to_branch ?? []) {
@@ -118,6 +166,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     }
     return mapping;
   }, [payload?.links.issue_to_branch]);
+  const issueIds = useMemo(() => new Set((payload?.issues ?? []).map((issue) => issue.task_id)), [payload?.issues]);
   const selectedIssue = payload?.issues.find((issue) => issue.task_id === selectedIssueId) ?? null;
   const selectedBranch =
     (selectedBranchId ? branchesById.get(selectedBranchId) : null) ??
@@ -156,6 +205,138 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     return grouped;
   }, [payload?.issues, payload?.layout.issue_lanes]);
 
+  const fieldAgents = useMemo(() => {
+    const attached = new Map<string, TheaterAgent[]>();
+    const docked: Record<TheaterDockState, TheaterAgent[]> = {
+      attention: [],
+      working: [],
+      review_wait: [],
+      idle: [],
+    };
+
+    for (const agent of payload?.agents ?? []) {
+      if (agent.current_task_id && issueIds.has(agent.current_task_id)) {
+        attached.set(agent.current_task_id, [...(attached.get(agent.current_task_id) ?? []), agent]);
+        continue;
+      }
+      docked[dockStateForAgent(agent)].push(agent);
+    }
+
+    for (const [taskId, agents] of attached.entries()) {
+      agents.sort((left, right) => left.name.localeCompare(right.name));
+      attached.set(taskId, agents);
+    }
+    for (const key of THEATER_DOCK_ORDER) {
+      docked[key].sort((left, right) => left.name.localeCompare(right.name));
+    }
+
+    return { attached, docked };
+  }, [payload?.agents, issueIds]);
+
+  const anchorKeyForAgent = useMemo(
+    () => (agent: TheaterAgent) => {
+      if (agent.current_task_id && issueIds.has(agent.current_task_id)) {
+        return `issue:${agent.current_task_id}:${agent.agent_id}`;
+      }
+      return `dock:${dockStateForAgent(agent)}:${agent.agent_id}`;
+    },
+    [issueIds]
+  );
+
+  useEffect(() => {
+    const field = fieldRef.current;
+    if (!field || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(() => {
+      setFieldLayoutVersion((current) => current + 1);
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const lanes = lanesRef.current;
+    if (!lanes) {
+      return;
+    }
+    let frame = 0;
+    function handleScroll() {
+      if (frame) {
+        return;
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        setFieldLayoutVersion((current) => current + 1);
+      });
+    }
+    lanes.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      lanes.removeEventListener("scroll", handleScroll);
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleResize() {
+      setFieldLayoutVersion((current) => current + 1);
+    }
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useLayoutEffect(() => {
+    const field = fieldRef.current;
+    if (!field || !payload) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const fieldRect = field.getBoundingClientRect();
+      const next: Record<string, { left: number; top: number }> = {};
+      for (const agent of payload.agents) {
+        const anchor = anchorRefs.current.get(anchorKeyForAgent(agent));
+        if (!anchor) {
+          continue;
+        }
+        const rect = anchor.getBoundingClientRect();
+        next[agent.agent_id] = {
+          left: rect.left - fieldRect.left + rect.width / 2,
+          top: rect.top - fieldRect.top + rect.height / 2,
+        };
+      }
+      setAgentPositions((current) => {
+        let changed = Object.keys(current).length !== Object.keys(next).length;
+        if (!changed) {
+          for (const [agentId, nextPosition] of Object.entries(next)) {
+            const currentPosition = current[agentId];
+            if (
+              !currentPosition ||
+              Math.abs(currentPosition.left - nextPosition.left) > 0.5 ||
+              Math.abs(currentPosition.top - nextPosition.top) > 0.5
+            ) {
+              changed = true;
+              break;
+            }
+          }
+        }
+        return changed ? next : current;
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [anchorKeyForAgent, fieldLayoutVersion, payload]);
+
+  function anchorRef(key: string) {
+    return (node: HTMLDivElement | null) => {
+      if (node) {
+        anchorRefs.current.set(key, node);
+      } else {
+        anchorRefs.current.delete(key);
+      }
+    };
+  }
+
   function focusIssue(issue: TheaterIssue) {
     setSelectedIssueId(issue.task_id);
     setSelectedAgentId(issue.agent_id ?? null);
@@ -174,12 +355,14 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     setSelectedAgentId(agent.agent_id);
     setSelectedIssueId(agent.current_task_id ?? null);
     setSelectedRunId(agent.current_run_id ?? null);
+    setSelectedBranchId(agent.current_task_id ? issueToBranch.get(agent.current_task_id) ?? null : null);
   }
 
   function focusRun(run: TheaterRun) {
     setSelectedRunId(run.run_id);
     setSelectedIssueId(run.task_id ?? null);
     setSelectedAgentId(run.agent_id ?? null);
+    setSelectedBranchId(run.task_id ? issueToBranch.get(run.task_id) ?? null : null);
   }
 
   return (
@@ -242,64 +425,150 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
             to act.
           </span>
         </div>
-        <div className="codex-theater-lanes" role="list" aria-label="Execution lanes">
-          {(payload?.layout.issue_lanes ?? []).map((lane) => {
-            const laneIssues = issuesByLane.get(lane.key) ?? [];
-            return (
-              <section key={lane.key} className="codex-theater-lane" role="listitem">
-                <header className="codex-theater-lane__header">
-                  <strong>{lane.label}</strong>
-                  <span>{laneIssues.length}</span>
-                </header>
-                <div className="codex-theater-lane__body">
-                  {laneIssues.length ? (
-                    laneIssues.map((issue) => {
-                      const isSelected =
-                        selectedIssue?.task_id === issue.task_id ||
-                        selectedBranch?.task_id === issue.task_id ||
-                        selectedRun?.task_id === issue.task_id ||
-                        selectedAgent?.current_task_id === issue.task_id;
-                      return (
-                        <button
-                          key={issue.task_id}
-                          type="button"
-                          className={`codex-theater-card codex-theater-card--${issueTone(issue)} ${isSelected ? "is-selected" : ""}`}
-                          onClick={() => focusIssue(issue)}
-                        >
-                          <div className="codex-theater-card__top">
-                            <span className="codex-theater-card__issue-key">{issue.issue_key ?? issue.task_id}</span>
-                            <span className={`codex-status-chip codex-status-chip--${issue.status}`}>
-                              {statusLabel(issue.status, issue.review_state)}
-                            </span>
-                          </div>
-                          <strong>{issue.title}</strong>
-                          <p>
-                            {issue.blocked_reason
-                              ? issue.blocked_reason.replaceAll("_", " ")
-                              : issue.delivery_summary ?? issue.goal_title ?? "No additional execution summary."}
-                          </p>
-                          <div className="codex-theater-card__meta">
-                            <span>{priorityLabel(issue.priority)}</span>
-                            <span>{issue.agent_name ?? "Unassigned"}</span>
-                            <span>{issue.current_run_status?.replaceAll("_", " ") ?? "No run"}</span>
-                          </div>
-                          <div className="codex-theater-card__chips">
-                            {issue.git_workspace_branch ? <span className="codex-chip">{issue.git_workspace_branch}</span> : null}
-                            {issue.latest_verification_status ? (
-                              <span className="codex-chip">Verify: {issue.latest_verification_status}</span>
-                            ) : null}
-                            {issue.delivery_state ? <span className="codex-chip">Delivery: {issue.delivery_state}</span> : null}
-                          </div>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="codex-empty-copy">No issues in this lane.</div>
-                  )}
-                </div>
-              </section>
-            );
-          })}
+        <div className="codex-theater-field" ref={fieldRef}>
+          <div className="codex-theater-agent-dock">
+            <header className="codex-theater-agent-dock__header">
+              <strong>Agent motion</strong>
+              <span>{payload?.agents.length ?? 0} live tokens attach to issue ownership and runtime changes</span>
+            </header>
+            <div className="codex-theater-agent-dock__grid">
+              {THEATER_DOCK_ORDER.map((dockState) => {
+                const agents = fieldAgents.docked[dockState];
+                return (
+                  <section key={dockState} className="codex-theater-agent-dock__group">
+                    <header className="codex-theater-agent-dock__group-header">
+                      <strong>{THEATER_DOCK_LABELS[dockState]}</strong>
+                      <span>{agents.length}</span>
+                    </header>
+                    <div className="codex-theater-agent-dock__slots">
+                      {agents.length ? (
+                        agents.map((agent) => (
+                          <div
+                            key={agent.agent_id}
+                            ref={anchorRef(`dock:${dockState}:${agent.agent_id}`)}
+                            className={`codex-theater-agent-anchor codex-theater-agent-anchor--${agentTone(agent)}`}
+                          />
+                        ))
+                      ) : (
+                        <div className="codex-empty-copy">No agents in this posture.</div>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="codex-theater-lanes" role="list" aria-label="Execution lanes" ref={lanesRef}>
+            {(payload?.layout.issue_lanes ?? []).map((lane) => {
+              const laneIssues = issuesByLane.get(lane.key) ?? [];
+              return (
+                <section key={lane.key} className="codex-theater-lane" role="listitem">
+                  <header className="codex-theater-lane__header">
+                    <strong>{lane.label}</strong>
+                    <span>{laneIssues.length}</span>
+                  </header>
+                  <div className="codex-theater-lane__body">
+                    {laneIssues.length ? (
+                      laneIssues.map((issue) => {
+                        const isSelected =
+                          selectedIssue?.task_id === issue.task_id ||
+                          selectedBranch?.task_id === issue.task_id ||
+                          selectedRun?.task_id === issue.task_id ||
+                          selectedAgent?.current_task_id === issue.task_id;
+                        const assignedAgents = fieldAgents.attached.get(issue.task_id) ?? [];
+                        return (
+                          <button
+                            key={issue.task_id}
+                            type="button"
+                            className={`codex-theater-card codex-theater-card--${issueTone(issue)} ${isSelected ? "is-selected" : ""}`}
+                            onClick={() => focusIssue(issue)}
+                          >
+                            <div className="codex-theater-card__top">
+                              <span className="codex-theater-card__issue-key">{issue.issue_key ?? issue.task_id}</span>
+                              <span className={`codex-status-chip codex-status-chip--${issue.status}`}>
+                                {statusLabel(issue.status, issue.review_state)}
+                              </span>
+                            </div>
+                            <strong>{issue.title}</strong>
+                            <p>
+                              {issue.blocked_reason
+                                ? issue.blocked_reason.replaceAll("_", " ")
+                                : issue.delivery_summary ?? issue.goal_title ?? "No additional execution summary."}
+                            </p>
+                            <div className="codex-theater-card__meta">
+                              <span>{priorityLabel(issue.priority)}</span>
+                              <span>{issue.agent_name ?? "Unassigned"}</span>
+                              <span>{issueRunLabel(issue)}</span>
+                            </div>
+                            <div className="codex-theater-card__chips">
+                              {issue.git_workspace_branch ? <span className="codex-chip">{issue.git_workspace_branch}</span> : null}
+                              {issue.latest_verification_status ? (
+                                <span className="codex-chip">Verify: {issue.latest_verification_status}</span>
+                              ) : null}
+                              {issue.delivery_state ? <span className="codex-chip">Delivery: {issue.delivery_state}</span> : null}
+                            </div>
+                            <div className="codex-theater-card__agent-row">
+                              <div className="codex-theater-card__agent-copy">
+                                <strong>Agent slots</strong>
+                                <span>
+                                  {assignedAgents.length
+                                    ? `${assignedAgents.length} attached ${assignedAgents.length === 1 ? "token" : "tokens"}`
+                                    : "Awaiting ownership"}
+                                </span>
+                              </div>
+                              <div className="codex-theater-card__agent-slots" aria-hidden="true">
+                                {assignedAgents.length ? (
+                                  assignedAgents.map((agent) => (
+                                    <div
+                                      key={agent.agent_id}
+                                      ref={anchorRef(`issue:${issue.task_id}:${agent.agent_id}`)}
+                                      className={`codex-theater-agent-anchor codex-theater-agent-anchor--${agentTone(agent)}`}
+                                    />
+                                  ))
+                                ) : (
+                                  <div className="codex-theater-agent-anchor codex-theater-agent-anchor--empty" />
+                                )}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="codex-empty-copy">No issues in this lane.</div>
+                    )}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+
+          <div className="codex-theater-agent-overlay">
+            {(payload?.agents ?? []).map((agent) => {
+              const position = agentPositions[agent.agent_id];
+              const linkedRun = agent.current_run_id ? runsById.get(agent.current_run_id) ?? null : null;
+              const isSelected =
+                selectedAgent?.agent_id === agent.agent_id ||
+                selectedIssue?.task_id === agent.current_task_id ||
+                selectedRun?.agent_id === agent.agent_id;
+              if (!position) {
+                return null;
+              }
+              return (
+                <button
+                  key={agent.agent_id}
+                  type="button"
+                  className={`codex-theater-agent-token codex-theater-agent-token--${agentTone(agent)} ${isSelected ? "is-selected" : ""}`}
+                  style={{ left: position.left, top: position.top }}
+                  onClick={() => focusAgent(agent)}
+                  aria-label={`Focus agent ${agent.name}`}
+                >
+                  <strong>{agent.name}</strong>
+                  <span>{agentStatusLabel(agent, linkedRun)}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

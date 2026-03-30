@@ -135,6 +135,8 @@ def fetch_theater(connection, project_paths, project_id=None):
                 "pull_request_count": 0,
                 "git_supported": False,
                 "branch_data_state": "empty",
+                "truth_warnings": 0,
+                "reconciled_at": None,
             },
             "issues": [],
             "agents": [],
@@ -157,7 +159,7 @@ def fetch_theater(connection, project_paths, project_id=None):
 
     scoped_project_id = project["project_id"]
     board = fetch_board(connection, project_id=scoped_project_id)
-    overview = fetch_overview(connection, project_id=scoped_project_id)
+    overview = fetch_overview(connection, project_id=scoped_project_id, project_paths=project_paths)
     roster = fetch_agent_roster(connection, project_id=scoped_project_id)
     runs_payload = fetch_runs(connection, project_id=scoped_project_id, limit=400)
     git_workspaces = fetch_latest_git_workspace_by_task(connection, project_id=scoped_project_id)
@@ -502,6 +504,8 @@ def fetch_theater(connection, project_paths, project_id=None):
             "branch_data_state": branch_data_state,
             "brownfield_trust": ((overview.get("onboarding") or {}).get("repo_plan_trust") or {}).get("state"),
             "degraded_reasons": degraded_reasons,
+            "truth_warnings": ((overview.get("truth") or {}).get("summary") or {}).get("warning_count", 0),
+            "reconciled_at": (overview.get("truth") or {}).get("latest_reconciled_at"),
             "lineage_render_limits": {
                 "active_cap": THEATER_ACTIVE_BRANCH_RENDER_LIMIT,
                 "history_cap": THEATER_HISTORY_BRANCH_RENDER_LIMIT,

@@ -789,6 +789,92 @@ def _gh_view_pull(source_root, number):
     return payload
 
 
+def refresh_delivery_github_pr_sync_state(connection, project_paths, project_id):
+    project = resolve_project(connection, project_id, include_archived=False)
+    if project is None:
+        return {"updated": [], "warnings": []}
+    source_root = project["source_root"] or project_paths.root
+    git_snapshot = _git_repo_snapshot(source_root)
+    if not git_snapshot["is_git_repo"] or not git_snapshot["gh_installed"]:
+        return {"updated": [], "warnings": []}
+
+    rows = connection.execute(
+        """
+        SELECT latest.artifact_id, latest.task_id, latest.path, latest.metadata_json
+        FROM artifacts AS latest
+        JOIN (
+            SELECT task_id, MAX(rowid) AS rowid
+            FROM artifacts
+            WHERE project_id = ?
+              AND artifact_type = 'delivery_github_pr_sync'
+            GROUP BY task_id
+        ) AS ranked
+          ON ranked.rowid = latest.rowid
+        WHERE latest.project_id = ?
+        ORDER BY latest.task_id ASC
+        """,
+        (project_id, project_id),
+    ).fetchall()
+
+    issue_keys = _task_issue_keys(connection, project_id)
+    updated = []
+    warnings = []
+    for row in rows:
+        metadata = _load_json(row["metadata_json"])
+        github_pr = metadata.get("github_pr") or {}
+        number = github_pr.get("number")
+        if not number:
+            continue
+        try:
+            pr_record = _gh_view_pull(source_root, number)
+        except RuntimeError as exc:
+            warnings.append(
+                {
+                    "task_id": row["task_id"],
+                    "issue_key": issue_keys.get(row["task_id"]),
+                    "detail": str(exc),
+                }
+            )
+            continue
+
+        refreshed = {
+            **github_pr,
+            "number": pr_record.get("number"),
+            "url": pr_record.get("url"),
+            "state": pr_record.get("state"),
+            "is_draft": bool(pr_record.get("isDraft")),
+            "title": pr_record.get("title"),
+            "head_branch": pr_record.get("headRefName") or github_pr.get("head_branch"),
+            "base_branch": pr_record.get("baseRefName") or github_pr.get("base_branch"),
+        }
+        if refreshed == github_pr:
+            continue
+
+        connection.execute(
+            """
+            INSERT INTO artifacts (
+                artifact_id, project_id, task_id, session_id, artifact_type, path, metadata_json
+            ) VALUES (?, ?, ?, NULL, 'delivery_github_pr_sync', ?, ?)
+            """,
+            (
+                generate_id("art"),
+                project_id,
+                row["task_id"],
+                row["path"],
+                json.dumps({**metadata, "github_pr": refreshed}),
+            ),
+        )
+        updated.append(
+            {
+                "task_id": row["task_id"],
+                "issue_key": issue_keys.get(row["task_id"]),
+                "number": refreshed.get("number"),
+                "state": refreshed.get("state"),
+            }
+        )
+    return {"updated": updated, "warnings": warnings}
+
+
 def sync_github_pr(connection, project_paths, task_id, actor_id, project_id=None):
     context = _load_delivery_context(connection, project_paths, task_id, project_id=project_id)
     ensure_board_action_allowed(connection, actor_id, context["project_id"], "sync_delivery_github_pr", "task", task_id)

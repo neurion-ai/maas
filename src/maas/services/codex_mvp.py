@@ -10,6 +10,7 @@ from maas.services.git_workspaces import fetch_task_git_workspace
 from maas.services.goal_planning import fetch_goal_explainability
 from maas.services.memory import fetch_project_memory, retrieve_relevant_memory
 from maas.services.provider_jobs import fetch_provider_jobs
+from maas.services.reconciliation import inspect_project_truth
 from maas.services.recovery_policy import fetch_suppression_summary
 from maas.services.repo_plan import build_brownfield_grounding
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
@@ -810,8 +811,15 @@ def fetch_runs(connection, project_id, limit=200, status=None, search=None):
     return {"summary": summary, "items": items}
 
 
-def fetch_system_diagnostics(connection, project_id):
+def fetch_system_diagnostics(connection, project_id, project_paths=None):
     run_payload = fetch_runs(connection, project_id, limit=100)
+    truth = inspect_project_truth(connection, project_paths, project_id=project_id) if project_paths else {
+        "project_id": project_id,
+        "generated_at": None,
+        "latest_reconciled_at": None,
+        "summary": {"warning_count": 0, "repairable_count": 0, "repaired_count": 0, "delivery_refresh_count": 0},
+        "warnings": [],
+    }
     suspect_run_count = connection.execute(
         """
         SELECT COUNT(*) AS count
@@ -939,6 +947,7 @@ def fetch_system_diagnostics(connection, project_id):
             "suppressed_items": suppression["summary"]["total"],
             "oldest_queued_at": oldest_queued_at,
             "oldest_running_at": oldest_running_at,
+            "truth_warnings": truth["summary"]["warning_count"],
         },
         "execution_state": _execution_explanation(connection, project_id),
         "live_runs": {
@@ -957,6 +966,7 @@ def fetch_system_diagnostics(connection, project_id):
             "oldest_queued_at": oldest_queued_at,
             "oldest_running_at": oldest_running_at,
         },
+        "truth": truth,
     }
 
 

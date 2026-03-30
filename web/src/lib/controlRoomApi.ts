@@ -140,6 +140,8 @@ const THEATER_FALLBACK: TheaterResponse = {
     git_supported: false,
     branch_data_state: "empty",
     brownfield_trust: null,
+    truth_warnings: 0,
+    reconciled_at: null,
   },
   issues: [],
   agents: [],
@@ -1191,6 +1193,13 @@ export async function refreshRepoPlan(projectId: string) {
   });
 }
 
+export async function runSystemReconciliation(projectId?: string | null) {
+  return postJson("/api/system/actions/reconcile", {
+    actor_id: DEFAULT_ACTOR_ID,
+    project_id: projectId ?? getSelectedProjectId(),
+  });
+}
+
 export function fetchOverview(projectId?: string | null, signal?: AbortSignal, onFallback?: () => void) {
   return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK, signal, onFallback, projectId);
 }
@@ -1467,9 +1476,13 @@ export function fetchCodexRuns(
   );
 }
 
-export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: () => void) {
+export function fetchCodexSystemDiagnostics(
+  signal?: AbortSignal,
+  onFallback?: () => void,
+  projectId?: string | null
+) {
   return fetchJson<CodexSystemDiagnosticsResponse>(
-    appendProjectScope("/api/system/diagnostics"),
+    "/api/system/diagnostics",
     {
       summary: {
         active_runs: 0,
@@ -1480,6 +1493,7 @@ export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: (
         suppressed_items: 0,
         oldest_queued_at: null,
         oldest_running_at: null,
+        truth_warnings: 0,
       },
       live_runs: {
         active_runs: 0,
@@ -1506,9 +1520,22 @@ export function fetchCodexSystemDiagnostics(signal?: AbortSignal, onFallback?: (
         oldest_queued_at: null,
         oldest_running_at: null,
       },
+      truth: {
+        project_id: null,
+        generated_at: null,
+        latest_reconciled_at: null,
+        summary: {
+          warning_count: 0,
+          repairable_count: 0,
+          repaired_count: 0,
+          delivery_refresh_count: 0,
+        },
+        warnings: [],
+      },
     },
     signal,
-    onFallback
+    onFallback,
+    projectId
   );
 }
 

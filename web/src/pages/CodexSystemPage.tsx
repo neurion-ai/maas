@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
-import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction } from "../lib/controlRoomApi";
+import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction, runSystemReconciliation } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
 import { boardCounts, formatTimestamp, openBoardTasks, resolvedBoardTasks } from "../lib/codexMvp";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
@@ -45,7 +45,7 @@ export function CodexSystemPage({
       fetchActivity(signal, undefined, selectedProjectId),
       fetchIncidentTimeline({ limit: 24 }, signal, undefined, selectedProjectId),
       fetchBoard({}, signal),
-      fetchCodexSystemDiagnostics(signal),
+      fetchCodexSystemDiagnostics(signal, undefined, selectedProjectId),
     ]);
     setProviders(providersPayload);
     setActivity(activityPayload);
@@ -111,6 +111,27 @@ export function CodexSystemPage({
     }
   }
 
+  async function handleReconcileTruth() {
+    setPendingActionKey("system:reconcile");
+    setNotice(null);
+    try {
+      const result = await runSystemReconciliation(selectedProjectId);
+      await loadSystem();
+      const unresolvedWarnings = Array.isArray(result?.warnings)
+        ? result.warnings.filter(
+            (warning: { repaired?: boolean; code?: string }) => !warning.repaired && warning.code !== "repair_applied"
+          ).length
+        : 0;
+      setNotice(
+        `Reconciliation complete: ${result?.summary?.repaired_count ?? 0} repairs, ${unresolvedWarnings} unresolved warnings.`
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Reconciliation failed.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const providerSummary = useMemo(() => {
     return (providers?.providers ?? []).reduce(
@@ -159,6 +180,15 @@ export function CodexSystemPage({
           <span>{runtimeDiagnostics.execution_state.detail}</span>
         </div>
       ) : null}
+      {runtimeDiagnostics?.truth?.summary.warning_count ? (
+        <div className="codex-banner codex-banner--warning">
+          <strong>{runtimeDiagnostics.truth.summary.warning_count} truth warning{runtimeDiagnostics.truth.summary.warning_count === 1 ? "" : "s"}</strong>
+          <span>
+            Latest reconciliation {formatTimestamp(runtimeDiagnostics.truth.latest_reconciled_at ?? null)}.
+            {" "}Use reconcile to realign stale run, task, agent, and delivery linkage.
+          </span>
+        </div>
+      ) : null}
 
       <OperatorLoopPanel
         workflow={operatorWorkflow}
@@ -170,6 +200,14 @@ export function CodexSystemPage({
         warning={operatorWorkflowWarning}
         footer={
           <div className="codex-detail-actions">
+            <button
+              type="button"
+              className="codex-button"
+              onClick={() => void handleReconcileTruth()}
+              disabled={pendingActionKey === "system:reconcile"}
+            >
+              {pendingActionKey === "system:reconcile" ? "Reconciling..." : "Reconcile Truth"}
+            </button>
             <button type="button" className="codex-button codex-button--primary" onClick={() => onNavigate("runs")}>
               Open Runs
             </button>
@@ -208,7 +246,9 @@ export function CodexSystemPage({
           <strong>{runtimeDiagnostics?.summary.stale_agents ?? 0}</strong>
           <span>Stale agents</span>
           <p>
-            {runtimeDiagnostics?.summary.suppressed_items
+            {runtimeDiagnostics?.summary.truth_warnings
+              ? `${runtimeDiagnostics.summary.truth_warnings} truth warning${runtimeDiagnostics.summary.truth_warnings === 1 ? "" : "s"}`
+              : runtimeDiagnostics?.summary.suppressed_items
               ? `${runtimeDiagnostics.summary.suppressed_items} suppressed issue${runtimeDiagnostics.summary.suppressed_items === 1 ? "" : "s"}`
               : runtimeDiagnostics?.summary.oldest_queued_at
                 ? `Oldest queued ${formatTimestamp(runtimeDiagnostics.summary.oldest_queued_at)}`
@@ -218,6 +258,30 @@ export function CodexSystemPage({
       </div>
 
       <div className="codex-two-column">
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Truth warnings</span>
+              <h2>Reconciliation findings</h2>
+            </div>
+            <span className="codex-chip">{runtimeDiagnostics?.truth?.summary.warning_count ?? 0}</span>
+          </div>
+          <div className="codex-run-list">
+            {(runtimeDiagnostics?.truth?.warnings ?? []).slice(0, 6).map((warning) => (
+              <div key={`${warning.code}:${warning.task_id ?? warning.agent_id ?? warning.session_id ?? warning.summary}`} className="codex-run-item">
+                <div className="codex-run-item__meta">
+                  <strong>{warning.issue_key ?? warning.summary}</strong>
+                  <span>{warning.repaired ? "repaired" : warning.repairable ? "repairable" : "manual"}</span>
+                </div>
+                <span>{warning.detail}</span>
+              </div>
+            ))}
+            {!runtimeDiagnostics?.truth?.warnings?.length ? (
+              <div className="codex-empty-copy">No truth drift is currently visible for this project.</div>
+            ) : null}
+          </div>
+        </section>
+
         <section className="codex-panel">
           <div className="codex-panel__header">
             <div>

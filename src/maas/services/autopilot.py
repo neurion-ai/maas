@@ -19,6 +19,7 @@ from maas.services.notifications import process_next_notification, queue_notific
 from maas.services.operator_actions import dedupe_operator_actions, task_operator_action
 from maas.services.orchestrator import run_orchestrator_once
 from maas.services.projects import resolve_project_id
+from maas.services.reconciliation import reconcile_project_truth
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -885,6 +886,12 @@ class AutopilotLoop:
                     else:
                         try:
                             previous_summary = runtime_row.get("last_summary") or {}
+                            reconciliation = reconcile_project_truth(
+                                connection,
+                                paths,
+                                self.project_id,
+                                source="autopilot",
+                            )
                             governance_gate = _governance_gate(connection, paths, self.project_id, policy)
                             if governance_gate["blocked"]:
                                 notifications_processed = _process_autopilot_notifications(
@@ -901,6 +908,7 @@ class AutopilotLoop:
                                     "notifications_processed": notifications_processed,
                                     "why_idle": governance_gate["detail"],
                                     "governance_gate": governance_gate,
+                                    "reconciliation": reconciliation["summary"],
                                 }
                                 summary = _apply_idle_cycle_governance(
                                     connection,
@@ -947,6 +955,7 @@ class AutopilotLoop:
                                 "notifications_processed": notifications_processed,
                                 "why_idle": _execution_explanation(connection, self.project_id),
                                 "governance_gate": governance_gate,
+                                "reconciliation": reconciliation["summary"],
                             }
                             summary = _apply_idle_cycle_governance(
                                 connection,

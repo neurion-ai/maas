@@ -19,6 +19,7 @@ from maas.services.repo_plan import (
     build_repo_plan_trust,
     build_repo_plan_preview,
 )
+from maas.services.reconciliation import inspect_project_truth
 from maas.services.verification import fetch_latest_verification_by_task
 
 
@@ -184,13 +185,21 @@ def _derive_onboarding_state(connection, project_row):
     }
 
 
-def fetch_overview(connection, project_id=None):
+def fetch_overview(connection, project_id=None, project_paths=None):
     project = resolve_project(connection, project_id)
     onboarding = _derive_onboarding_state(connection, project)
+    truth = inspect_project_truth(connection, project_paths, project_id=project_id) if project_paths else {
+        "project_id": project["project_id"] if project else None,
+        "generated_at": None,
+        "latest_reconciled_at": None,
+        "summary": {"warning_count": 0, "repairable_count": 0, "repaired_count": 0, "delivery_refresh_count": 0},
+        "warnings": [],
+    }
     if project is None:
         return {
             "project": None,
             "onboarding": onboarding,
+            "truth": truth,
             "summary": {
                 "tasks_total": 0,
                 "tasks_in_progress": 0,
@@ -204,6 +213,7 @@ def fetch_overview(connection, project_id=None):
                 "failures_total": 0,
                 "repeated_failure_tasks": 0,
                 "agents_running": 0,
+                "truth_warnings": 0,
             },
             "active_work": [],
             "recent_activity": [],
@@ -329,6 +339,7 @@ def fetch_overview(connection, project_id=None):
             else None
         ),
         "onboarding": onboarding,
+        "truth": truth,
         "summary": {
             "tasks_total": sum(task_counts.values()),
             "tasks_in_progress": task_counts.get("in_progress", 0),
@@ -348,6 +359,7 @@ def fetch_overview(connection, project_id=None):
                 "SELECT COUNT(*) AS count FROM agents WHERE project_id = ? AND status = 'running'",
                 (scoped_project_id,),
             ).fetchone()["count"],
+            "truth_warnings": truth["summary"]["warning_count"],
         },
         "active_work": active_tasks,
         "recent_activity": recent_activity,

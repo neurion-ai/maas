@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 import re
 
 from maas.services.board import fetch_board
@@ -12,6 +13,10 @@ from maas.services.delivery import fetch_delivery_overview
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
 from maas.services.projects import resolve_project
 
+logger = logging.getLogger(__name__)
+
+THEATER_ACTIVE_BRANCH_RENDER_LIMIT = 40
+THEATER_HISTORY_BRANCH_RENDER_LIMIT = 24
 
 THEATER_LANE_ORDER = [
     "planned",
@@ -411,6 +416,10 @@ def fetch_theater(connection, project_paths, project_id=None):
 
     branch_groups = []
     grouped = {}
+    active_branch_ids_all = [branch["branch_id"] for branch in branch_list if branch.get("lineage_state") == "active"]
+    history_branch_ids_all = [branch["branch_id"] for branch in branch_list if branch.get("lineage_state") != "active"]
+    visible_active_branch_ids = set(active_branch_ids_all[:THEATER_ACTIVE_BRANCH_RENDER_LIMIT])
+    visible_history_branch_ids = set(history_branch_ids_all[:THEATER_HISTORY_BRANCH_RENDER_LIMIT])
     for branch in branch_list:
         group_base = branch.get("lineage_root_base") or "unbased"
         group = grouped.setdefault(
@@ -421,6 +430,8 @@ def fetch_theater(connection, project_paths, project_id=None):
                 "root_branch_ids": [],
                 "active_branch_ids": [],
                 "history_branch_ids": [],
+                "visible_active_branch_ids": [],
+                "visible_history_branch_ids": [],
             },
         )
         group["branch_ids"].append(branch["branch_id"])
@@ -428,19 +439,39 @@ def fetch_theater(connection, project_paths, project_id=None):
             group["root_branch_ids"].append(branch["branch_id"])
         if branch.get("lineage_state") == "active":
             group["active_branch_ids"].append(branch["branch_id"])
+            if branch["branch_id"] in visible_active_branch_ids:
+                group["visible_active_branch_ids"].append(branch["branch_id"])
         else:
             group["history_branch_ids"].append(branch["branch_id"])
+            if branch["branch_id"] in visible_history_branch_ids:
+                group["visible_history_branch_ids"].append(branch["branch_id"])
     for base_branch, group in grouped.items():
         group["active_count"] = len(group["active_branch_ids"])
         group["history_count"] = len(group["history_branch_ids"])
+        group["hidden_active_count"] = group["active_count"] - len(group["visible_active_branch_ids"])
+        group["hidden_history_count"] = group["history_count"] - len(group["visible_history_branch_ids"])
         branch_groups.append(group)
 
     git_supported = bool(delivery_payload.get("git", {}).get("is_git_repo")) or any(
         issue.get("git_workspace_supported") for issue in issues
     )
     branch_data_state = "available" if branch_list else ("unsupported" if not git_supported else "empty")
+    degraded_reasons = []
+    hidden_active_count = max(0, len(active_branch_ids_all) - len(visible_active_branch_ids))
+    hidden_history_count = max(0, len(history_branch_ids_all) - len(visible_history_branch_ids))
+    if branch_data_state == "unsupported":
+        degraded_reasons.append("branch_lineage_unsupported")
 
     lane_rank = {key: index for index, key in enumerate(THEATER_LANE_ORDER)}
+
+    if degraded_reasons and set(degraded_reasons) != {"branch_lineage_unsupported"}:
+        logger.warning(
+            "Theater snapshot degraded for project %s: reasons=%s active_hidden=%s history_hidden=%s",
+            scoped_project_id,
+            ",".join(degraded_reasons),
+            hidden_active_count,
+            hidden_history_count,
+        )
 
     pull_request_list = []
     for pull_request in pull_requests.values():
@@ -470,6 +501,16 @@ def fetch_theater(connection, project_paths, project_id=None):
             "git_supported": git_supported,
             "branch_data_state": branch_data_state,
             "brownfield_trust": ((overview.get("onboarding") or {}).get("repo_plan_trust") or {}).get("state"),
+            "degraded_reasons": degraded_reasons,
+            "lineage_render_limits": {
+                "active_cap": THEATER_ACTIVE_BRANCH_RENDER_LIMIT,
+                "history_cap": THEATER_HISTORY_BRANCH_RENDER_LIMIT,
+                "visible_active_count": len(visible_active_branch_ids),
+                "hidden_active_count": hidden_active_count,
+                "visible_history_count": len(visible_history_branch_ids),
+                "hidden_history_count": hidden_history_count,
+                "is_capped": bool(hidden_active_count or hidden_history_count),
+            },
         },
         "issues": sorted(
             issues,

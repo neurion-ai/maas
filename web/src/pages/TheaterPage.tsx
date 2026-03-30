@@ -114,6 +114,16 @@ function branchStatusLabel(branch: TheaterBranch, pr?: { state?: string | null; 
   return branch.task_status?.replaceAll("_", " ") ?? "active";
 }
 
+function degradedReasonLabel(reason: "branch_lineage_unsupported" | "branch_lineage_empty" | "branch_lineage_capped") {
+  if (reason === "branch_lineage_unsupported") {
+    return "Git lineage is unavailable for this project.";
+  }
+  if (reason === "branch_lineage_empty") {
+    return "No branch or worktree lineage exists yet.";
+  }
+  return "Theater is capping lineage rendering to keep the tree responsive.";
+}
+
 export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [payload, setPayload] = useState<TheaterResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -244,26 +254,40 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const branchSectionRootsByBase = useMemo(() => {
     const byBase = new Map<string, { active: string[]; history: string[] }>();
     for (const group of payload?.layout.branch_groups ?? []) {
-      const active = group.active_branch_ids.filter((branchId) => {
+      const visibleActiveIds = new Set(group.visible_active_branch_ids);
+      const visibleHistoryIds = new Set(group.visible_history_branch_ids);
+      const active = group.visible_active_branch_ids.filter((branchId) => {
         const branch = branchesById.get(branchId);
         if (!branch) {
           return false;
         }
-        const parent = branch.parent_branch_id ? branchesById.get(branch.parent_branch_id) : null;
-        return !parent || parent.lineage_state !== "active";
+        return !branch.parent_branch_id || !visibleActiveIds.has(branch.parent_branch_id);
       });
-      const history = group.history_branch_ids.filter((branchId) => {
+      const history = group.visible_history_branch_ids.filter((branchId) => {
         const branch = branchesById.get(branchId);
         if (!branch) {
           return false;
         }
-        const parent = branch.parent_branch_id ? branchesById.get(branch.parent_branch_id) : null;
-        return !parent || parent.lineage_state === "active";
+        return !branch.parent_branch_id || !visibleHistoryIds.has(branch.parent_branch_id);
       });
       byBase.set(group.base_branch, { active, history });
     }
     return byBase;
   }, [branchesById, payload?.layout.branch_groups]);
+
+  const visibleLineageBranchIds = useMemo(() => {
+    const active = new Set<string>();
+    const history = new Set<string>();
+    for (const group of payload?.layout.branch_groups ?? []) {
+      for (const branchId of group.visible_active_branch_ids) {
+        active.add(branchId);
+      }
+      for (const branchId of group.visible_history_branch_ids) {
+        history.add(branchId);
+      }
+    }
+    return { active, history };
+  }, [payload?.layout.branch_groups]);
 
   const highlightedBranchIds = useMemo(() => {
     if (!selectedBranch) {
@@ -477,9 +501,11 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     const linkedPr = branch.pr_id ? prsById.get(branch.pr_id) ?? null : null;
     const isSelected = selectedBranch?.branch_id === branch.branch_id;
     const isContext = highlightedBranchIds.has(branch.branch_id);
-      const childMode = mode === "active" ? "active" : "historical";
+    const childMode = mode === "active" ? "active" : "historical";
+    const visibleChildIds = childMode === "active" ? visibleLineageBranchIds.active : visibleLineageBranchIds.history;
     const children = (branchChildrenByParent.get(branch.branch_id) ?? []).filter((child) =>
-      childMode === "active" ? child.lineage_state === "active" : child.lineage_state !== "active"
+      (childMode === "active" ? child.lineage_state === "active" : child.lineage_state !== "active") &&
+      visibleChildIds.has(child.branch_id)
     );
 
     return (
@@ -736,22 +762,30 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       <div className="codex-theater-bottom">
         <div className="codex-theater-panel codex-panel">
           <div className="codex-panel__header">
-            <div>
-              <span className="codex-kicker">Lineage</span>
-              <h2>Branch, worktree, and PR lineage keeps active work on top</h2>
-            </div>
+          <div>
+            <span className="codex-kicker">Lineage</span>
+            <h2>Branch, worktree, and PR lineage keeps active work on top</h2>
           </div>
-          {payload?.summary.branch_data_state === "unsupported" ? (
-            <div className="codex-empty-copy">
-              This project does not currently expose git lineage. Theater still renders issue, agent, and run topology
-              above.
+          {payload?.summary.lineage_render_limits ? (
+            <span className="codex-empty-copy">
+              {payload.summary.lineage_render_limits.visible_active_count} active / {payload.summary.lineage_render_limits.visible_history_count} history visible
+            </span>
+          ) : null}
+        </div>
+          {payload?.summary.degraded_reasons?.length ? (
+            <div className="codex-theater-degraded-list">
+              {payload.summary.degraded_reasons.map((reason) => (
+                <div key={reason} className="codex-banner codex-theater-degraded-list__item">
+                  {degradedReasonLabel(reason)}
+                </div>
+              ))}
             </div>
           ) : null}
           <div className="codex-theater-tree">
             {(payload?.layout.branch_groups ?? []).map((group) => (
               <section key={group.base_branch} className="codex-theater-tree__group">
                 <header className="codex-theater-tree__header">
-                  <strong>{group.base_branch === "unbased" ? "No base branch recorded" : group.base_branch}</strong>
+                        <strong>{group.base_branch === "unbased" ? "No base branch recorded" : group.base_branch}</strong>
                   <span>
                     {group.active_count} active / {group.history_count} history
                   </span>
@@ -761,13 +795,25 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                     <div className="codex-theater-tree__section">
                       <div className="codex-theater-tree__section-header">
                         <strong>Active line</strong>
-                        <span>{group.active_count}</span>
+                        <span>
+                          {group.visible_active_branch_ids.length}
+                          {group.hidden_active_count ? ` of ${group.active_count}` : ""}
+                        </span>
                       </div>
                       <div className="codex-theater-tree__stack">
                         {(branchSectionRootsByBase.get(group.base_branch)?.active ?? []).map((branchId) =>
                           renderLineageBranch(branchId, "active")
                         )}
                       </div>
+                      {group.hidden_active_count ? (
+                        <div className="codex-empty-copy">
+                          {group.hidden_active_count} active branches are currently hidden by the render cap.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : group.active_count ? (
+                    <div className="codex-empty-copy">
+                      Active branches exist for this line, but they are currently hidden by the render cap.
                     </div>
                   ) : (
                     <div className="codex-empty-copy">No active branches in this line.</div>
@@ -781,11 +827,13 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                           className="codex-button codex-button--ghost"
                           onClick={() => toggleHistoryGroup(group.base_branch)}
                         >
-                          {expandedHistoryGroups[group.base_branch] ? "Hide history" : `Show ${group.history_count} branches`}
+                          {expandedHistoryGroups[group.base_branch]
+                            ? "Hide history"
+                            : `Show ${group.visible_history_branch_ids.length}${group.hidden_history_count ? ` of ${group.history_count}` : ""} branches`}
                         </button>
                       </div>
                       {expandedHistoryGroups[group.base_branch] ? (
-                        <div className="codex-theater-tree__stack">
+                        <div className="codex-theater-tree__stack codex-theater-tree__stack--history">
                           {(branchSectionRootsByBase.get(group.base_branch)?.history ?? []).map((branchId) =>
                             renderLineageBranch(branchId, "historical")
                           )}
@@ -795,12 +843,19 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                           Historical branches stay collapsed until you need their lineage or merge context.
                         </div>
                       )}
+                      {group.hidden_history_count ? (
+                        <div className="codex-empty-copy">
+                          {group.hidden_history_count} older history branches are hidden to keep Theater responsive.
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
               </section>
             ))}
-            {!payload?.branches.length && payload?.summary.branch_data_state !== "unsupported" ? (
+            {!payload?.branches.length &&
+            payload?.summary.branch_data_state !== "unsupported" &&
+            !payload?.summary.degraded_reasons?.includes("branch_lineage_empty") ? (
               <div className="codex-empty-copy">No branch or worktree lineage exists yet.</div>
             ) : null}
           </div>

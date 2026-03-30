@@ -1299,6 +1299,16 @@ export interface TheaterResponse {
     git_supported: boolean;
     branch_data_state: "available" | "unsupported" | "empty";
     brownfield_trust?: "preview_only" | "fresh" | "watch" | "stale" | null;
+    degraded_reasons?: Array<"branch_lineage_unsupported" | "branch_lineage_empty" | "branch_lineage_capped">;
+    lineage_render_limits?: {
+      active_cap: number;
+      history_cap: number;
+      visible_active_count: number;
+      hidden_active_count: number;
+      visible_history_count: number;
+      hidden_history_count: number;
+      is_capped: boolean;
+    };
   };
   issues: TheaterIssue[];
   agents: TheaterAgent[];
@@ -1323,8 +1333,12 @@ export interface TheaterResponse {
       root_branch_ids: string[];
       active_branch_ids: string[];
       history_branch_ids: string[];
+      visible_active_branch_ids: string[];
+      visible_history_branch_ids: string[];
       active_count: number;
       history_count: number;
+      hidden_active_count: number;
+      hidden_history_count: number;
     }>;
   };
 }

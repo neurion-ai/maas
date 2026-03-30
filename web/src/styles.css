@@ -5835,6 +5835,17 @@ body {
   max-height: 760px;
   overflow: auto;
   padding-right: 4px;
+  content-visibility: auto;
+  contain-intrinsic-size: 760px;
+}
+
+.codex-theater-degraded-list {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-theater-degraded-list__item {
+  margin: 0;
 }
 
 .codex-theater-tree__group {
@@ -5864,6 +5875,12 @@ body {
 .codex-theater-tree__children {
   display: grid;
   gap: 10px;
+}
+
+.codex-theater-tree__stack--history {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .codex-theater-tree__section--history {

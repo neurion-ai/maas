@@ -77,15 +77,37 @@ cd web
 npm install
 cd ..
 
-PYTHONPATH=src python3 -m maas api --project-root .
-cd web && npm run dev
+./scripts/maas-dev up
+./scripts/maas-dev status
 ```
 
-You can also bootstrap a fresh workspace from the CLI:
+The managed local preview workflow:
+
+- creates or reuses a demo workspace under `/tmp/maas-dev/workspace`
+- imports this repo into that workspace as a brownfield project
+- starts the API on `0.0.0.0:8000` and the web app on `0.0.0.0:5173`
+- keeps pid files and logs under `/tmp/maas-dev`
+- remembers the last selected workspace and port settings under `/tmp/maas-dev/dev-config.json`
+
+Stop or restart the stack with:
+
+```bash
+./scripts/maas-dev down
+./scripts/maas-dev restart
+```
+
+If `:8000` or `:5173` is already occupied on your machine, pass explicit overrides such as
+`./scripts/maas-dev --web-port 5183 up` or `./scripts/maas-dev --api-port 8001 --web-port 5183 up`.
+`status`, `restart`, and `down` reuse the last selected settings from `/tmp/maas-dev/dev-config.json`.
+If you want localhost-only binding instead of LAN exposure, pass `--api-host 127.0.0.1 --web-host 127.0.0.1`.
+
+You can still bootstrap and run MAAS manually from the CLI when needed:
 
 ```bash
 PYTHONPATH=src python3 -m maas init --project-root .
 PYTHONPATH=src python3 -m maas db migrate --project-root .
+PYTHONPATH=src python3 -m maas api --project-root .
+cd web && npm run dev
 ```
 
 ## Product Direction
@@ -112,6 +134,7 @@ Relevant design and roadmap documents:
 - [Execution Theater Field and Agent Motion](docs/implementation/27-execution-theater-field-agent-motion.md)
 - [Execution Theater Branch, Worktree, and PR Lineage](docs/implementation/28-execution-theater-branch-worktree-pr-lineage.md)
 - [Execution Theater Internal-Production Readiness](docs/implementation/29-execution-theater-internal-production-readiness.md)
+- [Local Dev Lifecycle Scripts](docs/implementation/30-local-dev-lifecycle-scripts.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

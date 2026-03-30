@@ -1,0 +1,528 @@
+#!/usr/bin/env python3
+"""Local MAAS app lifecycle helper."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
+from urllib.error import URLError
+from urllib.request import urlopen
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_RUNTIME_ROOT = Path(os.environ.get("MAAS_DEV_RUNTIME_ROOT", "/tmp/maas-dev"))
+DEFAULT_WORKSPACE_ROOT = DEFAULT_RUNTIME_ROOT / "workspace"
+DEFAULT_API_HOST = "0.0.0.0"
+DEFAULT_WEB_HOST = "0.0.0.0"
+DEFAULT_API_PORT = 8000
+DEFAULT_WEB_PORT = 5173
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="scripts/maas-dev")
+    parser.add_argument(
+        "--runtime-root",
+        default=None,
+        help="Directory for logs, pid files, and generated runtime state.",
+    )
+    parser.add_argument(
+        "--workspace-root",
+        default=None,
+        help="MAAS workspace root used for the managed demo environment.",
+    )
+    parser.add_argument("--api-host", default=None)
+    parser.add_argument("--api-port", type=int, default=None)
+    parser.add_argument("--web-host", default=None)
+    parser.add_argument("--web-port", type=int, default=None)
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("up")
+    subparsers.add_parser("down")
+    subparsers.add_parser("restart")
+    subparsers.add_parser("status")
+    return parser.parse_args()
+
+
+class DevRuntime:
+    def __init__(self, args: argparse.Namespace):
+        self.repo_root = REPO_ROOT
+        self.runtime_root = Path(
+            args.runtime_root or os.environ.get("MAAS_DEV_RUNTIME_ROOT", str(DEFAULT_RUNTIME_ROOT))
+        ).resolve()
+        self.state_path = self.runtime_root / "dev-config.json"
+        saved = self._load_saved_state()
+        self.workspace_root = Path(
+            args.workspace_root
+            or saved.get("workspace_root")
+            or os.environ.get("MAAS_DEV_WORKSPACE_ROOT", str(DEFAULT_WORKSPACE_ROOT))
+        ).resolve()
+        self.logs_dir = self.runtime_root / "logs"
+        self.pids_dir = self.runtime_root / "pids"
+        self.api_host = args.api_host or saved.get("api_host") or os.environ.get("MAAS_DEV_API_HOST", DEFAULT_API_HOST)
+        self.api_port = int(args.api_port or saved.get("api_port") or os.environ.get("MAAS_DEV_API_PORT", DEFAULT_API_PORT))
+        self.web_host = args.web_host or saved.get("web_host") or os.environ.get("MAAS_DEV_WEB_HOST", DEFAULT_WEB_HOST)
+        self.web_port = int(args.web_port or saved.get("web_port") or os.environ.get("MAAS_DEV_WEB_PORT", DEFAULT_WEB_PORT))
+        self.python_bin = self.repo_root / ".venv" / "bin" / "python"
+        self.npm_bin = "npm"
+
+    @property
+    def api_pid_path(self) -> Path:
+        return self.pids_dir / "api.pid"
+
+    @property
+    def web_pid_path(self) -> Path:
+        return self.pids_dir / "web.pid"
+
+    @property
+    def api_log_path(self) -> Path:
+        return self.logs_dir / "api.log"
+
+    @property
+    def web_log_path(self) -> Path:
+        return self.logs_dir / "web.log"
+
+    @property
+    def api_health_url(self) -> str:
+        return f"http://127.0.0.1:{self.api_port}/api/health"
+
+    @property
+    def web_url(self) -> str:
+        return f"http://127.0.0.1:{self.web_port}"
+
+    @property
+    def network_web_url(self) -> Optional[str]:
+        ip = detect_lan_ip()
+        if not ip:
+            return None
+        return f"http://{ip}:{self.web_port}"
+
+    def ensure_dirs(self) -> None:
+        self.runtime_root.mkdir(parents=True, exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.pids_dir.mkdir(parents=True, exist_ok=True)
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
+
+    def _load_saved_state(self) -> Dict[str, object]:
+        if not self.state_path.exists():
+            return {}
+        try:
+            return json.loads(self.state_path.read_text())
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def save_state(self) -> None:
+        self.ensure_dirs()
+        payload = {
+            "workspace_root": str(self.workspace_root),
+            "api_host": self.api_host,
+            "api_port": self.api_port,
+            "web_host": self.web_host,
+            "web_port": self.web_port,
+        }
+        self.state_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def detect_lan_ip() -> Optional[str]:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        return ip if not ip.startswith("127.") else None
+    except OSError:
+        return None
+    finally:
+        sock.close()
+
+
+def run_command(
+    command: Iterable[str],
+    *,
+    cwd: Optional[Path] = None,
+    env: Optional[Dict[str, str]] = None,
+) -> str:
+    result = subprocess.run(
+        list(command),
+        cwd=str(cwd) if cwd else None,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def maas_env(runtime: DevRuntime) -> Dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(runtime.repo_root / "src")
+    return env
+
+
+def maas_command(runtime: DevRuntime, *args: str) -> List[str]:
+    return [str(runtime.python_bin), "-m", "maas", *args]
+
+
+def ensure_prerequisites(runtime: DevRuntime) -> None:
+    if not runtime.python_bin.exists():
+        raise SystemExit("Missing .venv/bin/python. Run the backend setup first.")
+    if not (runtime.repo_root / "web" / "node_modules").is_dir():
+        raise SystemExit("Missing web/node_modules. Run `cd web && npm install` first.")
+
+
+def workspace_ready(runtime: DevRuntime) -> bool:
+    return (
+        (runtime.workspace_root / "project.yaml").exists()
+        and (runtime.workspace_root / ".maas" / "state.db").exists()
+    )
+
+
+def ensure_workspace(runtime: DevRuntime) -> None:
+    runtime.ensure_dirs()
+    if not workspace_ready(runtime):
+        print(f"Initializing MAAS workspace in {runtime.workspace_root}")
+        run_command(
+            maas_command(
+                runtime,
+                "init",
+                "--project-root",
+                str(runtime.workspace_root),
+                "--name",
+                "MAAS Dev Workspace",
+                "--description",
+                "Managed workspace for local MAAS preview",
+                "--type",
+                "service",
+                "--mode",
+                "greenfield",
+            ),
+            cwd=runtime.repo_root,
+            env=maas_env(runtime),
+        )
+
+    projects_raw = run_command(
+        maas_command(runtime, "project", "list", "--project-root", str(runtime.workspace_root)),
+        cwd=runtime.repo_root,
+        env=maas_env(runtime),
+    )
+    projects = json.loads(projects_raw)["projects"]
+    repo_source_root = str(runtime.repo_root)
+    if any(project.get("source_root") == repo_source_root for project in projects):
+        return
+
+    print(f"Importing {runtime.repo_root} into the managed workspace")
+    run_command(
+        maas_command(
+            runtime,
+            "project",
+            "create",
+            "--project-root",
+            str(runtime.workspace_root),
+            "--name",
+            "MAAS Repo",
+            "--description",
+            "MAAS repo imported for local preview",
+            "--type",
+            "service",
+            "--mode",
+            "brownfield",
+            "--source-root",
+            repo_source_root,
+        ),
+        cwd=runtime.repo_root,
+        env=maas_env(runtime),
+    )
+
+
+def read_pid(pid_path: Path) -> Optional[int]:
+    if not pid_path.exists():
+        return None
+    try:
+        return int(pid_path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def pid_running(pid: Optional[int]) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def remove_stale_pid(pid_path: Path) -> None:
+    if pid_path.exists():
+        pid_path.unlink()
+
+
+def fetch_http_text(url: str) -> Optional[str]:
+    try:
+        with urlopen(url, timeout=2) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except URLError:
+        return None
+
+
+def endpoint_matches(url: str, expected_substring: Optional[str] = None) -> bool:
+    body = fetch_http_text(url)
+    if body is None:
+        return False
+    if expected_substring is None:
+        return True
+    return expected_substring in body
+
+
+def endpoint_occupied_by_other_service(url: str, expected_substring: Optional[str] = None) -> bool:
+    body = fetch_http_text(url)
+    if body is None or expected_substring is None:
+        return False
+    return expected_substring not in body
+
+
+def wait_for_http(url: str, timeout_seconds: int = 30, expected_substring: Optional[str] = None) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if endpoint_matches(url, expected_substring):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def tail_lines(path: Path, limit: int = 20) -> str:
+    if not path.exists():
+        return ""
+    lines = path.read_text(errors="replace").splitlines()
+    return "\n".join(lines[-limit:])
+
+
+def start_service(
+    runtime: DevRuntime,
+    *,
+    name: str,
+    pid_path: Path,
+    log_path: Path,
+    command: List[str],
+    cwd: Path,
+    env: Dict[str, str],
+    ready_url: str,
+    expected_substring: Optional[str] = None,
+) -> None:
+    pid = read_pid(pid_path)
+    if pid_running(pid) and wait_for_http(ready_url, timeout_seconds=2, expected_substring=expected_substring):
+        print(f"{name}: already running (pid {pid})")
+        return
+    if pid and not pid_running(pid):
+        remove_stale_pid(pid_path)
+    if endpoint_occupied_by_other_service(ready_url, expected_substring):
+        raise SystemExit(f"{name} cannot start because {ready_url} is already serving a different application.")
+
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    pid_path.write_text(f"{process.pid}\n")
+    if wait_for_http(ready_url, timeout_seconds=30, expected_substring=expected_substring):
+        print(f"{name}: started (pid {process.pid})")
+        return
+
+    process.poll()
+    remove_stale_pid(pid_path)
+    details = tail_lines(log_path)
+    raise SystemExit(f"{name} failed to become ready.\n{details}")
+
+
+def stop_service(name: str, pid_path: Path) -> None:
+    pid = read_pid(pid_path)
+    if not pid:
+        print(f"{name}: not running")
+        return
+    if not pid_running(pid):
+        remove_stale_pid(pid_path)
+        print(f"{name}: stale pid removed")
+        return
+
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not pid_running(pid):
+            remove_stale_pid(pid_path)
+            print(f"{name}: stopped")
+            return
+        time.sleep(0.25)
+
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    remove_stale_pid(pid_path)
+    print(f"{name}: killed")
+
+
+def status_service(
+    name: str,
+    pid_path: Path,
+    ready_url: str,
+    log_path: Path,
+    expected_substring: Optional[str] = None,
+) -> Tuple[bool, str]:
+    pid = read_pid(pid_path)
+    running = pid_running(pid)
+    healthy = running and wait_for_http(ready_url, timeout_seconds=1, expected_substring=expected_substring)
+    state = "running" if running else "stopped"
+    if running and not healthy:
+        state = "running (unhealthy)"
+    if not running and endpoint_occupied_by_other_service(ready_url, expected_substring):
+        state = "port occupied by another service"
+    if not running and pid_path.exists():
+        state = "stale pid"
+    detail = f"{name}: {state}"
+    if pid:
+        detail += f" pid={pid}"
+    detail += f" log={log_path}"
+    return healthy if running else False, detail
+
+
+def command_up(runtime: DevRuntime) -> None:
+    ensure_prerequisites(runtime)
+    ensure_workspace(runtime)
+    runtime.ensure_dirs()
+    runtime.save_state()
+
+    api_env = maas_env(runtime)
+    start_service(
+        runtime,
+        name="api",
+        pid_path=runtime.api_pid_path,
+        log_path=runtime.api_log_path,
+        command=maas_command(
+            runtime,
+            "api",
+            "--project-root",
+            str(runtime.workspace_root),
+            "--host",
+            runtime.api_host,
+            "--port",
+            str(runtime.api_port),
+        ),
+        cwd=runtime.repo_root,
+        env=api_env,
+        ready_url=runtime.api_health_url,
+        expected_substring='"status":"ok"',
+    )
+
+    web_env = os.environ.copy()
+    web_env["MAAS_API_PROXY_TARGET"] = f"http://127.0.0.1:{runtime.api_port}"
+    start_service(
+        runtime,
+        name="web",
+        pid_path=runtime.web_pid_path,
+        log_path=runtime.web_log_path,
+        command=[
+            runtime.npm_bin,
+            "run",
+            "dev",
+            "--",
+            "--host",
+            runtime.web_host,
+            "--port",
+            str(runtime.web_port),
+            "--strictPort",
+        ],
+        cwd=runtime.repo_root / "web",
+        env=web_env,
+        ready_url=runtime.web_url,
+        expected_substring="MAAS Control Room",
+    )
+
+    print()
+    print(f"Workspace: {runtime.workspace_root}")
+    print(f"API:       http://127.0.0.1:{runtime.api_port}")
+    if runtime.network_web_url:
+        print(f"Web (LAN): {runtime.network_web_url}")
+    print(f"Web:       {runtime.web_url}")
+
+
+def command_down(runtime: DevRuntime) -> None:
+    stop_service("web", runtime.web_pid_path)
+    stop_service("api", runtime.api_pid_path)
+
+
+def command_status(runtime: DevRuntime) -> int:
+    ensure_prerequisites(runtime)
+    runtime.ensure_dirs()
+
+    _, api_detail = status_service(
+        "api",
+        runtime.api_pid_path,
+        runtime.api_health_url,
+        runtime.api_log_path,
+        expected_substring='"status":"ok"',
+    )
+    _, web_detail = status_service(
+        "web",
+        runtime.web_pid_path,
+        runtime.web_url,
+        runtime.web_log_path,
+        expected_substring="MAAS Control Room",
+    )
+    print(api_detail)
+    print(web_detail)
+    print(f"workspace: {runtime.workspace_root}")
+    print(f"api url:   http://127.0.0.1:{runtime.api_port}")
+    if runtime.network_web_url:
+        print(f"web url:   {runtime.network_web_url}")
+    else:
+        print(f"web url:   {runtime.web_url}")
+
+    api_pid = read_pid(runtime.api_pid_path)
+    web_pid = read_pid(runtime.web_pid_path)
+    if pid_running(api_pid) and pid_running(web_pid):
+        return 0
+    return 1
+
+
+def main() -> int:
+    args = parse_args()
+    runtime = DevRuntime(args)
+
+    if args.command == "up":
+        command_up(runtime)
+        return 0
+    if args.command == "down":
+        command_down(runtime)
+        return 0
+    if args.command == "restart":
+        command_down(runtime)
+        command_up(runtime)
+        return 0
+    if args.command == "status":
+        return command_status(runtime)
+    raise SystemExit(f"Unsupported command: {args.command}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -63,5 +63,6 @@ Board flow:
 - read the current-truth docs before substantial roadmap or workflow changes
 - use one GitHub issue per tracked task
 - open a PR for repo behavior changes
+- use `scripts/maas-dev` for local app preview instead of ad hoc API/Vite launches when you need a reproducible demo flow; it binds on the LAN by default unless you override the hosts
 - run delegated review for non-trivial PRs when your runtime supports it
 - verify claims against actual files, command output, tests, or API responses before concluding

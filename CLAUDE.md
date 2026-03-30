@@ -16,6 +16,7 @@ MAAS is building a Codex-first control plane for supervising autonomous work.
 - preserve roadmap identifiers in issue titles when a task maps to a numbered roadmap item
 - keep project fields truthful: `Queue`, `Status`, `Lane`, `Priority`, `Size`, `Code Review`, `PR`
 - link PRs to issues once implementation starts
+- use `scripts/maas-dev` for reproducible local preview lifecycle instead of manual multi-process startup when demoing the app; it binds on the LAN by default unless you override the hosts
 - for non-trivial changes, run review/delegated review and verify claims before merge
 
 ## Product Shape

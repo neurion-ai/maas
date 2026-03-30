@@ -270,8 +270,13 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       return new Set<string>();
     }
     const highlighted = new Set<string>();
+    const visited = new Set<string>();
     let current: TheaterBranch | null = selectedBranch;
     while (current) {
+      if (visited.has(current.branch_id)) {
+        break;
+      }
+      visited.add(current.branch_id);
       highlighted.add(current.branch_id);
       current = current.parent_branch_id ? branchesById.get(current.parent_branch_id) ?? null : null;
     }

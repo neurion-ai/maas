@@ -1251,6 +1251,8 @@ export interface TheaterBranch {
   task_status?: string | null;
   worktree_path?: string | null;
   base_branch?: string | null;
+  pr_base_branch?: string | null;
+  base_ref?: string | null;
   head_commit?: string | null;
   dirty_file_count?: number;
   change_summary?: string | null;
@@ -1263,6 +1265,9 @@ export interface TheaterBranch {
   lineage_root_base?: string | null;
   lineage_state: "active" | "recent" | "historical";
   recency_rank?: number;
+  linked_task_ids?: string[];
+  linked_issue_keys?: string[];
+  linked_task_count?: number;
 }
 
 export interface TheaterPullRequest {
@@ -1276,6 +1281,9 @@ export interface TheaterPullRequest {
   base_branch?: string | null;
   task_id?: string | null;
   issue_key?: string | null;
+  linked_task_ids?: string[];
+  linked_issue_keys?: string[];
+  linked_task_count?: number;
 }
 
 export interface TheaterResponse {
@@ -1314,9 +1322,9 @@ export interface TheaterResponse {
       branch_ids: string[];
       root_branch_ids: string[];
       active_branch_ids: string[];
-      historical_branch_ids: string[];
+      history_branch_ids: string[];
       active_count: number;
-      historical_count: number;
+      history_count: number;
     }>;
   };
 }

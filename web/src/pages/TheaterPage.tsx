@@ -242,7 +242,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   }, [payload?.branches]);
 
   const branchSectionRootsByBase = useMemo(() => {
-    const byBase = new Map<string, { active: string[]; historical: string[] }>();
+    const byBase = new Map<string, { active: string[]; history: string[] }>();
     for (const group of payload?.layout.branch_groups ?? []) {
       const active = group.active_branch_ids.filter((branchId) => {
         const branch = branchesById.get(branchId);
@@ -252,7 +252,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
         const parent = branch.parent_branch_id ? branchesById.get(branch.parent_branch_id) : null;
         return !parent || parent.lineage_state !== "active";
       });
-      const historical = group.historical_branch_ids.filter((branchId) => {
+      const history = group.history_branch_ids.filter((branchId) => {
         const branch = branchesById.get(branchId);
         if (!branch) {
           return false;
@@ -260,7 +260,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
         const parent = branch.parent_branch_id ? branchesById.get(branch.parent_branch_id) : null;
         return !parent || parent.lineage_state === "active";
       });
-      byBase.set(group.base_branch, { active, historical });
+      byBase.set(group.base_branch, { active, history });
     }
     return byBase;
   }, [branchesById, payload?.layout.branch_groups]);
@@ -441,9 +441,9 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
 
   function focusBranch(branch: TheaterBranch) {
     setSelectedBranchId(branch.branch_id);
-    setSelectedIssueId(branch.task_id ?? null);
-    setSelectedAgentId(branch.agent_id ?? null);
-    setSelectedRunId(branch.run_id ?? null);
+    setSelectedIssueId(branch.linked_task_count === 1 ? branch.task_id ?? null : null);
+    setSelectedAgentId(branch.linked_task_count === 1 ? branch.agent_id ?? null : null);
+    setSelectedRunId(branch.linked_task_count === 1 ? branch.run_id ?? null : null);
   }
 
   function focusAgent(agent: TheaterAgent) {
@@ -489,14 +489,22 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
             <span>{branchStatusLabel(branch, linkedPr)}</span>
           </div>
           <div className="codex-theater-branch__meta">
-            <span>{branch.issue_key ?? branch.task_id ?? "No issue"}</span>
+            <span>
+              {branch.linked_task_count && branch.linked_task_count > 1
+                ? `${branch.linked_task_count} linked issues`
+                : branch.issue_key ?? branch.task_id ?? "No issue"}
+            </span>
             <span>{branch.agent_name ?? "No owner"}</span>
             <span>{(branch.dirty_file_count ?? 0) > 0 ? `${branch.dirty_file_count} dirty` : "clean"}</span>
           </div>
           <p>{branch.change_summary ?? branch.worktree_path ?? "No worktree summary recorded yet."}</p>
           <div className="codex-theater-branch__chips">
             {branch.base_branch ? <span className="codex-chip">Base: {branch.base_branch}</span> : null}
+            {branch.pr_base_branch && branch.pr_base_branch !== branch.base_branch ? (
+              <span className="codex-chip">Merge target: {branch.pr_base_branch}</span>
+            ) : null}
             {branch.has_tracked_base ? <span className="codex-chip">Stacked branch</span> : null}
+            {branch.linked_task_count && branch.linked_task_count > 1 ? <span className="codex-chip">Shared branch</span> : null}
             {branch.run_status ? <span className="codex-chip">Run: {branch.run_status.replaceAll("_", " ")}</span> : null}
             {linkedPr ? (
               <span className="codex-chip">
@@ -740,7 +748,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                 <header className="codex-theater-tree__header">
                   <strong>{group.base_branch === "unbased" ? "No base branch recorded" : group.base_branch}</strong>
                   <span>
-                    {group.active_count} active / {group.historical_count} history
+                    {group.active_count} active / {group.history_count} history
                   </span>
                 </header>
                 <div className="codex-theater-tree__items">
@@ -759,7 +767,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                   ) : (
                     <div className="codex-empty-copy">No active branches in this line.</div>
                   )}
-                  {group.historical_count ? (
+                  {group.history_count ? (
                     <div className="codex-theater-tree__section codex-theater-tree__section--history">
                       <div className="codex-theater-tree__section-header">
                         <strong>Recent history</strong>
@@ -768,12 +776,12 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
                           className="codex-button codex-button--ghost"
                           onClick={() => toggleHistoryGroup(group.base_branch)}
                         >
-                          {expandedHistoryGroups[group.base_branch] ? "Hide history" : `Show ${group.historical_count} branches`}
+                          {expandedHistoryGroups[group.base_branch] ? "Hide history" : `Show ${group.history_count} branches`}
                         </button>
                       </div>
                       {expandedHistoryGroups[group.base_branch] ? (
                         <div className="codex-theater-tree__stack">
-                          {(branchSectionRootsByBase.get(group.base_branch)?.historical ?? []).map((branchId) =>
+                          {(branchSectionRootsByBase.get(group.base_branch)?.history ?? []).map((branchId) =>
                             renderLineageBranch(branchId, "historical")
                           )}
                         </div>

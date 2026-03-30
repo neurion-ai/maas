@@ -243,13 +243,11 @@ class TheaterApiTest(unittest.TestCase):
         self.assertEqual(delivery_branch["lineage_state"], "active")
         self.assertEqual(done_branch["lineage_state"], "recent")
 
-        root_group = next(
-            group for group in payload["layout"]["branch_groups"] if group["base_branch"] == active_branch["lineage_root_base"]
-        )
+        root_group = next(group for group in payload["layout"]["branch_groups"] if group["base_branch"] == active_branch["lineage_root_base"])
         self.assertIn(context["active_branch"], root_group["branch_ids"])
         self.assertIn(context["delivery_branch"], root_group["active_branch_ids"])
-        self.assertIn(context["done_branch"], root_group["historical_branch_ids"])
-        self.assertEqual(root_group["historical_count"], 1)
+        self.assertIn(context["done_branch"], root_group["history_branch_ids"])
+        self.assertEqual(root_group["history_count"], 1)
 
         pr = payload["pull_requests"][0]
         self.assertEqual(pr["number"], 999)

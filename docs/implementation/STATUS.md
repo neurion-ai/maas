@@ -71,6 +71,7 @@ See:
 - [27-execution-theater-field-agent-motion.md](27-execution-theater-field-agent-motion.md)
 - [28-execution-theater-branch-worktree-pr-lineage.md](28-execution-theater-branch-worktree-pr-lineage.md)
 - [29-execution-theater-internal-production-readiness.md](29-execution-theater-internal-production-readiness.md)
+- [30-local-dev-lifecycle-scripts.md](30-local-dev-lifecycle-scripts.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

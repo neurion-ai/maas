@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from maas.db import connect, project_paths
 from maas.ids import generate_id
@@ -278,3 +279,28 @@ class TheaterApiTest(unittest.TestCase):
                 self.assertEqual(response.status_code, 200)
                 payload = response.json()
             self._assert_topology_payload(payload, context)
+
+    def test_fetch_theater_reports_lineage_render_caps(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            context = self._seed_theater_topology(tmpdir)
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                with mock.patch("maas.services.theater.THEATER_ACTIVE_BRANCH_RENDER_LIMIT", 1), mock.patch(
+                    "maas.services.theater.THEATER_HISTORY_BRANCH_RENDER_LIMIT", 1
+                ):
+                    payload = fetch_theater(connection, paths, project_id=context["project_id"])
+            finally:
+                connection.close()
+
+        limits = payload["summary"]["lineage_render_limits"]
+        self.assertEqual(limits["visible_active_count"], 1)
+        self.assertEqual(limits["hidden_active_count"], 1)
+        self.assertEqual(limits["visible_history_count"], 1)
+        self.assertEqual(limits["hidden_history_count"], 0)
+        self.assertTrue(limits["is_capped"])
+        self.assertEqual(payload["summary"]["degraded_reasons"], [])
+
+        root_group = next(group for group in payload["layout"]["branch_groups"] if group["base_branch"])
+        self.assertEqual(len(root_group["visible_active_branch_ids"]), 1)
+        self.assertEqual(root_group["hidden_active_count"], 1)

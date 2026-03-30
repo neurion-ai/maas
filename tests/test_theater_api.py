@@ -53,6 +53,28 @@ class TheaterApiTest(unittest.TestCase):
                 (active_task["project_id"], agent_id),
             ).fetchone()["agent_id"]
 
+            active_workspace = prepare_task_git_workspace(
+                connection,
+                paths,
+                active_task["task_id"],
+                actor_id="agent_allocator",
+                commit=False,
+            )
+            delivery_workspace = prepare_task_git_workspace(
+                connection,
+                paths,
+                delivery_task["task_id"],
+                actor_id="agent_allocator",
+                commit=False,
+            )
+            done_workspace = prepare_task_git_workspace(
+                connection,
+                paths,
+                done_task["task_id"],
+                actor_id="agent_allocator",
+                commit=False,
+            )
+
             connection.execute(
                 """
                 UPDATE tasks
@@ -89,20 +111,13 @@ class TheaterApiTest(unittest.TestCase):
                 """,
                 (done_task["task_id"],),
             )
-
-            active_workspace = prepare_task_git_workspace(
-                connection,
-                paths,
-                active_task["task_id"],
-                actor_id="agent_allocator",
-                commit=False,
-            )
-            delivery_workspace = prepare_task_git_workspace(
-                connection,
-                paths,
-                delivery_task["task_id"],
-                actor_id="agent_allocator",
-                commit=False,
+            connection.execute(
+                """
+                UPDATE task_git_workspaces
+                SET base_ref = ?
+                WHERE task_id = ?
+                """,
+                (active_workspace["branch_name"], delivery_task["task_id"]),
             )
 
             session_id = generate_id("sess")
@@ -186,6 +201,7 @@ class TheaterApiTest(unittest.TestCase):
                 "active_agent_id": agent_id,
                 "active_branch": active_workspace["branch_name"],
                 "delivery_branch": delivery_workspace["branch_name"],
+                "done_branch": done_workspace["branch_name"],
             }
         finally:
             connection.close()
@@ -214,6 +230,26 @@ class TheaterApiTest(unittest.TestCase):
         branch_ids = {branch["branch_name"] for branch in payload["branches"]}
         self.assertIn(context["active_branch"], branch_ids)
         self.assertIn(context["delivery_branch"], branch_ids)
+        self.assertIn(context["done_branch"], branch_ids)
+
+        branches_by_name = {branch["branch_name"]: branch for branch in payload["branches"]}
+        active_branch = branches_by_name[context["active_branch"]]
+        delivery_branch = branches_by_name[context["delivery_branch"]]
+        done_branch = branches_by_name[context["done_branch"]]
+        self.assertEqual(active_branch["depth"], 0)
+        self.assertEqual(active_branch["lineage_state"], "active")
+        self.assertEqual(delivery_branch["parent_branch_id"], active_branch["branch_id"])
+        self.assertEqual(delivery_branch["depth"], 1)
+        self.assertEqual(delivery_branch["lineage_state"], "active")
+        self.assertEqual(done_branch["lineage_state"], "recent")
+
+        root_group = next(
+            group for group in payload["layout"]["branch_groups"] if group["base_branch"] == active_branch["lineage_root_base"]
+        )
+        self.assertIn(context["active_branch"], root_group["branch_ids"])
+        self.assertIn(context["delivery_branch"], root_group["active_branch_ids"])
+        self.assertIn(context["done_branch"], root_group["historical_branch_ids"])
+        self.assertEqual(root_group["historical_count"], 1)
 
         pr = payload["pull_requests"][0]
         self.assertEqual(pr["number"], 999)

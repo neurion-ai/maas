@@ -1258,6 +1258,11 @@ export interface TheaterBranch {
   is_active: boolean;
   pr_id?: string | null;
   depth: number;
+  parent_branch_id?: string | null;
+  has_tracked_base?: boolean;
+  lineage_root_base?: string | null;
+  lineage_state: "active" | "recent" | "historical";
+  recency_rank?: number;
 }
 
 export interface TheaterPullRequest {
@@ -1307,6 +1312,11 @@ export interface TheaterResponse {
     branch_groups: Array<{
       base_branch: string;
       branch_ids: string[];
+      root_branch_ids: string[];
+      active_branch_ids: string[];
+      historical_branch_ids: string[];
+      active_count: number;
+      historical_count: number;
     }>;
   };
 }

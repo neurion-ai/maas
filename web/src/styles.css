@@ -5832,6 +5832,9 @@ body {
 .codex-theater-tree {
   display: grid;
   gap: 14px;
+  max-height: 760px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 .codex-theater-tree__group {
@@ -5855,6 +5858,44 @@ body {
   border-left: 1px solid var(--line);
 }
 
+.codex-theater-tree__section,
+.codex-theater-tree__stack,
+.codex-theater-tree__node,
+.codex-theater-tree__children {
+  display: grid;
+  gap: 10px;
+}
+
+.codex-theater-tree__section--history {
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 84%, transparent 16%);
+}
+
+.codex-theater-tree__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.codex-theater-tree__children {
+  position: relative;
+  padding-left: 14px;
+  margin-left: 6px;
+}
+
+.codex-theater-tree__children::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 8px;
+  width: 1px;
+  background: color-mix(in srgb, var(--line) 84%, transparent 16%);
+}
+
 .codex-theater-branch {
   display: grid;
   gap: 8px;
@@ -5869,6 +5910,10 @@ body {
 .codex-theater-branch.is-selected {
   border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.codex-theater-branch.is-context {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
 }
 
 .codex-theater-branch--good {

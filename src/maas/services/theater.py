@@ -274,6 +274,7 @@ def fetch_theater(connection, project_paths, project_id=None):
                 branch_node.setdefault("linked_task_ids", []).append(task_id)
             if issue_row["issue_key"] and issue_row["issue_key"] not in branch_node.get("linked_issue_keys", []):
                 branch_node.setdefault("linked_issue_keys", []).append(issue_row["issue_key"])
+            branch_node["is_active"] = bool(branch_node.get("is_active")) or issue_row["status"] not in {"done", "cancelled"}
             if named_base_ref and not branch_node.get("base_branch"):
                 branch_node["base_branch"] = named_base_ref
             if github_pr and github_pr.get("base_branch"):
@@ -361,7 +362,7 @@ def fetch_theater(connection, project_paths, project_id=None):
     branch_by_id = {branch["branch_id"]: branch for branch in branch_list}
 
     for branch in branch_list:
-        parent_branch_id = branch_name_to_id.get(branch.get("base_branch"))
+        parent_branch_id = branch_name_to_id.get(branch.get("base_branch")) or branch_name_to_id.get(branch.get("base_ref"))
         branch["parent_branch_id"] = parent_branch_id
         branch["has_tracked_base"] = bool(parent_branch_id)
         branch["lineage_state"] = _branch_lineage_state(branch)

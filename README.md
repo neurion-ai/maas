@@ -109,6 +109,7 @@ Relevant design and roadmap documents:
 - [Codex MVP Brownfield Execution Leverage](docs/implementation/23-codex-mvp-brownfield-execution-leverage.md)
 - [Codex MVP Brownfield Drift, Refresh, and Trust](docs/implementation/24-codex-mvp-brownfield-drift-refresh-trust.md)
 - [Execution Theater Foundation](docs/implementation/26-execution-theater-foundation.md)
+- [Execution Theater Field and Agent Motion](docs/implementation/27-execution-theater-field-agent-motion.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

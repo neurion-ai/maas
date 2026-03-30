@@ -417,6 +417,15 @@ def _delivery_sync_state(sync_artifact):
         "title": github_pr.get("title"),
         "head_branch": github_pr.get("head_branch"),
         "base_branch": github_pr.get("base_branch"),
+        "operation_state": github_pr.get("operation_state") or "succeeded",
+        "retryable": bool(github_pr.get("retryable", True)),
+        "terminal_failure": bool(github_pr.get("terminal_failure", False)),
+        "last_external_result": github_pr.get("last_external_result")
+        or {
+            "state": github_pr.get("state"),
+            "number": github_pr.get("number"),
+            "url": github_pr.get("url"),
+        },
     }
 
 
@@ -846,6 +855,16 @@ def refresh_delivery_github_pr_sync_state(connection, project_paths, project_id)
             "title": pr_record.get("title"),
             "head_branch": pr_record.get("headRefName") or github_pr.get("head_branch"),
             "base_branch": pr_record.get("baseRefName") or github_pr.get("base_branch"),
+            "operation_state": "succeeded",
+            "retryable": True,
+            "terminal_failure": False,
+            "last_external_result": {
+                "state": pr_record.get("state"),
+                "number": pr_record.get("number"),
+                "url": pr_record.get("url"),
+                "head_branch": pr_record.get("headRefName") or github_pr.get("head_branch"),
+                "base_branch": pr_record.get("baseRefName") or github_pr.get("base_branch"),
+            },
         }
         if refreshed == github_pr:
             continue
@@ -966,6 +985,16 @@ def sync_github_pr(connection, project_paths, task_id, actor_id, project_id=None
             "draft_artifact_id": draft["artifact_id"],
             "body_path": draft["body_path"],
             "delivery_gate": context["delivery_gate"],
+            "operation_state": "succeeded",
+            "retryable": True,
+            "terminal_failure": False,
+            "last_external_result": {
+                "state": pr_record.get("state"),
+                "number": pr_record.get("number"),
+                "url": pr_record.get("url"),
+                "head_branch": pr_record.get("headRefName") or branch,
+                "base_branch": pr_record.get("baseRefName") or default_branch,
+            },
         }
     }
     sync_artifact_id = generate_id("art")
@@ -1029,5 +1058,15 @@ def sync_github_pr(connection, project_paths, task_id, actor_id, project_id=None
             "title": pr_record.get("title"),
             "head_branch": pr_record.get("headRefName") or branch,
             "base_branch": pr_record.get("baseRefName") or default_branch,
+            "operation_state": "succeeded",
+            "retryable": True,
+            "terminal_failure": False,
+            "last_external_result": {
+                "state": pr_record.get("state"),
+                "number": pr_record.get("number"),
+                "url": pr_record.get("url"),
+                "head_branch": pr_record.get("headRefName") or branch,
+                "base_branch": pr_record.get("baseRefName") or default_branch,
+            },
         },
     }

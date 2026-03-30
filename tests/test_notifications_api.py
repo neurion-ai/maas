@@ -93,6 +93,10 @@ class NotificationsApiTest(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["status"], "sent")
             self.assertEqual(payload["last_response_code"], 204)
+            self.assertEqual(payload["operation_state"], "succeeded")
+            self.assertFalse(payload["retryable"])
+            self.assertFalse(payload["terminal_failure"])
+            self.assertEqual(payload["last_external_result"]["last_response_code"], 204)
 
             portfolio_payload = client.get("/api/portfolio").json()
             self.assertEqual(portfolio_payload["summary"]["queued_notifications"], 0)
@@ -117,9 +121,176 @@ class NotificationsApiTest(unittest.TestCase):
             payload = response.json()
             self.assertEqual(payload["status"], "failed")
             self.assertIn("delivery blew up", payload["last_error"])
+            self.assertEqual(payload["operation_state"], "failed_retryable")
+            self.assertTrue(payload["retryable"])
+            self.assertFalse(payload["terminal_failure"])
+            self.assertIn("delivery blew up", payload["last_external_result"]["last_error"])
 
             portfolio_payload = client.get("/api/portfolio").json()
             self.assertEqual(portfolio_payload["summary"]["failed_notifications"], 1)
+
+    def test_process_notification_is_idempotent_after_sent_delivery(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Notification Idempotent Test", description="notification idempotent", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+
+            _project_id, notification_id = self._seed_escalation_notification(client, tmpdir)
+
+            response_mock = mock.MagicMock()
+            response_mock.status = 204
+            response_mock.read.return_value = b""
+            context_manager = mock.MagicMock()
+            context_manager.__enter__.return_value = response_mock
+            context_manager.__exit__.return_value = False
+
+            with mock.patch("maas.services.notifications.request.urlopen", return_value=context_manager) as urlopen_mock:
+                first = client.post(
+                    f"/api/notifications/{notification_id}/actions/process",
+                    json={"actor_id": "agent_allocator"},
+                )
+                second = client.post(
+                    f"/api/notifications/{notification_id}/actions/process",
+                    json={"actor_id": "agent_allocator"},
+                )
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(urlopen_mock.call_count, 1)
+            self.assertEqual(second.json()["status"], "sent")
+            self.assertEqual(second.json()["attempts"], 1)
+            self.assertEqual(second.json()["operation_state"], "succeeded")
+
+    def test_process_next_notification_skips_actively_claimed_item(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Notification Claim Skip Test", description="notification claim skip", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+            self._configure_notifications(client, project_id, enabled_events=["escalation_requested"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                first_id = queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "critical",
+                    "Escalation requested",
+                    "First queued item.",
+                    resource_type="task",
+                    resource_id="task_first",
+                    payload={"reason": "first"},
+                )[0]
+                second_id = queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "critical",
+                    "Escalation requested",
+                    "Second queued item.",
+                    resource_type="task",
+                    resource_id="task_second",
+                    payload={"reason": "second"},
+                )[0]
+                connection.execute(
+                    """
+                    UPDATE notification_outbox
+                    SET processing_token = 'notifop_claimed',
+                        processing_started_at = CURRENT_TIMESTAMP
+                    WHERE notification_id = ?
+                    """,
+                    (first_id,),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response_mock = mock.MagicMock()
+            response_mock.status = 204
+            response_mock.read.return_value = b""
+            context_manager = mock.MagicMock()
+            context_manager.__enter__.return_value = response_mock
+            context_manager.__exit__.return_value = False
+
+            with mock.patch("maas.services.notifications.request.urlopen", return_value=context_manager):
+                processed = client.post(
+                    "/api/notifications/actions/process-next",
+                    json={"actor_id": "agent_allocator", "project_id": project_id},
+                )
+
+            self.assertEqual(processed.status_code, 200)
+            self.assertTrue(processed.json()["processed"])
+            self.assertEqual(processed.json()["notification"]["notification_id"], second_id)
+
+            notifications = client.get("/api/notifications", params={"project_id": project_id}).json()["notifications"]
+            by_id = {item["notification_id"]: item for item in notifications}
+            self.assertEqual(by_id[first_id]["operation_state"], "running")
+            self.assertFalse(by_id[first_id]["retryable"])
+            self.assertEqual(by_id[second_id]["status"], "sent")
+
+    def test_process_next_notification_scans_past_more_than_ten_claimed_items(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Notification Claim Backlog Test", description="notification claim backlog", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+            self._configure_notifications(client, project_id, enabled_events=["escalation_requested"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                claimed_ids = []
+                for index in range(11):
+                    claimed_ids.append(
+                        queue_notification_event(
+                            connection,
+                            project_id,
+                            "escalation_requested",
+                            "critical",
+                            "Escalation requested",
+                            "Claimed backlog item.",
+                            resource_type="task",
+                            resource_id=f"task_claimed_{index}",
+                            payload={"index": index},
+                        )[0]
+                    )
+                claimable_id = queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "critical",
+                    "Escalation requested",
+                    "Claimable backlog item.",
+                    resource_type="task",
+                    resource_id="task_claimable",
+                    payload={"index": 99},
+                )[0]
+                connection.executemany(
+                    """
+                    UPDATE notification_outbox
+                    SET processing_token = ?,
+                        processing_started_at = CURRENT_TIMESTAMP
+                    WHERE notification_id = ?
+                    """,
+                    [(f"notifop_claimed_{index}", notification_id) for index, notification_id in enumerate(claimed_ids)],
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response_mock = mock.MagicMock()
+            response_mock.status = 204
+            response_mock.read.return_value = b""
+            context_manager = mock.MagicMock()
+            context_manager.__enter__.return_value = response_mock
+            context_manager.__exit__.return_value = False
+
+            with mock.patch("maas.services.notifications.request.urlopen", return_value=context_manager):
+                processed = client.post(
+                    "/api/notifications/actions/process-next",
+                    json={"actor_id": "agent_allocator", "project_id": project_id},
+                )
+
+            self.assertEqual(processed.status_code, 200)
+            self.assertTrue(processed.json()["processed"])
+            self.assertEqual(processed.json()["notification"]["notification_id"], claimable_id)
 
     def test_duplicate_notification_event_reuses_existing_outbox_item(self):
         with tempfile.TemporaryDirectory() as tmpdir:

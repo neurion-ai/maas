@@ -27,6 +27,14 @@ def _parse_json(value):
 def _job_row_to_dict(row):
     result = _parse_json(row["result_json"])
     error = _parse_json(row["error_json"])
+    status = row["status"]
+    operation_state = {
+        "queued": "pending",
+        "running": "running",
+        "completed": "succeeded",
+        "failed": "failed_retryable",
+        "cancelled": "cancelled",
+    }.get(status, status or "unknown")
     return {
         "job_id": row["job_id"],
         "project_id": row["project_id"],
@@ -49,6 +57,19 @@ def _job_row_to_dict(row):
         "execution_mode": result.get("execution_mode"),
         "failure_kind": error.get("failure_kind"),
         "failure_detail": error.get("failure_detail"),
+        "operation_state": operation_state,
+        "retryable": status in {"queued", "failed"},
+        "terminal_failure": status == "cancelled",
+        "last_external_result": {
+            "status": status,
+            "worker_id": row["worker_id"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "session_id": row["session_id"],
+            "artifact_id": row["artifact_id"],
+            "error": error or None,
+            "result": result or None,
+        },
     }
 
 
@@ -66,14 +87,37 @@ def _provider_job_rows_query(status=None, provider_id=None):
 
 def insert_provider_job(connection, project_id, provider_id, task_id, agent_id, queued_by, artifact_path=None):
     job_id = generate_id("job")
-    connection.execute(
+    cursor = connection.execute(
         """
         INSERT INTO provider_job_queue (
             job_id, project_id, provider_id, task_id, agent_id, status, queued_by, artifact_path
-        ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
+        )
+        SELECT ?, ?, ?, ?, ?, 'queued', ?, ?
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM provider_job_queue
+            WHERE project_id = ?
+              AND provider_id = ?
+              AND task_id = ?
+              AND status IN ('queued', 'running')
+        )
         """,
-        (job_id, project_id, provider_id, task_id, agent_id, queued_by, artifact_path),
+        (
+            job_id,
+            project_id,
+            provider_id,
+            task_id,
+            agent_id,
+            queued_by,
+            artifact_path,
+            project_id,
+            provider_id,
+            task_id,
+        ),
     )
+    if cursor.rowcount == 0:
+        existing = find_open_provider_job(connection, project_id, provider_id, task_id)
+        return fetch_provider_job(connection, existing["job_id"], include_archived=True) if existing is not None else None
     return fetch_provider_job(connection, job_id, include_archived=True)
 
 

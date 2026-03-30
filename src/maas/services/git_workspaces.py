@@ -69,13 +69,39 @@ def _existing_workspace(connection, task_id):
     row = connection.execute(
         """
         SELECT workspace_id, project_id, task_id, repo_root, branch_name, worktree_path, base_ref,
-               head_commit, dirty_file_count, change_summary, last_diff_artifact_id, prepared_at, updated_at
+               head_commit, dirty_file_count, change_summary, last_diff_artifact_id, prepared_at, updated_at,
+               prepare_state, prepare_attempts, last_prepare_error, last_prepare_started_at,
+               last_prepare_finished_at, last_prepare_mode
         FROM task_git_workspaces
         WHERE task_id = ?
         """,
         (task_id,),
     ).fetchone()
     return dict(row) if row is not None else None
+
+
+def _workspace_operation_details(workspace):
+    if workspace is None:
+        return None
+    prepare_state = workspace.get("prepare_state") or "ready"
+    terminal_failure = prepare_state == "failed"
+    retryable = prepare_state == "ready"
+    workspace["operation_state"] = {
+        "ready": "succeeded",
+        "running": "running",
+        "failed": "failed_terminal",
+    }.get(prepare_state, prepare_state)
+    workspace["retryable"] = retryable
+    workspace["terminal_failure"] = terminal_failure
+    workspace["last_external_result"] = {
+        "prepare_state": prepare_state,
+        "prepare_attempts": workspace.get("prepare_attempts"),
+        "last_prepare_mode": workspace.get("last_prepare_mode"),
+        "last_prepare_error": workspace.get("last_prepare_error"),
+        "last_prepare_started_at": workspace.get("last_prepare_started_at"),
+        "last_prepare_finished_at": workspace.get("last_prepare_finished_at"),
+    }
+    return workspace
 
 
 def _current_head(worktree_path):
@@ -230,65 +256,109 @@ def prepare_task_git_workspace(connection, project_paths, task_id, actor_id, com
     branch_name = (existing or {}).get("branch_name") or _workspace_branch_name(task_id)
     worktree_path = (existing or {}).get("worktree_path") or project_paths.task_git_worktree(task_row["project_id"], task_id)
     os.makedirs(os.path.dirname(worktree_path), exist_ok=True)
+    prepare_mode = "reused"
 
-    if os.path.isdir(worktree_path) and os.path.exists(os.path.join(worktree_path, ".git")):
-        head_commit = _current_head(worktree_path)
-        if existing is None:
-            connection.execute(
-                """
-                INSERT INTO task_git_workspaces (
-                    workspace_id, project_id, task_id, repo_root, branch_name, worktree_path, base_ref, head_commit
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    generate_id("gws"),
-                    task_row["project_id"],
-                    task_id,
-                    repo_root,
-                    branch_name,
-                    worktree_path,
-                    head_commit,
-                    head_commit,
-                ),
-            )
+    if existing is None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO task_git_workspaces (
+                workspace_id, project_id, task_id, repo_root, branch_name, worktree_path, prepare_state,
+                prepare_attempts, last_prepare_started_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'running', 1, CURRENT_TIMESTAMP)
+            """,
+            (
+                generate_id("gws"),
+                task_row["project_id"],
+                task_id,
+                repo_root,
+                branch_name,
+                worktree_path,
+            ),
+        )
     else:
-        branch_exists = _run_git(["show-ref", "--verify", "--quiet", "refs/heads/{0}".format(branch_name)], repo_root, check=False)
-        if branch_exists.returncode == 0:
-            _run_git(["worktree", "add", "--force", worktree_path, branch_name], repo_root)
-        else:
-            _run_git(["worktree", "add", "--force", "-b", branch_name, worktree_path, "HEAD"], repo_root)
-        head_commit = _current_head(worktree_path)
-        if existing is None:
-            connection.execute(
-                """
-                INSERT INTO task_git_workspaces (
-                    workspace_id, project_id, task_id, repo_root, branch_name, worktree_path, base_ref, head_commit
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    generate_id("gws"),
-                    task_row["project_id"],
-                    task_id,
-                    repo_root,
-                    branch_name,
-                    worktree_path,
-                    head_commit,
-                    head_commit,
-                ),
-            )
-        else:
+        connection.execute(
+            """
+            UPDATE task_git_workspaces
+            SET repo_root = ?,
+                branch_name = ?,
+                worktree_path = ?,
+                prepare_state = 'running',
+                prepare_attempts = COALESCE(prepare_attempts, 0) + 1,
+                last_prepare_error = NULL,
+                last_prepare_started_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (repo_root, branch_name, worktree_path, task_id),
+        )
+    existing = _existing_workspace(connection, task_id)
+
+    try:
+        if os.path.isdir(worktree_path) and os.path.exists(os.path.join(worktree_path, ".git")):
+            head_commit = _current_head(worktree_path)
             connection.execute(
                 """
                 UPDATE task_git_workspaces
                 SET repo_root = ?,
                     branch_name = ?,
                     worktree_path = ?,
+                    base_ref = COALESCE(base_ref, ?),
                     head_commit = ?,
+                    prepare_state = 'ready',
+                    last_prepare_error = NULL,
+                    last_prepare_finished_at = CURRENT_TIMESTAMP,
+                    last_prepare_mode = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE task_id = ?
                 """,
-                (repo_root, branch_name, worktree_path, head_commit, task_id),
+                (repo_root, branch_name, worktree_path, head_commit, head_commit, prepare_mode, task_id),
             )
+        else:
+            if os.path.isdir(worktree_path) and os.listdir(worktree_path):
+                raise ValueError("git workspace path exists but is not a managed git worktree")
+            branch_exists = _run_git(["show-ref", "--verify", "--quiet", "refs/heads/{0}".format(branch_name)], repo_root, check=False)
+            if branch_exists.returncode == 0:
+                _run_git(["worktree", "add", "--force", worktree_path, branch_name], repo_root)
+                prepare_mode = "attached_existing_branch"
+            else:
+                _run_git(["worktree", "add", "--force", "-b", branch_name, worktree_path, "HEAD"], repo_root)
+                prepare_mode = "created_branch"
+            head_commit = _current_head(worktree_path)
+
+            connection.execute(
+                """
+                UPDATE task_git_workspaces
+                SET repo_root = ?,
+                    branch_name = ?,
+                    worktree_path = ?,
+                    base_ref = COALESCE(base_ref, ?),
+                    head_commit = ?,
+                    prepare_state = 'ready',
+                    last_prepare_error = NULL,
+                    last_prepare_finished_at = CURRENT_TIMESTAMP,
+                    last_prepare_mode = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE task_id = ?
+                """,
+                (repo_root, branch_name, worktree_path, head_commit, head_commit, prepare_mode, task_id),
+            )
+        workspace = capture_task_git_diff(connection, project_paths, task_id, actor_id, commit=False)
+    except Exception as exc:
+        connection.execute(
+            """
+            UPDATE task_git_workspaces
+            SET prepare_state = 'failed',
+                last_prepare_error = ?,
+                last_prepare_finished_at = CURRENT_TIMESTAMP,
+                last_prepare_mode = 'failed',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (str(exc), task_id),
+        )
+        if commit:
+            connection.commit()
+        raise
 
     connection.execute(
         """
@@ -318,15 +388,13 @@ def prepare_task_git_workspace(connection, project_paths, task_id, actor_id, com
             json.dumps({"branch_name": branch_name, "worktree_path": worktree_path}),
         ),
     )
-
-    workspace = capture_task_git_diff(connection, project_paths, task_id, actor_id, commit=False)
     if commit:
         connection.commit()
-    return workspace
+    return _workspace_operation_details(workspace)
 
 
 def fetch_task_git_workspace(connection, task_id):
-    workspace = _existing_workspace(connection, task_id)
+    workspace = _workspace_operation_details(_existing_workspace(connection, task_id))
     if workspace is None:
         return None
     metadata = connection.execute(
@@ -349,7 +417,9 @@ def fetch_task_git_workspace(connection, task_id):
 def fetch_latest_git_workspace_by_task(connection, project_id=None):
     query = """
         SELECT workspace_id, project_id, task_id, repo_root, branch_name, worktree_path, base_ref,
-               head_commit, dirty_file_count, change_summary, last_diff_artifact_id, prepared_at, updated_at
+               head_commit, dirty_file_count, change_summary, last_diff_artifact_id, prepared_at, updated_at,
+               prepare_state, prepare_attempts, last_prepare_error, last_prepare_started_at,
+               last_prepare_finished_at, last_prepare_mode
         FROM task_git_workspaces
     """
     params = []
@@ -357,4 +427,4 @@ def fetch_latest_git_workspace_by_task(connection, project_id=None):
         query += "\nWHERE project_id = ?"
         params.append(project_id)
     rows = connection.execute(query, tuple(params)).fetchall()
-    return {row["task_id"]: dict(row) for row in rows}
+    return {row["task_id"]: _workspace_operation_details(dict(row)) for row in rows}

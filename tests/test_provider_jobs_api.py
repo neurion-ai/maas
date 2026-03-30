@@ -66,6 +66,8 @@ class ProviderJobQueueApiTest(unittest.TestCase):
             providers = {provider["id"]: provider for provider in providers_payload["providers"]}
             self.assertEqual(providers["python_script"]["job_summary"]["queued_jobs"], 1)
             self.assertEqual(providers_payload["job_queue"][0]["job_id"], queued_job["job_id"])
+            self.assertEqual(queued_job["operation_state"], "pending")
+            self.assertFalse(queued_job["duplicate_suppressed"])
 
     def test_process_job_executes_queued_provider_run(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -115,6 +117,163 @@ class ProviderJobQueueApiTest(unittest.TestCase):
 
             self.assertEqual(job_row["status"], "completed")
             self.assertEqual(session_row["status"], "completed")
+
+    def test_duplicate_queue_task_reuses_existing_open_job(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Job Dedupe Test", description="Provider job dedupe", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Deduped provider run")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            first = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            )
+            second = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(first.json()["job_id"], second.json()["job_id"])
+            self.assertFalse(first.json()["duplicate_suppressed"])
+            self.assertTrue(second.json()["duplicate_suppressed"])
+            self.assertEqual(second.json()["operation_state"], "pending")
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                count = connection.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM provider_job_queue
+                    WHERE project_id = ?
+                      AND provider_id = 'python_script'
+                      AND task_id = ?
+                    """,
+                    (project_id, task_id),
+                ).fetchone()[0]
+            finally:
+                connection.close()
+
+            self.assertEqual(count, 1)
+
+    def test_duplicate_queue_task_reuses_existing_open_job_even_if_quotas_tighten(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Job Dedupe Quota Test", description="Provider job dedupe quota", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute("SELECT project_id, config_json FROM projects LIMIT 1").fetchone()
+                project_id = project["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Deduped provider run under tight quota")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            first = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            )
+            self.assertEqual(first.status_code, 200)
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                project = connection.execute(
+                    "SELECT config_json FROM projects WHERE project_id = ?",
+                    (project_id,),
+                ).fetchone()
+                config = json.loads(project["config_json"] or "{}")
+                config["runtime_quotas"] = {"max_task_session_attempts": 1}
+                connection.execute(
+                    "UPDATE projects SET config_json = ? WHERE project_id = ?",
+                    (json.dumps(config), project_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct, status_message, ended_at
+                    ) VALUES ('sess_existing_attempt', ?, 'agent_reviewer', ?, 'completed', 'python_script', 100, 'existing run', CURRENT_TIMESTAMP)
+                    """,
+                    (project_id, task_id),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            second = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            )
+
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(first.json()["job_id"], second.json()["job_id"])
+            self.assertTrue(second.json()["duplicate_suppressed"])
+
+    def test_process_job_returns_existing_completed_job_without_reprocessing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Job Idempotent Process Test", description="Provider job idempotent", project_type="custom")
+            connection = connect(project_paths(tmpdir))
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Idempotent provider process")
+                connection.commit()
+            finally:
+                connection.close()
+
+            client = TestClient(create_app(tmpdir))
+            queued_job = client.post(
+                "/api/providers/python_script/actions/queue-task",
+                json={
+                    "actor_id": "agent_allocator",
+                    "project_id": project_id,
+                    "agent_id": "agent_reviewer",
+                    "task_id": task_id,
+                },
+            ).json()
+            first = client.post(
+                f"/api/provider-jobs/{queued_job['job_id']}/actions/process",
+                json={"actor_id": "agent_allocator"},
+            )
+            second = client.post(
+                f"/api/provider-jobs/{queued_job['job_id']}/actions/process",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(second.json()["job_id"], queued_job["job_id"])
+            self.assertEqual(second.json()["status"], "completed")
+            self.assertTrue(second.json()["duplicate_suppressed"])
+            self.assertEqual(second.json()["operation_state"], "succeeded")
 
     def test_process_next_provider_job_is_project_scoped(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -78,6 +78,7 @@ from maas.services.projects import (
     update_brownfield_onboarding_review,
 )
 from maas.services.queue_capacity import update_project_queue_capacity_policy
+from maas.services.reconciliation import reconcile_active_projects, reconcile_project_truth
 from maas.services.review_policy import update_project_review_policy
 from maas.services.recovery_policy import fetch_project_recovery_overview, update_project_recovery_policy
 from maas.services.repo_browser import fetch_repo_file_preview, fetch_repo_tree
@@ -187,6 +188,11 @@ class TaskRetryLimitRequest(BaseModel):
 
 class AgentActionRequest(BaseModel):
     actor_id: str
+
+
+class SystemReconcileRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    project_id: Optional[str] = None
 
 
 class AlertActionRequest(BaseModel):
@@ -445,6 +451,7 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
     if enable_lifespan_autopilot:
         @app.on_event("startup")
         def _startup_autopilot():
+            reconcile_active_projects(paths)
             sync_enabled_autopilots(paths)
 
         @app.on_event("shutdown")
@@ -508,6 +515,24 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
             return pick_directory_via_native_dialog()
         except RuntimeError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/system/actions/reconcile")
+    def system_reconcile(payload: SystemReconcileRequest):
+        connection = connect(paths)
+        try:
+            return reconcile_project_truth(
+                connection,
+                paths,
+                project_id=_selected_project_id(connection, payload.project_id),
+                actor_id=payload.actor_id,
+                source="manual",
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
 
     @app.post("/api/projects/{project_id}/actions/archive")
     def projects_archive(project_id: str, payload: AgentActionRequest):
@@ -912,7 +937,7 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
     def overview(project_id: str = None):
         connection = connect(paths)
         try:
-            return fetch_overview(connection, project_id=_selected_project_id(connection, project_id))
+            return fetch_overview(connection, project_id=_selected_project_id(connection, project_id), project_paths=paths)
         finally:
             connection.close()
 
@@ -1262,7 +1287,7 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
         connection = connect(paths)
         try:
             scoped_project_id = _selected_project_id(connection, project_id)
-            return fetch_system_diagnostics(connection, scoped_project_id)
+            return fetch_system_diagnostics(connection, scoped_project_id, project_paths=paths)
         finally:
             connection.close()
 

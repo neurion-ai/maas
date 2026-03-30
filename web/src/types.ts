@@ -1299,6 +1299,8 @@ export interface TheaterResponse {
     git_supported: boolean;
     branch_data_state: "available" | "unsupported" | "empty";
     brownfield_trust?: "preview_only" | "fresh" | "watch" | "stale" | null;
+    truth_warnings?: number;
+    reconciled_at?: string | null;
     degraded_reasons?: Array<"branch_lineage_unsupported">;
     lineage_render_limits?: {
       active_cap: number;
@@ -2243,6 +2245,7 @@ export interface CodexSystemDiagnosticsResponse {
     suppressed_items?: number;
     oldest_queued_at?: string | null;
     oldest_running_at?: string | null;
+    truth_warnings?: number;
   };
   execution_state?: {
     state: string;
@@ -2303,6 +2306,28 @@ export interface CodexSystemDiagnosticsResponse {
     running_jobs: number;
     oldest_queued_at?: string | null;
     oldest_running_at?: string | null;
+  };
+  truth?: {
+    project_id?: string | null;
+    generated_at?: string | null;
+    latest_reconciled_at?: string | null;
+    summary: {
+      warning_count: number;
+      repairable_count: number;
+      repaired_count: number;
+      delivery_refresh_count: number;
+    };
+    warnings: Array<{
+      code: string;
+      summary: string;
+      detail: string;
+      issue_key?: string | null;
+      task_id?: string | null;
+      agent_id?: string | null;
+      session_id?: string | null;
+      repairable?: boolean;
+      repaired?: boolean;
+    }>;
   };
 }
 

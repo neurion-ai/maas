@@ -573,6 +573,14 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
       </header>
 
       {notice ? <div className="codex-banner">{notice}</div> : null}
+      {payload?.summary.truth_warnings ? (
+        <div className="codex-banner codex-banner--warning">
+          <strong>{payload.summary.truth_warnings} truth warning{payload.summary.truth_warnings === 1 ? "" : "s"}</strong>
+          <span>
+            Latest reconciliation {formatTimestamp(payload.summary.reconciled_at ?? null)}. The current topology still has active drift warnings; use System to reconcile stale execution linkage.
+          </span>
+        </div>
+      ) : null}
 
       <div className="codex-theater-summary">
         <article className="codex-metric-card">

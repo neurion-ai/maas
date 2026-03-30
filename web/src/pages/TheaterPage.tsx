@@ -98,6 +98,22 @@ function issueRunLabel(issue: TheaterIssue) {
   return "No run";
 }
 
+function branchStatusLabel(branch: TheaterBranch, pr?: { state?: string | null; is_draft: boolean } | null) {
+  if (pr?.is_draft) {
+    return "draft PR";
+  }
+  if (pr?.state) {
+    return pr.state.toLowerCase();
+  }
+  if (branch.lineage_state === "recent") {
+    return "recent history";
+  }
+  if (branch.lineage_state === "historical") {
+    return "history";
+  }
+  return branch.task_status?.replaceAll("_", " ") ?? "active";
+}
+
 export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => void }) {
   const [payload, setPayload] = useState<TheaterResponse | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -106,6 +122,7 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(() => consumePendingAgentFocus());
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
+  const [expandedHistoryGroups, setExpandedHistoryGroups] = useState<Record<string, boolean>>({});
   const [fieldLayoutVersion, setFieldLayoutVersion] = useState(0);
   const [agentPositions, setAgentPositions] = useState<Record<string, { left: number; top: number }>>({});
   const livePulse = useLivePulse();
@@ -204,6 +221,89 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     }
     return grouped;
   }, [payload?.issues, payload?.layout.issue_lanes]);
+
+  const branchChildrenByParent = useMemo(() => {
+    const grouped = new Map<string, TheaterBranch[]>();
+    const branches = [...(payload?.branches ?? [])];
+    branches.sort((left, right) => {
+      if (left.lineage_state !== right.lineage_state) {
+        return left.lineage_state === "active" ? -1 : 1;
+      }
+      if ((left.recency_rank ?? 0) !== (right.recency_rank ?? 0)) {
+        return (left.recency_rank ?? 0) - (right.recency_rank ?? 0);
+      }
+      return left.branch_name.localeCompare(right.branch_name);
+    });
+    for (const branch of branches) {
+      const key = branch.parent_branch_id ?? "__root__";
+      grouped.set(key, [...(grouped.get(key) ?? []), branch]);
+    }
+    return grouped;
+  }, [payload?.branches]);
+
+  const branchSectionRootsByBase = useMemo(() => {
+    const byBase = new Map<string, { active: string[]; history: string[] }>();
+    for (const group of payload?.layout.branch_groups ?? []) {
+      const active = group.active_branch_ids.filter((branchId) => {
+        const branch = branchesById.get(branchId);
+        if (!branch) {
+          return false;
+        }
+        const parent = branch.parent_branch_id ? branchesById.get(branch.parent_branch_id) : null;
+        return !parent || parent.lineage_state !== "active";
+      });
+      const history = group.history_branch_ids.filter((branchId) => {
+        const branch = branchesById.get(branchId);
+        if (!branch) {
+          return false;
+        }
+        const parent = branch.parent_branch_id ? branchesById.get(branch.parent_branch_id) : null;
+        return !parent || parent.lineage_state === "active";
+      });
+      byBase.set(group.base_branch, { active, history });
+    }
+    return byBase;
+  }, [branchesById, payload?.layout.branch_groups]);
+
+  const highlightedBranchIds = useMemo(() => {
+    if (!selectedBranch) {
+      return new Set<string>();
+    }
+    const highlighted = new Set<string>();
+    const visited = new Set<string>();
+    let current: TheaterBranch | null = selectedBranch;
+    while (current) {
+      if (visited.has(current.branch_id)) {
+        break;
+      }
+      visited.add(current.branch_id);
+      highlighted.add(current.branch_id);
+      current = current.parent_branch_id ? branchesById.get(current.parent_branch_id) ?? null : null;
+    }
+    const stack = [selectedBranch.branch_id];
+    while (stack.length) {
+      const branchId = stack.pop();
+      if (!branchId) {
+        continue;
+      }
+      for (const child of branchChildrenByParent.get(branchId) ?? []) {
+        if (highlighted.has(child.branch_id)) {
+          continue;
+        }
+        highlighted.add(child.branch_id);
+        stack.push(child.branch_id);
+      }
+    }
+    return highlighted;
+  }, [branchChildrenByParent, branchesById, selectedBranch]);
+
+  useEffect(() => {
+    if (!selectedBranch || selectedBranch.lineage_state === "active") {
+      return;
+    }
+    const base = selectedBranch.lineage_root_base ?? selectedBranch.base_branch ?? "unbased";
+    setExpandedHistoryGroups((current) => (current[base] ? current : { ...current, [base]: true }));
+  }, [selectedBranch]);
 
   const fieldAgents = useMemo(() => {
     const attached = new Map<string, TheaterAgent[]>();
@@ -346,9 +446,9 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
 
   function focusBranch(branch: TheaterBranch) {
     setSelectedBranchId(branch.branch_id);
-    setSelectedIssueId(branch.task_id ?? null);
-    setSelectedAgentId(branch.agent_id ?? null);
-    setSelectedRunId(branch.run_id ?? null);
+    setSelectedIssueId(branch.linked_task_count === 1 ? branch.task_id ?? null : null);
+    setSelectedAgentId(branch.linked_task_count === 1 ? branch.agent_id ?? null : null);
+    setSelectedRunId(branch.linked_task_count === 1 ? branch.run_id ?? null : null);
   }
 
   function focusAgent(agent: TheaterAgent) {
@@ -363,6 +463,67 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     setSelectedIssueId(run.task_id ?? null);
     setSelectedAgentId(run.agent_id ?? null);
     setSelectedBranchId(run.task_id ? issueToBranch.get(run.task_id) ?? null : null);
+  }
+
+  function toggleHistoryGroup(baseBranch: string) {
+    setExpandedHistoryGroups((current) => ({ ...current, [baseBranch]: !current[baseBranch] }));
+  }
+
+  function renderLineageBranch(branchId: string, mode: "active" | "historical") {
+    const branch = branchesById.get(branchId);
+    if (!branch) {
+      return null;
+    }
+    const linkedPr = branch.pr_id ? prsById.get(branch.pr_id) ?? null : null;
+    const isSelected = selectedBranch?.branch_id === branch.branch_id;
+    const isContext = highlightedBranchIds.has(branch.branch_id);
+      const childMode = mode === "active" ? "active" : "historical";
+    const children = (branchChildrenByParent.get(branch.branch_id) ?? []).filter((child) =>
+      childMode === "active" ? child.lineage_state === "active" : child.lineage_state !== "active"
+    );
+
+    return (
+      <div key={branch.branch_id} className="codex-theater-tree__node">
+        <button
+          type="button"
+          className={`codex-theater-branch codex-theater-branch--${branchTone(branch)} ${isSelected ? "is-selected" : ""} ${isContext && !isSelected ? "is-context" : ""}`}
+          onClick={() => focusBranch(branch)}
+        >
+          <div className="codex-theater-branch__top">
+            <strong>{branch.branch_name}</strong>
+            <span>{branchStatusLabel(branch, linkedPr)}</span>
+          </div>
+          <div className="codex-theater-branch__meta">
+            <span>
+              {branch.linked_task_count && branch.linked_task_count > 1
+                ? `${branch.linked_task_count} linked issues`
+                : branch.issue_key ?? branch.task_id ?? "No issue"}
+            </span>
+            <span>{branch.agent_name ?? "No owner"}</span>
+            <span>{(branch.dirty_file_count ?? 0) > 0 ? `${branch.dirty_file_count} dirty` : "clean"}</span>
+          </div>
+          <p>{branch.change_summary ?? branch.worktree_path ?? "No worktree summary recorded yet."}</p>
+          <div className="codex-theater-branch__chips">
+            {branch.base_branch ? <span className="codex-chip">Base: {branch.base_branch}</span> : null}
+            {branch.pr_base_branch && branch.pr_base_branch !== branch.base_branch ? (
+              <span className="codex-chip">Merge target: {branch.pr_base_branch}</span>
+            ) : null}
+            {branch.has_tracked_base ? <span className="codex-chip">Stacked branch</span> : null}
+            {branch.linked_task_count && branch.linked_task_count > 1 ? <span className="codex-chip">Shared branch</span> : null}
+            {branch.run_status ? <span className="codex-chip">Run: {branch.run_status.replaceAll("_", " ")}</span> : null}
+            {linkedPr ? (
+              <span className="codex-chip">
+                PR #{linkedPr.number ?? "draft"} {linkedPr.state?.toLowerCase() ?? "open"}
+              </span>
+            ) : null}
+            {branch.latest_activity_at ? (
+              <span className="codex-chip">Updated {formatTimestamp(branch.latest_activity_at)}</span>
+            ) : null}
+          </div>
+        </button>
+        {children.length ? <div className="codex-theater-tree__children">{children.map((child) => renderLineageBranch(child.branch_id, childMode))}</div> : null}
+      </div>
+    );
   }
 
   return (
@@ -591,50 +752,57 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
               <section key={group.base_branch} className="codex-theater-tree__group">
                 <header className="codex-theater-tree__header">
                   <strong>{group.base_branch === "unbased" ? "No base branch recorded" : group.base_branch}</strong>
-                  <span>{group.branch_ids.length}</span>
+                  <span>
+                    {group.active_count} active / {group.history_count} history
+                  </span>
                 </header>
                 <div className="codex-theater-tree__items">
-                  {group.branch_ids.map((branchId) => {
-                    const branch = branchesById.get(branchId);
-                    if (!branch) {
-                      return null;
-                    }
-                    const linkedPr = branch.pr_id ? prsById.get(branch.pr_id) ?? null : null;
-                    return (
-                      <button
-                        key={branch.branch_id}
-                        type="button"
-                        className={`codex-theater-branch codex-theater-branch--${branchTone(branch)} ${selectedBranch?.branch_id === branch.branch_id ? "is-selected" : ""}`}
-                        onClick={() => focusBranch(branch)}
-                      >
-                        <div className="codex-theater-branch__top">
-                          <strong>{branch.branch_name}</strong>
-                          <span>{branch.task_status?.replaceAll("_", " ") ?? "history"}</span>
+                  {(branchSectionRootsByBase.get(group.base_branch)?.active ?? []).length ? (
+                    <div className="codex-theater-tree__section">
+                      <div className="codex-theater-tree__section-header">
+                        <strong>Active line</strong>
+                        <span>{group.active_count}</span>
+                      </div>
+                      <div className="codex-theater-tree__stack">
+                        {(branchSectionRootsByBase.get(group.base_branch)?.active ?? []).map((branchId) =>
+                          renderLineageBranch(branchId, "active")
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="codex-empty-copy">No active branches in this line.</div>
+                  )}
+                  {group.history_count ? (
+                    <div className="codex-theater-tree__section codex-theater-tree__section--history">
+                      <div className="codex-theater-tree__section-header">
+                        <strong>Recent history</strong>
+                        <button
+                          type="button"
+                          className="codex-button codex-button--ghost"
+                          onClick={() => toggleHistoryGroup(group.base_branch)}
+                        >
+                          {expandedHistoryGroups[group.base_branch] ? "Hide history" : `Show ${group.history_count} branches`}
+                        </button>
+                      </div>
+                      {expandedHistoryGroups[group.base_branch] ? (
+                        <div className="codex-theater-tree__stack">
+                          {(branchSectionRootsByBase.get(group.base_branch)?.history ?? []).map((branchId) =>
+                            renderLineageBranch(branchId, "historical")
+                          )}
                         </div>
-                        <div className="codex-theater-branch__meta">
-                          <span>{branch.issue_key ?? branch.task_id ?? "No issue"}</span>
-                          <span>{branch.agent_name ?? "No owner"}</span>
-                          <span>{(branch.dirty_file_count ?? 0) > 0 ? `${branch.dirty_file_count} dirty` : "clean"}</span>
+                      ) : (
+                        <div className="codex-empty-copy">
+                          Historical branches stay collapsed until you need their lineage or merge context.
                         </div>
-                        <p>{branch.change_summary ?? branch.worktree_path ?? "No worktree summary recorded yet."}</p>
-                        <div className="codex-theater-branch__chips">
-                          {branch.run_status ? <span className="codex-chip">Run: {branch.run_status.replaceAll("_", " ")}</span> : null}
-                          {linkedPr ? (
-                            <span className="codex-chip">
-                              PR #{linkedPr.number ?? "draft"} {linkedPr.state ?? "open"}
-                            </span>
-                          ) : null}
-                          {branch.latest_activity_at ? (
-                            <span className="codex-chip">Updated {formatTimestamp(branch.latest_activity_at)}</span>
-                          ) : null}
-                        </div>
-                      </button>
-                    );
-                  })}
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </section>
             ))}
-            {!payload?.branches.length ? <div className="codex-empty-copy">No branch or worktree lineage exists yet.</div> : null}
+            {!payload?.branches.length && payload?.summary.branch_data_state !== "unsupported" ? (
+              <div className="codex-empty-copy">No branch or worktree lineage exists yet.</div>
+            ) : null}
           </div>
         </div>
 

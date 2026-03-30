@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 
 from maas.services.board import fetch_board
 from maas.services.codex_mvp import fetch_runs
@@ -84,6 +85,20 @@ def _branch_recency_value(branch):
     if not timestamp:
         return ""
     return timestamp
+
+
+def _looks_like_git_sha(value):
+    if not value:
+        return False
+    return bool(re.fullmatch(r"[0-9a-f]{7,40}", str(value)))
+
+
+def _branch_lineage_state(branch):
+    if branch.get("is_active"):
+        return "active"
+    if branch.get("pr_id") or branch.get("task_status") in {"done", "review"} or branch.get("worktree_path"):
+        return "recent"
+    return "historical"
 
 
 def _agent_current_run(agent_id, task_id_to_runs, task_id):
@@ -224,6 +239,9 @@ def fetch_theater(connection, project_paths, project_id=None):
         branch_name = issue_row["git_workspace_branch"] or ((delivery_item.get("github_pr") or {}).get("head_branch") if delivery_item else None)
         if branch_name:
             branch_id = branch_name
+            raw_base_ref = workspace.get("base_ref")
+            named_base_ref = None if _looks_like_git_sha(raw_base_ref) else raw_base_ref
+            github_pr = (delivery_item or {}).get("github_pr") or None
             branch_node = branch_nodes.setdefault(
                 branch_id,
                 {
@@ -238,16 +256,31 @@ def fetch_theater(connection, project_paths, project_id=None):
                     "run_status": issue_row["current_run_status"],
                     "task_status": issue_row["status"],
                     "worktree_path": workspace.get("worktree_path"),
-                    "base_branch": workspace.get("base_ref") or ((delivery_item.get("github_pr") or {}).get("base_branch") if delivery_item else None),
+                    "base_branch": named_base_ref or (github_pr or {}).get("base_branch"),
+                    "pr_base_branch": (github_pr or {}).get("base_branch"),
+                    "base_ref": raw_base_ref,
                     "head_commit": workspace.get("head_commit"),
                     "dirty_file_count": workspace.get("dirty_file_count", 0),
                     "change_summary": workspace.get("change_summary"),
-                    "latest_activity_at": workspace.get("updated_at") or ((delivery_item.get("github_pr") or {}).get("synced_at") if delivery_item else None),
+                    "latest_activity_at": workspace.get("updated_at") or (github_pr or {}).get("synced_at"),
                     "is_active": issue_row["status"] not in {"done", "cancelled"},
                     "pr_id": None,
+                    "linked_task_ids": [task_id],
+                    "linked_issue_keys": [issue_row["issue_key"]] if issue_row["issue_key"] else [],
                     "depth": 0,
                 },
             )
+            if task_id not in branch_node.get("linked_task_ids", []):
+                branch_node.setdefault("linked_task_ids", []).append(task_id)
+            if issue_row["issue_key"] and issue_row["issue_key"] not in branch_node.get("linked_issue_keys", []):
+                branch_node.setdefault("linked_issue_keys", []).append(issue_row["issue_key"])
+            branch_node["is_active"] = bool(branch_node.get("is_active")) or issue_row["status"] not in {"done", "cancelled"}
+            if named_base_ref and not branch_node.get("base_branch"):
+                branch_node["base_branch"] = named_base_ref
+            if github_pr and github_pr.get("base_branch"):
+                branch_node["pr_base_branch"] = github_pr.get("base_branch")
+            if raw_base_ref and not branch_node.get("base_ref"):
+                branch_node["base_ref"] = raw_base_ref
             if workspace.get("worktree_path") and not branch_node.get("worktree_path"):
                 branch_node["worktree_path"] = workspace.get("worktree_path")
             if workspace.get("updated_at") and (
@@ -256,21 +289,29 @@ def fetch_theater(connection, project_paths, project_id=None):
                 branch_node["latest_activity_at"] = workspace.get("updated_at")
             issue_to_branch.append({"issue_id": task_id, "branch_id": branch_id})
 
-            github_pr = (delivery_item or {}).get("github_pr") or None
             if github_pr:
                 pr_id = str(github_pr.get("number") or github_pr.get("artifact_id") or branch_name)
-                pull_requests[pr_id] = {
-                    "pr_id": pr_id,
-                    "number": github_pr.get("number"),
-                    "url": github_pr.get("url"),
-                    "state": github_pr.get("state"),
-                    "is_draft": bool(github_pr.get("is_draft")),
-                    "title": github_pr.get("title"),
-                    "head_branch": github_pr.get("head_branch") or branch_name,
-                    "base_branch": github_pr.get("base_branch"),
-                    "task_id": task_id,
-                    "issue_key": issue_row["issue_key"],
-                }
+                pr_node = pull_requests.setdefault(
+                    pr_id,
+                    {
+                        "pr_id": pr_id,
+                        "number": github_pr.get("number"),
+                        "url": github_pr.get("url"),
+                        "state": github_pr.get("state"),
+                        "is_draft": bool(github_pr.get("is_draft")),
+                        "title": github_pr.get("title"),
+                        "head_branch": github_pr.get("head_branch") or branch_name,
+                        "base_branch": github_pr.get("base_branch"),
+                        "task_id": task_id,
+                        "issue_key": issue_row["issue_key"],
+                        "linked_task_ids": [task_id],
+                        "linked_issue_keys": [issue_row["issue_key"]] if issue_row["issue_key"] else [],
+                    },
+                )
+                if task_id not in pr_node.get("linked_task_ids", []):
+                    pr_node.setdefault("linked_task_ids", []).append(task_id)
+                if issue_row["issue_key"] and issue_row["issue_key"] not in pr_node.get("linked_issue_keys", []):
+                    pr_node.setdefault("linked_issue_keys", []).append(issue_row["issue_key"])
                 branch_node["pr_id"] = pr_id
                 branch_to_pr.append({"branch_id": branch_id, "pr_id": pr_id})
             if branch_node.get("base_branch"):
@@ -317,17 +358,82 @@ def fetch_theater(connection, project_paths, project_id=None):
         )
 
     branch_list = list(branch_nodes.values())
+    branch_name_to_id = {branch["branch_name"]: branch["branch_id"] for branch in branch_list}
+    branch_by_id = {branch["branch_id"]: branch for branch in branch_list}
+
+    for branch in branch_list:
+        parent_branch_id = branch_name_to_id.get(branch.get("base_branch")) or branch_name_to_id.get(branch.get("base_ref"))
+        branch["parent_branch_id"] = parent_branch_id
+        branch["has_tracked_base"] = bool(parent_branch_id)
+        branch["lineage_state"] = _branch_lineage_state(branch)
+        branch["linked_task_count"] = len(branch.get("linked_task_ids") or [])
+        if branch["linked_task_count"] != 1:
+            branch["task_id"] = None
+            branch["issue_key"] = None
+            branch["issue_title"] = None
+            branch["agent_id"] = None
+            branch["agent_name"] = None
+            branch["run_id"] = None
+            branch["run_status"] = None
+            branch["task_status"] = None
+
+    def _resolve_depth(branch_id, visiting=None):
+        branch = branch_by_id[branch_id]
+        parent_id = branch.get("parent_branch_id")
+        if not parent_id or parent_id == branch_id:
+            return 0
+        if visiting is None:
+            visiting = set()
+        if branch_id in visiting or parent_id in visiting:
+            return 0
+        return 1 + _resolve_depth(parent_id, visiting | {branch_id})
+
+    def _resolve_root_base(branch_id, visiting=None):
+        branch = branch_by_id[branch_id]
+        parent_id = branch.get("parent_branch_id")
+        if not parent_id or parent_id == branch_id:
+            return branch.get("base_branch") or "unbased"
+        if visiting is None:
+            visiting = set()
+        if branch_id in visiting or parent_id in visiting:
+            return branch.get("base_branch") or "unbased"
+        return _resolve_root_base(parent_id, visiting | {branch_id})
+
+    for branch in branch_list:
+        branch["depth"] = _resolve_depth(branch["branch_id"])
+        branch["lineage_root_base"] = _resolve_root_base(branch["branch_id"])
+
     branch_list.sort(key=lambda branch: branch.get("branch_name") or "")
     branch_list.sort(key=_branch_recency_value, reverse=True)
     branch_list.sort(key=lambda branch: 0 if branch.get("is_active") else 1)
+    for recency_rank, branch in enumerate(branch_list):
+        branch["recency_rank"] = recency_rank
 
     branch_groups = []
     grouped = {}
     for branch in branch_list:
-        base_branch = branch.get("base_branch") or "unbased"
-        grouped.setdefault(base_branch, []).append(branch["branch_id"])
-    for base_branch, branch_ids in grouped.items():
-        branch_groups.append({"base_branch": base_branch, "branch_ids": branch_ids})
+        group_base = branch.get("lineage_root_base") or "unbased"
+        group = grouped.setdefault(
+            group_base,
+            {
+                "base_branch": group_base,
+                "branch_ids": [],
+                "root_branch_ids": [],
+                "active_branch_ids": [],
+                "history_branch_ids": [],
+            },
+        )
+        group["branch_ids"].append(branch["branch_id"])
+        if branch.get("parent_branch_id") is None:
+            group["root_branch_ids"].append(branch["branch_id"])
+        if branch.get("lineage_state") == "active":
+            group["active_branch_ids"].append(branch["branch_id"])
+        else:
+            group["history_branch_ids"].append(branch["branch_id"])
+    for base_branch, group in grouped.items():
+        group["active_count"] = len(group["active_branch_ids"])
+        group["history_count"] = len(group["history_branch_ids"])
+        branch_groups.append(group)
 
     git_supported = bool(delivery_payload.get("git", {}).get("is_git_repo")) or any(
         issue.get("git_workspace_supported") for issue in issues
@@ -335,6 +441,14 @@ def fetch_theater(connection, project_paths, project_id=None):
     branch_data_state = "available" if branch_list else ("unsupported" if not git_supported else "empty")
 
     lane_rank = {key: index for index, key in enumerate(THEATER_LANE_ORDER)}
+
+    pull_request_list = []
+    for pull_request in pull_requests.values():
+        pull_request["linked_task_count"] = len(pull_request.get("linked_task_ids") or [])
+        if pull_request["linked_task_count"] != 1:
+            pull_request["task_id"] = None
+            pull_request["issue_key"] = None
+        pull_request_list.append(pull_request)
 
     return {
         "generated_at": _utc_now_iso(),
@@ -368,7 +482,7 @@ def fetch_theater(connection, project_paths, project_id=None):
         "agents": agents,
         "runs": runs,
         "branches": branch_list,
-        "pull_requests": list(pull_requests.values()),
+        "pull_requests": pull_request_list,
         "links": {
             "issue_to_agent": issue_to_agent,
             "issue_to_run": issue_to_run,

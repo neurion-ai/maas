@@ -304,6 +304,108 @@ class ReconciliationApiTest(unittest.TestCase):
             self.assertEqual(agent_row["status"], "paused")
             self.assertEqual(agent_row["current_task_id"], task["task_id"])
 
+    def test_reconcile_project_truth_keeps_paused_agent_and_duplicate_sessions_unmodified(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Duplicate Session Test", description="duplicate sessions", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                tasks = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 2
+                    """
+                ).fetchall()
+                paused_task = tasks[0]
+                duplicate_task = tasks[1]
+                paused_agent_id = paused_task["assigned_agent_id"] or connection.execute(
+                    "SELECT agent_id FROM agents ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()["agent_id"]
+                duplicate_agent_id = connection.execute(
+                    """
+                    SELECT agent_id
+                    FROM agents
+                    WHERE project_id = ?
+                      AND agent_id != ?
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (paused_task["project_id"], paused_agent_id),
+                ).fetchone()["agent_id"]
+
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'paused',
+                        current_task_id = ?
+                    WHERE agent_id = ?
+                    """,
+                    (paused_task["task_id"], paused_agent_id),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'paused_by_operator',
+                        assigned_agent_id = ?
+                    WHERE task_id = ?
+                    """,
+                    (paused_agent_id, paused_task["task_id"]),
+                )
+                connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = 'running',
+                        current_task_id = NULL
+                    WHERE agent_id = ?
+                    """,
+                    (duplicate_agent_id,),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES
+                        ('sess_duplicate_one', ?, ?, ?, 'active', 'openai_codex', 20,
+                         'duplicate one', CURRENT_TIMESTAMP, DATETIME('now', '-5 minutes'), NULL, CURRENT_TIMESTAMP),
+                        ('sess_duplicate_two', ?, ?, ?, 'active', 'openai_codex', 25,
+                         'duplicate two', CURRENT_TIMESTAMP, DATETIME('now', '-4 minutes'), NULL, CURRENT_TIMESTAMP)
+                    """,
+                    (
+                        paused_task["project_id"],
+                        duplicate_agent_id,
+                        duplicate_task["task_id"],
+                        paused_task["project_id"],
+                        duplicate_agent_id,
+                        duplicate_task["task_id"],
+                    ),
+                )
+                connection.commit()
+
+                payload = reconcile_project_truth(connection, paths, project_id=paused_task["project_id"])
+                paused_agent_row = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = ?",
+                    (paused_agent_id,),
+                ).fetchone()
+                duplicate_agent_row = connection.execute(
+                    "SELECT status, current_task_id FROM agents WHERE agent_id = ?",
+                    (duplicate_agent_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            self.assertEqual(payload["summary"]["repaired_count"], 0)
+            warning_codes = {item["code"] for item in payload["warnings"]}
+            self.assertIn("duplicate_active_task_sessions", warning_codes)
+            self.assertIn("duplicate_active_agent_sessions", warning_codes)
+            self.assertEqual(paused_agent_row["status"], "paused")
+            self.assertEqual(paused_agent_row["current_task_id"], paused_task["task_id"])
+            self.assertEqual(duplicate_agent_row["status"], "running")
+            self.assertIsNone(duplicate_agent_row["current_task_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

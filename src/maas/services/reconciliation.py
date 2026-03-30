@@ -243,6 +243,8 @@ def _analyze_truth(connection, project_id):
     for agent_id, agent in agents.items():
         current_task_id = agent.get("current_task_id")
         active_session = unique_agent_sessions.get(agent_id)
+        if agent.get("status") == "paused":
+            continue
         if current_task_id and active_session is None and agent_id not in active_by_agent:
             fix_plan.append(
                 {
@@ -252,7 +254,7 @@ def _analyze_truth(connection, project_id):
                     "issue_key": issue_keys.get(current_task_id),
                 }
             )
-        elif not current_task_id and agent.get("status") == "running" and active_session is None:
+        elif not current_task_id and agent.get("status") == "running" and active_session is None and agent_id not in active_by_agent:
             fix_plan.append({"kind": "running_agent_without_task", "agent_id": agent_id})
 
     return {

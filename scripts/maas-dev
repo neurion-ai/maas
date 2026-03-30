@@ -86,8 +86,16 @@ class DevRuntime:
         return self.logs_dir / "api.log"
 
     @property
+    def api_meta_path(self) -> Path:
+        return self.pids_dir / "api.meta.json"
+
+    @property
     def web_log_path(self) -> Path:
         return self.logs_dir / "web.log"
+
+    @property
+    def web_meta_path(self) -> Path:
+        return self.pids_dir / "web.meta.json"
 
     @property
     def api_health_url(self) -> str:
@@ -264,6 +272,61 @@ def remove_stale_pid(pid_path: Path) -> None:
         pid_path.unlink()
 
 
+def read_process_meta(meta_path: Path) -> Dict[str, object]:
+    if not meta_path.exists():
+        return {}
+    try:
+        return json.loads(meta_path.read_text())
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def write_process_meta(meta_path: Path, pid: int, ownership_markers: List[str]) -> None:
+    payload = {"pid": pid, "ownership_markers": ownership_markers}
+    meta_path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def remove_process_tracking(pid_path: Path, meta_path: Path) -> None:
+    if pid_path.exists():
+        pid_path.unlink()
+    if meta_path.exists():
+        meta_path.unlink()
+
+
+def process_cmdline(pid: int) -> str:
+    cmdline_path = Path("/proc") / str(pid) / "cmdline"
+    try:
+        raw = cmdline_path.read_text(errors="replace")
+    except OSError:
+        return ""
+    return raw.replace("\x00", " ").strip()
+
+
+def process_matches_meta(pid: Optional[int], meta_path: Path) -> bool:
+    if not pid or not pid_running(pid):
+        return False
+    meta = read_process_meta(meta_path)
+    markers = meta.get("ownership_markers")
+    if not isinstance(markers, list) or not markers:
+        return False
+    if meta.get("pid") not in {None, pid}:
+        return False
+    cmdline = process_cmdline(pid)
+    if not cmdline:
+        return False
+    return all(str(marker) in cmdline for marker in markers)
+
+
+def terminate_pid(pid: int, sig: int) -> None:
+    try:
+        os.killpg(pid, sig)
+    except OSError:
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+
 def fetch_http_text(url: str) -> Optional[str]:
     try:
         with urlopen(url, timeout=2) as response:
@@ -310,18 +373,26 @@ def start_service(
     name: str,
     pid_path: Path,
     log_path: Path,
+    meta_path: Path,
     command: List[str],
+    ownership_markers: List[str],
     cwd: Path,
     env: Dict[str, str],
     ready_url: str,
     expected_substring: Optional[str] = None,
 ) -> None:
     pid = read_pid(pid_path)
-    if pid_running(pid) and wait_for_http(ready_url, timeout_seconds=2, expected_substring=expected_substring):
-        print(f"{name}: already running (pid {pid})")
-        return
+    if pid_running(pid):
+        if not process_matches_meta(pid, meta_path):
+            raise SystemExit(
+                f"{name} pid file points to live pid {pid}, but ownership could not be verified. "
+                f"Remove {pid_path} and {meta_path} after checking the running process."
+            )
+        if wait_for_http(ready_url, timeout_seconds=2, expected_substring=expected_substring):
+            print(f"{name}: already running (pid {pid})")
+            return
     if pid and not pid_running(pid):
-        remove_stale_pid(pid_path)
+        remove_process_tracking(pid_path, meta_path)
     if endpoint_occupied_by_other_service(ready_url, expected_substring):
         raise SystemExit(f"{name} cannot start because {ready_url} is already serving a different application.")
 
@@ -335,50 +406,48 @@ def start_service(
             start_new_session=True,
         )
     pid_path.write_text(f"{process.pid}\n")
+    write_process_meta(meta_path, process.pid, ownership_markers)
     if wait_for_http(ready_url, timeout_seconds=30, expected_substring=expected_substring):
         print(f"{name}: started (pid {process.pid})")
         return
 
     process.poll()
-    remove_stale_pid(pid_path)
+    terminate_pid(process.pid, signal.SIGTERM)
+    deadline = time.time() + 5
+    while time.time() < deadline and pid_running(process.pid):
+        time.sleep(0.25)
+    if pid_running(process.pid):
+        terminate_pid(process.pid, signal.SIGKILL)
+    remove_process_tracking(pid_path, meta_path)
     details = tail_lines(log_path)
     raise SystemExit(f"{name} failed to become ready.\n{details}")
 
 
-def stop_service(name: str, pid_path: Path) -> None:
+def stop_service(name: str, pid_path: Path, meta_path: Path) -> None:
     pid = read_pid(pid_path)
     if not pid:
         print(f"{name}: not running")
         return
     if not pid_running(pid):
-        remove_stale_pid(pid_path)
+        remove_process_tracking(pid_path, meta_path)
         print(f"{name}: stale pid removed")
         return
+    if not process_matches_meta(pid, meta_path):
+        print(f"{name}: refusing to stop pid {pid} because ownership could not be verified")
+        return
 
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except OSError:
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            pass
+    terminate_pid(pid, signal.SIGTERM)
 
     deadline = time.time() + 10
     while time.time() < deadline:
         if not pid_running(pid):
-            remove_stale_pid(pid_path)
+            remove_process_tracking(pid_path, meta_path)
             print(f"{name}: stopped")
             return
         time.sleep(0.25)
 
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except OSError:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
-    remove_stale_pid(pid_path)
+    terminate_pid(pid, signal.SIGKILL)
+    remove_process_tracking(pid_path, meta_path)
     print(f"{name}: killed")
 
 
@@ -387,13 +456,17 @@ def status_service(
     pid_path: Path,
     ready_url: str,
     log_path: Path,
+    meta_path: Path,
     expected_substring: Optional[str] = None,
 ) -> Tuple[bool, str]:
     pid = read_pid(pid_path)
     running = pid_running(pid)
-    healthy = running and wait_for_http(ready_url, timeout_seconds=1, expected_substring=expected_substring)
+    owned = running and process_matches_meta(pid, meta_path)
+    healthy = owned and wait_for_http(ready_url, timeout_seconds=1, expected_substring=expected_substring)
     state = "running" if running else "stopped"
-    if running and not healthy:
+    if running and not owned:
+        state = "pid belongs to another process"
+    elif running and not healthy:
         state = "running (unhealthy)"
     if not running and endpoint_occupied_by_other_service(ready_url, expected_substring):
         state = "port occupied by another service"
@@ -418,6 +491,7 @@ def command_up(runtime: DevRuntime) -> None:
         name="api",
         pid_path=runtime.api_pid_path,
         log_path=runtime.api_log_path,
+        meta_path=runtime.api_meta_path,
         command=maas_command(
             runtime,
             "api",
@@ -428,6 +502,7 @@ def command_up(runtime: DevRuntime) -> None:
             "--port",
             str(runtime.api_port),
         ),
+        ownership_markers=["-m", "maas", "api", str(runtime.workspace_root), str(runtime.api_port)],
         cwd=runtime.repo_root,
         env=api_env,
         ready_url=runtime.api_health_url,
@@ -441,6 +516,7 @@ def command_up(runtime: DevRuntime) -> None:
         name="web",
         pid_path=runtime.web_pid_path,
         log_path=runtime.web_log_path,
+        meta_path=runtime.web_meta_path,
         command=[
             runtime.npm_bin,
             "run",
@@ -452,6 +528,7 @@ def command_up(runtime: DevRuntime) -> None:
             str(runtime.web_port),
             "--strictPort",
         ],
+        ownership_markers=["npm", "run", "dev", str(runtime.web_port)],
         cwd=runtime.repo_root / "web",
         env=web_env,
         ready_url=runtime.web_url,
@@ -467,8 +544,8 @@ def command_up(runtime: DevRuntime) -> None:
 
 
 def command_down(runtime: DevRuntime) -> None:
-    stop_service("web", runtime.web_pid_path)
-    stop_service("api", runtime.api_pid_path)
+    stop_service("web", runtime.web_pid_path, runtime.web_meta_path)
+    stop_service("api", runtime.api_pid_path, runtime.api_meta_path)
 
 
 def command_status(runtime: DevRuntime) -> int:
@@ -480,6 +557,7 @@ def command_status(runtime: DevRuntime) -> int:
         runtime.api_pid_path,
         runtime.api_health_url,
         runtime.api_log_path,
+        runtime.api_meta_path,
         expected_substring='"status":"ok"',
     )
     _, web_detail = status_service(
@@ -487,6 +565,7 @@ def command_status(runtime: DevRuntime) -> int:
         runtime.web_pid_path,
         runtime.web_url,
         runtime.web_log_path,
+        runtime.web_meta_path,
         expected_substring="MAAS Control Room",
     )
     print(api_detail)

@@ -1324,6 +1324,25 @@ export interface TheaterResponse {
     branch_to_pr: Array<{ branch_id: string; pr_id: string }>;
     branch_to_base: Array<{ branch_id: string; base_branch: string }>;
   };
+  attention: {
+    headline: string;
+    items: Array<{
+      id: string;
+      title: string;
+      detail: string;
+      tone?: OperatorLoopTone;
+      stop_state?: CanonicalStopState | null;
+      operator_actions?: ControlOperatorAction[];
+      route?: {
+        view: OperatorLoopView;
+        taskId?: string;
+        sessionId?: string;
+        projectId?: string | null;
+        resourceType?: string | null;
+        resourceId?: string | null;
+      };
+    }>;
+  };
   layout: {
     issue_lanes: Array<{
       key: TheaterIssue["lane_key"];
@@ -1603,6 +1622,24 @@ export interface NotificationItem {
 export type OperatorLoopView = "command" | "issues" | "runs" | "system" | "projects";
 export type OperatorLoopTone = "default" | "warn" | "danger";
 
+export interface CanonicalStopState {
+  reason_key: string;
+  summary: string;
+  detail: string;
+  severity: string;
+  autopilot_blocking: boolean;
+  safe_auto_retry: boolean;
+  recommended_action?: string | null;
+  operator_actions?: ControlOperatorAction[];
+  operator_confirmation_required?: boolean;
+  repair_attempted?: boolean;
+  repair_result?: string | null;
+  resource_type?: string | null;
+  resource_id?: string | null;
+  bucket?: string | null;
+  subtype?: string | null;
+}
+
 export interface OperatorWorkflowItem {
   bucket?: string;
   id: string;
@@ -1611,6 +1648,7 @@ export interface OperatorWorkflowItem {
   title: string;
   detail: string;
   recommendedAction?: string;
+  stopState?: CanonicalStopState | null;
   operatorActions?: ControlOperatorAction[];
   route: {
     view: OperatorLoopView;
@@ -2208,6 +2246,7 @@ export interface CodexRunListItem {
   is_stale: boolean;
   diagnostic_summary?: string | null;
   recommended_action?: string | null;
+  stop_state?: CanonicalStopState | null;
   observability?: {
     state: string;
     attention_level: string;
@@ -2270,6 +2309,7 @@ export interface CodexSystemDiagnosticsResponse {
     focus_run_session_id?: string | null;
     diagnostic_summary?: string | null;
     recommended_action?: string | null;
+    stop_state?: CanonicalStopState | null;
   }>;
   attention_items?: Array<{
     kind: string;
@@ -2280,6 +2320,7 @@ export interface CodexSystemDiagnosticsResponse {
     task_id?: string | null;
     issue_key?: string | null;
     operator_action?: ControlOperatorAction | null;
+    stop_state?: CanonicalStopState | null;
   }>;
   suppression?: {
     summary: {
@@ -2492,6 +2533,7 @@ export interface CodexIssueDetailResponse {
     actions: string[];
     confidence: string;
   };
+  stop_state?: CanonicalStopState | null;
   goal_explainability?: NonNullable<GoalPlanningItem["plan"]> & {
     task: NonNullable<GoalPlanningItem["plan"]>["tasks"][number];
   } | null;

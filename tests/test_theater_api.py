@@ -257,6 +257,8 @@ class TheaterApiTest(unittest.TestCase):
 
         active_agent = next(item for item in payload["agents"] if item["agent_id"] == context["active_agent_id"])
         self.assertEqual(active_agent["current_run_id"], context["session_id"])
+        self.assertTrue(payload["attention"]["items"])
+        self.assertTrue(payload["attention"]["items"][0]["stop_state"])
 
     def test_fetch_theater_service_exposes_issue_run_branch_and_pr_topology(self):
         with tempfile.TemporaryDirectory() as tmpdir:

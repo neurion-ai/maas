@@ -245,6 +245,7 @@ export function CodexIssueDetailPanel({
   const goalExplainability = detail?.goal_explainability ?? null;
   const explainedTask = goalExplainability?.task ?? null;
   const brownfieldGrounding = detail?.brownfield_grounding ?? null;
+  const stopState = detail?.stop_state ?? null;
   const issueActions = actions ? <div className="codex-detail-actions">{actions}</div> : null;
   const checks = detail?.verification_runs ?? [];
   const selectedRunRecord = selectedRunDetail;
@@ -259,6 +260,21 @@ export function CodexIssueDetailPanel({
   }, [detail?.memory_context, promotedMemoryItems]);
   const reviewBundle = (
     <>
+      {stopState ? (
+        <section className="codex-detail-section">
+          <div className="codex-review-note">
+            <strong>{stopState.summary}</strong>
+            {" · "}
+            {stopState.detail}
+            {stopState.recommended_action ? (
+              <>
+                {" · "}
+                Recommended action: {stopState.recommended_action}
+              </>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
       {goalExplainability && explainedTask ? (
         <section className="codex-detail-section">
           <div className="codex-section-heading">

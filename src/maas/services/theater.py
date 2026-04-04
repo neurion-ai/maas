@@ -11,6 +11,7 @@ from maas.services.codex_mvp import fetch_runs
 from maas.services.dashboard import fetch_agent_roster, fetch_overview
 from maas.services.delivery import fetch_delivery_overview
 from maas.services.git_workspaces import fetch_latest_git_workspace_by_task
+from maas.services.operator_inbox import fetch_operator_inbox
 from maas.services.projects import resolve_project
 
 logger = logging.getLogger(__name__)
@@ -150,6 +151,10 @@ def fetch_theater(connection, project_paths, project_id=None):
                 "branch_to_pr": [],
                 "branch_to_base": [],
             },
+            "attention": {
+                "headline": "No active stop states",
+                "items": [],
+            },
             "layout": {
                 "issue_lanes": [{"key": key, "label": THEATER_LANE_LABELS[key]} for key in THEATER_LANE_ORDER],
                 "branch_groups": [],
@@ -169,6 +174,7 @@ def fetch_theater(connection, project_paths, project_id=None):
         project_id=scoped_project_id,
         limit=max(board["summary"]["total_tasks"], 12),
     )
+    operator_inbox = fetch_operator_inbox(connection, scoped_project_id, project_paths)
 
     board_tasks = [task for column in board["columns"] for task in column["tasks"]]
     issues_by_task = {task["task_id"]: task for task in board_tasks}
@@ -534,6 +540,21 @@ def fetch_theater(connection, project_paths, project_id=None):
             "issue_to_branch": issue_to_branch,
             "branch_to_pr": branch_to_pr,
             "branch_to_base": branch_to_base,
+        },
+        "attention": {
+            "headline": operator_inbox["workflow"]["inbox"]["headline"],
+            "items": [
+                {
+                    "id": item.get("id"),
+                    "title": item.get("title"),
+                    "detail": item.get("detail"),
+                    "route": item.get("route"),
+                    "stop_state": item.get("stopState"),
+                    "operator_actions": item.get("operatorActions") or [],
+                    "tone": item.get("tone"),
+                }
+                for item in operator_inbox["workflow"]["inbox"]["items"][:6]
+            ],
         },
         "layout": {
             "issue_lanes": [{"key": key, "label": THEATER_LANE_LABELS[key]} for key in THEATER_LANE_ORDER],

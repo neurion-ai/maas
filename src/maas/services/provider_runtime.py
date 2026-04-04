@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 import json
 import os
+import sqlite3
 import shutil
 import subprocess
 import tempfile
@@ -1135,6 +1136,12 @@ def queue_provider_task(connection, project_paths, provider_id, actor_id, projec
     if resolved_project_id is None:
         raise ValueError("Project not found")
     ensure_board_action_allowed(connection, actor_id, resolved_project_id, "queue_provider_task", "provider", provider_id)
+    existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
+    if existing is not None:
+        job = fetch_provider_job(connection, existing["job_id"], include_archived=True)
+        if job is not None:
+            job["duplicate_suppressed"] = True
+            return job
     provider, _provider_settings = get_provider_runtime_settings(
         provider_id,
         connection=connection,
@@ -1147,18 +1154,33 @@ def queue_provider_task(connection, project_paths, provider_id, actor_id, projec
         raise ValueError("Task is not eligible for provider queueing.")
     effective_mode = provider.get("effective_execution_mode") or provider["execution_mode"]
     ensure_runtime_quotas_allow_provider_run(connection, resolved_project_id, task_id, effective_mode)
-    existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
-    if existing is not None:
-        raise ValueError("A queued or running provider job already exists for this task and provider.")
-    job = insert_provider_job(
-        connection,
-        resolved_project_id,
-        provider_id,
-        task_id,
-        agent_id,
-        queued_by=actor_id,
-        artifact_path=artifact_path,
-    )
+    try:
+        job = insert_provider_job(
+            connection,
+            resolved_project_id,
+            provider_id,
+            task_id,
+            agent_id,
+            queued_by=actor_id,
+            artifact_path=artifact_path,
+        )
+    except sqlite3.IntegrityError:
+        existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
+        if existing is not None:
+            job = fetch_provider_job(connection, existing["job_id"], include_archived=True)
+            if job is not None:
+                job["duplicate_suppressed"] = True
+                return job
+        raise
+    if job is None:
+        existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
+        if existing is not None:
+            current = fetch_provider_job(connection, existing["job_id"], include_archived=True)
+            if current is not None:
+                current["duplicate_suppressed"] = True
+                return current
+        raise ValueError("Provider job could not be queued safely")
+    job["duplicate_suppressed"] = False
     _activity_provider_job(
         connection,
         resolved_project_id,
@@ -1189,12 +1211,17 @@ def process_provider_job(connection, project_paths, job_id, actor_id, worker_id=
     job = fetch_provider_job(connection, job_id, include_archived=False)
     if job is None:
         raise ValueError("Provider job not found")
-    if job["status"] != "queued":
-        raise ValueError("Provider job is not queued")
     ensure_board_action_allowed(connection, actor_id, job["project_id"], "process_provider_job", "provider", job["provider_id"])
+    if job["status"] != "queued":
+        job["duplicate_suppressed"] = True
+        return job
     running_job = start_provider_job(connection, job_id, worker_id=worker_id or actor_id)
     if running_job is None:
-        raise ValueError("Provider job is no longer queued")
+        current = fetch_provider_job(connection, job_id, include_archived=True)
+        if current is None:
+            raise ValueError("Provider job is no longer queued")
+        current["duplicate_suppressed"] = True
+        return current
     _activity_provider_job(
         connection,
         running_job["project_id"],

@@ -47,7 +47,7 @@ Rules:
 - keep roadmap identifiers in GitHub issue titles when work maps to numbered items, for example `Roadmap #226: Goal-to-issue explainability and critical path view`
 
 `main` now includes the shipped post-`#224` slices through `#234`. Follow-on batch planning now lives in GitHub issues and the project board instead of new active-plan docs.
-The current unattended-local-trust hardening program is tracked in GitHub batches `#129-#133`, with Batch `#129` establishing reconciliation-backed truth inspection and repair.
+The current unattended-local-trust hardening program is tracked in GitHub batches `#129-#133`, with Batch `#129` establishing reconciliation-backed truth inspection and repair and Batch `#130` making notification, provider, git-workspace, and GitHub-sync side effects retry-safe and idempotent.
 
 See:
 
@@ -74,6 +74,7 @@ See:
 - [29-execution-theater-internal-production-readiness.md](29-execution-theater-internal-production-readiness.md)
 - [30-local-dev-lifecycle-scripts.md](30-local-dev-lifecycle-scripts.md)
 - [31-unattended-local-trust-invariants-reconciliation.md](31-unattended-local-trust-invariants-reconciliation.md)
+- [32-unattended-local-trust-idempotent-side-effects.md](32-unattended-local-trust-idempotent-side-effects.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

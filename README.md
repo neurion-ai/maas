@@ -60,6 +60,7 @@ Today MAAS is a substantial local prototype built around:
 - a React control plane for Command, Theater, Work, Issues, Agents, Runs, System, and Projects
 - goal intake, issue synthesis, autopilot, review, recovery, retrieval, delivery-prep, and GitHub sync flows
 - reconciliation-backed truth inspection and repair for stale run, task, agent, and delivery linkage
+- retry-safe external effects for notifications, provider jobs, git workspaces, and GitHub PR sync
 - a GitHub Project-driven execution workflow for tracked issues, PRs, and review state
 - live and simulated Codex execution paths with operator-visible logs, traces, and artifacts
 
@@ -137,6 +138,7 @@ Relevant design and roadmap documents:
 - [Execution Theater Internal-Production Readiness](docs/implementation/29-execution-theater-internal-production-readiness.md)
 - [Local Dev Lifecycle Scripts](docs/implementation/30-local-dev-lifecycle-scripts.md)
 - [Unattended Local Trust v1: Invariants and Reconciliation](docs/implementation/31-unattended-local-trust-invariants-reconciliation.md)
+- [Unattended Local Trust v1: Idempotent Side Effects and Retry Safety](docs/implementation/32-unattended-local-trust-idempotent-side-effects.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

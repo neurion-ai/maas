@@ -112,6 +112,139 @@ class GitWorkspaceApiTest(unittest.TestCase):
             self.assertEqual(artifact_row["artifact_type"], "git_diff")
             self.assertTrue(os.path.exists(artifact_row["path"]))
 
+    def test_prepare_git_workspace_reports_operation_metadata_and_reuses_existing_workspace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = os.path.join(tmpdir, "workspace")
+            repo_root = os.path.join(tmpdir, "repo")
+            os.makedirs(workspace_root, exist_ok=True)
+            os.makedirs(repo_root, exist_ok=True)
+            bootstrap_project(workspace_root, name="Primary Project", description="primary", project_type="custom")
+            _init_git_repo(
+                repo_root,
+                {
+                    "README.md": "# Imported repo\n",
+                    "src/app.py": "print('ok')\n",
+                },
+            )
+
+            client = TestClient(create_app(workspace_root))
+            project_payload = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Imported Repo",
+                    "description": "brownfield import",
+                    "project_type": "custom",
+                    "mode": "brownfield",
+                    "source_root": repo_root,
+                },
+            ).json()
+            project_id = project_payload["project"]["project_id"]
+
+            connection = connect(project_paths(workspace_root))
+            try:
+                task_row = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                      AND title LIKE 'Map imported source area:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            first = client.post(
+                f"/api/tasks/{task_row['task_id']}/actions/prepare-git-workspace",
+                json={"actor_id": "agent_allocator"},
+            )
+            second = client.post(
+                f"/api/tasks/{task_row['task_id']}/actions/prepare-git-workspace",
+                json={"actor_id": "agent_allocator"},
+            )
+
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual(first.json()["workspace_id"], second.json()["workspace_id"])
+            self.assertEqual(second.json()["operation_state"], "succeeded")
+            self.assertTrue(second.json()["retryable"])
+            self.assertFalse(second.json()["terminal_failure"])
+            self.assertEqual(second.json()["base_ref"], first.json()["head_commit"])
+            self.assertNotEqual(second.json()["base_ref"], second.json()["branch_name"])
+            self.assertEqual(second.json()["last_external_result"]["prepare_state"], "ready")
+            self.assertEqual(second.json()["last_external_result"]["last_prepare_mode"], "reused")
+            self.assertGreaterEqual(second.json()["last_external_result"]["prepare_attempts"], 2)
+
+    def test_prepare_git_workspace_marks_failed_when_path_exists_without_git_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace_root = os.path.join(tmpdir, "workspace")
+            repo_root = os.path.join(tmpdir, "repo")
+            os.makedirs(workspace_root, exist_ok=True)
+            os.makedirs(repo_root, exist_ok=True)
+            bootstrap_project(workspace_root, name="Primary Project", description="primary", project_type="custom")
+            _init_git_repo(
+                repo_root,
+                {
+                    "README.md": "# Imported repo\n",
+                    "src/app.py": "print('ok')\n",
+                },
+            )
+
+            client = TestClient(create_app(workspace_root))
+            project_payload = client.post(
+                "/api/projects",
+                json={
+                    "actor_id": "agent_allocator",
+                    "name": "Imported Repo",
+                    "description": "brownfield import",
+                    "project_type": "custom",
+                    "mode": "brownfield",
+                    "source_root": repo_root,
+                },
+            ).json()
+            project_id = project_payload["project"]["project_id"]
+            paths = project_paths(workspace_root)
+
+            connection = connect(paths)
+            try:
+                task_row = connection.execute(
+                    """
+                    SELECT task_id
+                    FROM tasks
+                    WHERE project_id = ?
+                      AND title LIKE 'Map imported source area:%'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """,
+                    (project_id,),
+                ).fetchone()
+            finally:
+                connection.close()
+
+            expected_path = paths.task_git_worktree(project_id, task_row["task_id"])
+            os.makedirs(expected_path, exist_ok=True)
+            with open(os.path.join(expected_path, "not-a-worktree.txt"), "w", encoding="utf-8") as handle:
+                handle.write("stale path\n")
+
+            response = client.post(
+                f"/api/tasks/{task_row['task_id']}/actions/prepare-git-workspace",
+                json={"actor_id": "agent_allocator"},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("not a managed git worktree", response.json()["detail"])
+
+            detail_response = client.get(f"/api/tasks/{task_row['task_id']}/git-workspace")
+            self.assertEqual(detail_response.status_code, 200)
+            detail_payload = detail_response.json()
+            self.assertEqual(detail_payload["operation_state"], "failed_terminal")
+            self.assertFalse(detail_payload["retryable"])
+            self.assertTrue(detail_payload["terminal_failure"])
+            self.assertEqual(detail_payload["last_external_result"]["prepare_state"], "failed")
+            self.assertIn("not a managed git worktree", detail_payload["last_external_result"]["last_prepare_error"])
+
     def test_prepare_git_workspace_rejects_non_git_source_root(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace_root = os.path.join(tmpdir, "workspace")

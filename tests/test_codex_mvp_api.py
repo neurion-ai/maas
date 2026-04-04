@@ -2680,10 +2680,18 @@ lint = "imported:lint"
                 self.assertEqual(payload["mode"], "created")
                 self.assertEqual(payload["github_pr"]["number"], 17)
                 self.assertEqual(payload["delivery_gate"]["status"], "ready")
+                self.assertEqual(payload["github_pr"]["operation_state"], "succeeded")
+                self.assertTrue(payload["github_pr"]["retryable"])
+                self.assertFalse(payload["github_pr"]["terminal_failure"])
+                self.assertEqual(payload["github_pr"]["last_external_result"]["number"], 17)
+                self.assertEqual(payload["github_pr"]["last_external_result"]["state"], "OPEN")
 
                 delivery_response = client.get(f"/api/tasks/{task['task_id']}/delivery")
                 self.assertEqual(delivery_response.status_code, 200)
-                self.assertEqual(delivery_response.json()["github_pr"]["number"], 17)
+                delivery_payload = delivery_response.json()
+                self.assertEqual(delivery_payload["github_pr"]["number"], 17)
+                self.assertEqual(delivery_payload["github_pr"]["operation_state"], "succeeded")
+                self.assertEqual(delivery_payload["github_pr"]["last_external_result"]["url"], "https://example.test/pr/17")
 
     def test_brownfield_review_to_delivery_api_flow_stays_consistent(self):
         with tempfile.TemporaryDirectory() as tmpdir:

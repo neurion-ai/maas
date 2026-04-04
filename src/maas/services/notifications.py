@@ -26,6 +26,7 @@ SUPPORTED_NOTIFICATION_EVENTS = set(DEFAULT_NOTIFICATION_POLICY["enabled_events"
 NOTIFICATION_RETRY_BASE_SECONDS = 60
 NOTIFICATION_RETRY_MAX_SECONDS = 3600
 NOTIFICATION_MAX_ATTEMPTS = 5
+NOTIFICATION_PROCESSING_LEASE_SECONDS = 120
 
 
 def _load_project_config(raw_config):
@@ -187,6 +188,10 @@ def _notification_digest_item(item):
         "last_error": item.get("last_error"),
         "last_response_code": item.get("last_response_code"),
         "created_at": item.get("created_at"),
+        "operation_state": item.get("operation_state"),
+        "retryable": item.get("retryable"),
+        "terminal_failure": item.get("terminal_failure"),
+        "last_external_result": item.get("last_external_result"),
         "notification_ids": [item.get("notification_id")] if item.get("notification_id") else [],
         "count": 1,
     }
@@ -246,6 +251,12 @@ def build_notification_digests(items, limit=8):
 def _decorate_notification_item(item, now=None):
     current_time = now or datetime.now(timezone.utc)
     parsed_next_attempt_at = _parse_timestamp(item.get("next_attempt_at"))
+    processing_started_at = _parse_timestamp(item.get("processing_started_at"))
+    claim_active = bool(
+        item.get("processing_token")
+        and processing_started_at is not None
+        and int((current_time - processing_started_at).total_seconds()) < NOTIFICATION_PROCESSING_LEASE_SECONDS
+    )
     item["retry_budget_remaining"] = _notification_retry_budget_remaining(item.get("attempts"))
     item["retry_budget_exhausted"] = _notification_retry_exhausted(item.get("attempts"))
     item["delivery_state"] = _notification_delivery_state(
@@ -265,7 +276,205 @@ def _decorate_notification_item(item, now=None):
         "max_delay_seconds": NOTIFICATION_RETRY_MAX_SECONDS,
         "max_attempts": NOTIFICATION_MAX_ATTEMPTS,
     }
+    if claim_active and item.get("status") != "sent":
+        operation_state = "running"
+    elif item.get("status") == "sent":
+        operation_state = "succeeded"
+    elif item.get("status") == "queued":
+        operation_state = "pending"
+    elif item.get("delivery_state") == "retry_exhausted":
+        operation_state = "failed_terminal"
+    elif item.get("status") == "failed":
+        operation_state = "failed_retryable"
+    else:
+        operation_state = item.get("status") or "unknown"
+    item["operation_state"] = operation_state
+    item["retryable"] = bool(
+        not claim_active
+        and (
+            item.get("status") == "queued"
+            or (item.get("status") == "failed" and not item["retry_budget_exhausted"])
+        )
+    )
+    item["terminal_failure"] = bool(item.get("status") == "failed" and item["retry_budget_exhausted"])
+    item["last_external_result"] = {
+        "last_response_code": item.get("last_response_code"),
+        "last_error": item.get("last_error"),
+        "last_attempt_at": item.get("last_attempt_at"),
+        "next_attempt_at": item.get("next_attempt_at"),
+    }
     return item
+
+
+def _notification_processing_claim_active(item, now=None):
+    current_time = now or datetime.now(timezone.utc)
+    processing_started_at = _parse_timestamp(item.get("processing_started_at"))
+    if not item.get("processing_token") or processing_started_at is None:
+        return False
+    return int((current_time - processing_started_at).total_seconds()) < NOTIFICATION_PROCESSING_LEASE_SECONDS
+
+
+def _fetch_raw_notification(connection, notification_id):
+    row = connection.execute(
+        """
+        SELECT *
+        FROM notification_outbox
+        WHERE notification_id = ?
+        """,
+        (notification_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _notification_item_from_row(row, now=None):
+    item = dict(row)
+    try:
+        item["payload"] = json.loads(item.pop("payload_json") or "{}")
+    except ValueError:
+        item["payload"] = {}
+    return _decorate_notification_item(item, now=now)
+
+
+def _claim_notification_row(connection, notification_id, *, allow_scheduled_retry=False):
+    token = generate_id("notifop")
+    retry_filter = (
+        "(status = 'queued' OR status = 'failed')"
+        if allow_scheduled_retry
+        else "(status = 'queued' OR (status = 'failed' AND attempts < ? AND (next_attempt_at IS NULL OR STRFTIME('%s', next_attempt_at) <= STRFTIME('%s', 'now'))))"
+    )
+    params = [token, notification_id]
+    if not allow_scheduled_retry:
+        params.append(NOTIFICATION_MAX_ATTEMPTS)
+    params.append(NOTIFICATION_PROCESSING_LEASE_SECONDS)
+    cursor = connection.execute(
+        """
+        UPDATE notification_outbox
+        SET processing_token = ?,
+            processing_started_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE notification_id = ?
+          AND {retry_filter}
+          AND (
+              processing_token IS NULL
+              OR processing_started_at IS NULL
+              OR STRFTIME('%s', processing_started_at) <= STRFTIME('%s', 'now') - ?
+          )
+        """.format(retry_filter=retry_filter),
+        tuple(params),
+    )
+    if cursor.rowcount == 0:
+        return None
+    row = connection.execute(
+        """
+        SELECT *
+        FROM notification_outbox
+        WHERE notification_id = ?
+          AND processing_token = ?
+        """,
+        (notification_id, token),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _deliver_claimed_notification(connection, row):
+    payload = {
+        "notification_id": row["notification_id"],
+        "project_id": row["project_id"],
+        "event_type": row["event_type"],
+        "severity": row["severity"],
+        "title": row["title"],
+        "body": row["body"],
+        "resource_type": row["resource_type"],
+        "resource_id": row["resource_id"],
+    }
+    try:
+        payload["payload"] = json.loads(row["payload_json"] or "{}")
+    except ValueError:
+        payload["payload"] = {}
+
+    request_body = json.dumps(payload).encode("utf-8")
+    http_request = request.Request(
+        row["target_url"],
+        data=request_body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with request.urlopen(http_request, timeout=10) as response:
+            status_code = getattr(response, "status", response.getcode())
+            response.read()
+        connection.execute(
+            """
+            UPDATE notification_outbox
+            SET status = 'sent',
+                attempts = attempts + 1,
+                last_error = NULL,
+                last_response_code = ?,
+                processing_token = NULL,
+                processing_started_at = NULL,
+                next_attempt_at = NULL,
+                last_attempt_at = CURRENT_TIMESTAMP,
+                sent_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = ?
+            """,
+            (status_code, row["notification_id"]),
+        )
+        connection.commit()
+    except error.URLError as exc:
+        next_attempts = (row["attempts"] or 0) + 1
+        next_attempt_at = None
+        if not _notification_retry_exhausted(next_attempts):
+            retry_delay_seconds = _notification_retry_delay_seconds(next_attempts)
+            next_attempt_at = "+{0} seconds".format(retry_delay_seconds)
+        connection.execute(
+            """
+            UPDATE notification_outbox
+            SET status = 'failed',
+                attempts = attempts + 1,
+                last_error = ?,
+                last_response_code = NULL,
+                processing_token = NULL,
+                processing_started_at = NULL,
+                next_attempt_at = CASE
+                    WHEN ? IS NULL THEN NULL
+                    ELSE DATETIME('now', ?)
+                END,
+                last_attempt_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = ?
+            """,
+            (str(exc.reason or exc), next_attempt_at, next_attempt_at, row["notification_id"]),
+        )
+        connection.commit()
+    except Exception as exc:
+        next_attempts = (row["attempts"] or 0) + 1
+        next_attempt_at = None
+        if not _notification_retry_exhausted(next_attempts):
+            retry_delay_seconds = _notification_retry_delay_seconds(next_attempts)
+            next_attempt_at = "+{0} seconds".format(retry_delay_seconds)
+        connection.execute(
+            """
+            UPDATE notification_outbox
+            SET status = 'failed',
+                attempts = attempts + 1,
+                last_error = ?,
+                last_response_code = NULL,
+                processing_token = NULL,
+                processing_started_at = NULL,
+                next_attempt_at = CASE
+                    WHEN ? IS NULL THEN NULL
+                    ELSE DATETIME('now', ?)
+                END,
+                last_attempt_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE notification_id = ?
+            """,
+            (str(exc), next_attempt_at, next_attempt_at, row["notification_id"]),
+        )
+        connection.commit()
+    refreshed = _fetch_raw_notification(connection, row["notification_id"])
+    return _notification_item_from_row(refreshed) if refreshed is not None else None
 
 
 def normalize_notification_policy(policy=None):
@@ -519,7 +728,9 @@ def fetch_notification_outbox(connection, project_id=None, status=None, limit=20
             notification_outbox.last_attempt_at,
             notification_outbox.created_at,
             notification_outbox.updated_at,
-            notification_outbox.sent_at
+            notification_outbox.sent_at,
+            notification_outbox.processing_token,
+            notification_outbox.processing_started_at
         FROM notification_outbox
         JOIN projects ON projects.project_id = notification_outbox.project_id
         {where_clause}
@@ -533,12 +744,7 @@ def fetch_notification_outbox(connection, project_id=None, status=None, limit=20
     items = []
     now = datetime.now(timezone.utc)
     for row in rows:
-        item = dict(row)
-        try:
-            item["payload"] = json.loads(item.pop("payload_json") or "{}")
-        except ValueError:
-            item["payload"] = {}
-        items.append(_decorate_notification_item(item, now=now))
+        items.append(_notification_item_from_row(row, now=now))
     return items
 
 
@@ -577,121 +783,53 @@ def process_notification(connection, notification_id, actor_id):
     if row is None:
         raise ValueError("Notification not found")
     ensure_board_action_allowed(connection, actor_id, row["project_id"], "process_notification", "notification", notification_id)
-    payload = {
-        "notification_id": row["notification_id"],
-        "project_id": row["project_id"],
-        "event_type": row["event_type"],
-        "severity": row["severity"],
-        "title": row["title"],
-        "body": row["body"],
-        "resource_type": row["resource_type"],
-        "resource_id": row["resource_id"],
-    }
-    try:
-        payload["payload"] = json.loads(row["payload_json"] or "{}")
-    except ValueError:
-        payload["payload"] = {}
-
-    request_body = json.dumps(payload).encode("utf-8")
-    http_request = request.Request(
-        row["target_url"],
-        data=request_body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with request.urlopen(http_request, timeout=10) as response:
-            status_code = getattr(response, "status", response.getcode())
-            response.read()
-        connection.execute(
-            """
-            UPDATE notification_outbox
-            SET status = 'sent',
-                attempts = attempts + 1,
-                last_error = NULL,
-                last_response_code = ?,
-                next_attempt_at = NULL,
-                last_attempt_at = CURRENT_TIMESTAMP,
-                sent_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE notification_id = ?
-            """,
-            (status_code, notification_id),
-        )
-        connection.commit()
-    except error.URLError as exc:
-        next_attempts = (row["attempts"] or 0) + 1
-        next_attempt_at = None
-        if not _notification_retry_exhausted(next_attempts):
-            retry_delay_seconds = _notification_retry_delay_seconds(next_attempts)
-            next_attempt_at = "+{0} seconds".format(retry_delay_seconds)
-        connection.execute(
-            """
-            UPDATE notification_outbox
-            SET status = 'failed',
-                attempts = attempts + 1,
-                last_error = ?,
-                next_attempt_at = CASE
-                    WHEN ? IS NULL THEN NULL
-                    ELSE DATETIME('now', ?)
-                END,
-                last_attempt_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE notification_id = ?
-            """,
-            (str(exc.reason or exc), next_attempt_at, next_attempt_at, notification_id),
-        )
-        connection.commit()
-    except Exception as exc:
-        next_attempts = (row["attempts"] or 0) + 1
-        next_attempt_at = None
-        if not _notification_retry_exhausted(next_attempts):
-            retry_delay_seconds = _notification_retry_delay_seconds(next_attempts)
-            next_attempt_at = "+{0} seconds".format(retry_delay_seconds)
-        connection.execute(
-            """
-            UPDATE notification_outbox
-            SET status = 'failed',
-                attempts = attempts + 1,
-                last_error = ?,
-                next_attempt_at = CASE
-                    WHEN ? IS NULL THEN NULL
-                    ELSE DATETIME('now', ?)
-                END,
-                last_attempt_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE notification_id = ?
-            """,
-            (str(exc), next_attempt_at, next_attempt_at, notification_id),
-        )
-        connection.commit()
-    refreshed = fetch_notification_outbox(connection, project_id=row["project_id"], limit=100, include_archived=True)
-    return next((item for item in refreshed if item["notification_id"] == notification_id), None)
+    if row["status"] == "sent":
+        return _notification_item_from_row(row)
+    claimed = _claim_notification_row(connection, notification_id, allow_scheduled_retry=True)
+    if claimed is None:
+        refreshed = _fetch_raw_notification(connection, notification_id)
+        if refreshed is None:
+            raise ValueError("Notification not found")
+        return _notification_item_from_row(refreshed)
+    return _deliver_claimed_notification(connection, claimed)
 
 
 def process_next_notification(connection, actor_id, project_id=None):
     resolved_project_id = resolve_project_id(connection, project_id, include_archived=False) if project_id else None
     filters = [
-        "(status = 'queued' OR (status = 'failed' AND attempts < ? AND (next_attempt_at IS NULL OR STRFTIME('%s', next_attempt_at) <= STRFTIME('%s', 'now'))))"
+        "(status = 'queued' OR (status = 'failed' AND attempts < ? AND (next_attempt_at IS NULL OR STRFTIME('%s', next_attempt_at) <= STRFTIME('%s', 'now'))))",
+        "(processing_token IS NULL OR processing_started_at IS NULL OR STRFTIME('%s', processing_started_at) <= STRFTIME('%s', 'now') - ?)",
     ]
-    params = [NOTIFICATION_MAX_ATTEMPTS]
+    params = [NOTIFICATION_MAX_ATTEMPTS, NOTIFICATION_PROCESSING_LEASE_SECONDS]
     if resolved_project_id:
         filters.append("project_id = ?")
         params.append(resolved_project_id)
-    row = connection.execute(
+    rows = connection.execute(
         """
-        SELECT notification_id
+        SELECT notification_id, project_id
         FROM notification_outbox
         WHERE {where_clause}
         ORDER BY
             CASE status WHEN 'queued' THEN 0 ELSE 1 END,
             COALESCE(next_attempt_at, created_at) ASC,
             created_at ASC
-        LIMIT 1
         """.format(where_clause=" AND ".join(filters)),
         tuple(params),
-    ).fetchone()
-    if row is None:
+    ).fetchall()
+    for row in rows:
+        ensure_board_action_allowed(
+            connection,
+            actor_id,
+            row["project_id"],
+            "process_notification",
+            "notification",
+            row["notification_id"],
+        )
+        claimed = _claim_notification_row(connection, row["notification_id"], allow_scheduled_retry=False)
+        if claimed is None:
+            continue
+        processed = _deliver_claimed_notification(connection, claimed)
+        return {"processed": True, "notification": processed}
+    if not rows:
         return {"processed": False, "notification": None}
-    processed = process_notification(connection, row["notification_id"], actor_id)
-    return {"processed": True, "notification": processed}
+    return {"processed": False, "notification": None}

@@ -10,6 +10,7 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.projects import create_project
+from maas.services.provider_runtime import queue_provider_task
 from maas.services.security import TASK_EXECUTION_CAPABILITIES, grant_task_capabilities
 
 
@@ -236,6 +237,31 @@ class ProviderJobQueueApiTest(unittest.TestCase):
             self.assertEqual(second.status_code, 200)
             self.assertEqual(first.json()["job_id"], second.json()["job_id"])
             self.assertTrue(second.json()["duplicate_suppressed"])
+
+    def test_queue_task_handles_null_dedupe_fallback_without_type_error(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Provider Job Null Fallback Test", description="Provider job null fallback", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                goal_id = connection.execute("SELECT goal_id FROM goals ORDER BY created_at ASC LIMIT 1").fetchone()["goal_id"]
+                task_id = _insert_assigned_task(connection, project_id, goal_id, "agent_reviewer", "Null fallback provider run")
+                connection.commit()
+
+                with mock.patch("maas.services.provider_runtime.insert_provider_job", return_value=None):
+                    with self.assertRaises(ValueError):
+                        queue_provider_task(
+                            connection,
+                            paths,
+                            "python_script",
+                            "agent_allocator",
+                            project_id,
+                            "agent_reviewer",
+                            task_id,
+                        )
+            finally:
+                connection.close()
 
     def test_process_job_returns_existing_completed_job_without_reprocessing(self):
         with tempfile.TemporaryDirectory() as tmpdir:

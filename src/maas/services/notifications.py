@@ -806,7 +806,7 @@ def process_next_notification(connection, actor_id, project_id=None):
         params.append(resolved_project_id)
     rows = connection.execute(
         """
-        SELECT notification_id
+        SELECT notification_id, project_id
         FROM notification_outbox
         WHERE {where_clause}
         ORDER BY
@@ -817,6 +817,14 @@ def process_next_notification(connection, actor_id, project_id=None):
         tuple(params),
     ).fetchall()
     for row in rows:
+        ensure_board_action_allowed(
+            connection,
+            actor_id,
+            row["project_id"],
+            "process_notification",
+            "notification",
+            row["notification_id"],
+        )
         claimed = _claim_notification_row(connection, row["notification_id"], allow_scheduled_retry=False)
         if claimed is None:
             continue

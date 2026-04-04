@@ -292,6 +292,37 @@ class NotificationsApiTest(unittest.TestCase):
             self.assertTrue(processed.json()["processed"])
             self.assertEqual(processed.json()["notification"]["notification_id"], claimable_id)
 
+    def test_process_next_notification_requires_board_action_permission(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Notification Permission Test", description="notification permission", project_type="custom")
+            client = TestClient(create_app(tmpdir))
+            project_id = client.get("/api/projects").json()["projects"][0]["project_id"]
+            self._configure_notifications(client, project_id, enabled_events=["escalation_requested"])
+
+            connection = connect(project_paths(tmpdir))
+            try:
+                queue_notification_event(
+                    connection,
+                    project_id,
+                    "escalation_requested",
+                    "critical",
+                    "Escalation requested",
+                    "Permissioned action.",
+                    resource_type="task",
+                    resource_id="task_permission",
+                    payload={"reason": "permission"},
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            response = client.post(
+                "/api/notifications/actions/process-next",
+                json={"actor_id": "agent_researcher", "project_id": project_id},
+            )
+
+            self.assertEqual(response.status_code, 403)
+
     def test_duplicate_notification_event_reuses_existing_outbox_item(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             bootstrap_project(tmpdir, name="Notification Dedupe Test", description="notification dedupe", project_type="custom")

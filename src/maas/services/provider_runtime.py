@@ -1172,6 +1172,14 @@ def queue_provider_task(connection, project_paths, provider_id, actor_id, projec
                 job["duplicate_suppressed"] = True
                 return job
         raise
+    if job is None:
+        existing = find_open_provider_job(connection, resolved_project_id, provider_id, task_id)
+        if existing is not None:
+            current = fetch_provider_job(connection, existing["job_id"], include_archived=True)
+            if current is not None:
+                current["duplicate_suppressed"] = True
+                return current
+        raise ValueError("Provider job could not be queued safely")
     job["duplicate_suppressed"] = False
     _activity_provider_job(
         connection,

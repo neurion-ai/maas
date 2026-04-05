@@ -1204,6 +1204,17 @@ export async function runSystemReconciliation(projectId?: string | null) {
   });
 }
 
+export async function runSystemTrustSoak(
+  options?: { projectId?: string | null; cycleLimit?: number; sleepSeconds?: number }
+) {
+  return postJson("/api/system/actions/run-trust-soak", {
+    actor_id: DEFAULT_ACTOR_ID,
+    project_id: options?.projectId ?? getSelectedProjectId(),
+    cycle_limit: options?.cycleLimit ?? 6,
+    sleep_seconds: options?.sleepSeconds ?? 0,
+  });
+}
+
 export function fetchOverview(projectId?: string | null, signal?: AbortSignal, onFallback?: () => void) {
   return fetchJson<OverviewResponse>("/api/overview", OVERVIEW_FALLBACK, signal, onFallback, projectId);
 }
@@ -1536,6 +1547,7 @@ export function fetchCodexSystemDiagnostics(
         },
         warnings: [],
       },
+      trust_run: null,
     },
     signal,
     onFallback,

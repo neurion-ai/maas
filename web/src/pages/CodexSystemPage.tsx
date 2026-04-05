@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
-import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction, runSystemReconciliation } from "../lib/controlRoomApi";
+import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction, runSystemReconciliation, runSystemTrustSoak } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
 import { boardCounts, formatTimestamp, openBoardTasks, resolvedBoardTasks } from "../lib/codexMvp";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
@@ -133,6 +133,23 @@ export function CodexSystemPage({
     }
   }
 
+  async function handleRunTrustSoak() {
+    setPendingActionKey("system:trust-soak");
+    setNotice(null);
+    try {
+      const result = await runSystemTrustSoak({ projectId: selectedProjectId, cycleLimit: 6, sleepSeconds: 0 });
+      await loadSystem();
+      const report = result?.report ?? {};
+      setNotice(
+        `Trust soak complete: ${report.completed_cycles ?? 0}/${report.cycle_limit ?? 0} cycles, ${report.incident_count ?? 0} incidents, ${report.unreconciled_truth_mismatches ?? 0} unreconciled mismatches.`
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Trust soak failed.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
   const counts = useMemo(() => boardCounts([{ key: "ready", title: "Ready", tasks }, { key: "done", title: "Done", tasks: resolved }]), [tasks, resolved]);
   const providerSummary = useMemo(() => {
     return (providers?.providers ?? []).reduce(
@@ -208,6 +225,14 @@ export function CodexSystemPage({
               disabled={pendingActionKey === "system:reconcile"}
             >
               {pendingActionKey === "system:reconcile" ? "Reconciling..." : "Reconcile Truth"}
+            </button>
+            <button
+              type="button"
+              className="codex-button"
+              onClick={() => void handleRunTrustSoak()}
+              disabled={pendingActionKey === "system:trust-soak"}
+            >
+              {pendingActionKey === "system:trust-soak" ? "Running trust soak..." : "Run Trust Soak"}
             </button>
             <button type="button" className="codex-button codex-button--primary" onClick={() => onNavigate("runs")}>
               Open Runs
@@ -306,6 +331,44 @@ export function CodexSystemPage({
               </div>
             ))}
           </div>
+        </section>
+
+        <section className="codex-panel">
+          <div className="codex-panel__header">
+            <div>
+              <span className="codex-kicker">Overnight trust</span>
+              <h2>Latest soak report</h2>
+            </div>
+            <span className="codex-chip">{runtimeDiagnostics?.trust_run?.report?.status ?? "idle"}</span>
+          </div>
+          {runtimeDiagnostics?.trust_run ? (
+            <div className="codex-run-list">
+              <div className="codex-run-item">
+                <div className="codex-run-item__meta">
+                  <strong>{runtimeDiagnostics.trust_run.summary?.project_name ?? "Trust run"}</strong>
+                  <span>{runtimeDiagnostics.trust_run.completed_cycles}/{runtimeDiagnostics.trust_run.cycle_limit} cycles</span>
+                </div>
+                <span>
+                  {runtimeDiagnostics.trust_run.report?.incident_count ?? 0} incidents · {runtimeDiagnostics.trust_run.report?.faults_applied ?? 0} faults applied · {runtimeDiagnostics.trust_run.report?.unreconciled_truth_mismatches ?? 0} unreconciled mismatches
+                </span>
+                <span>Started {formatTimestamp(runtimeDiagnostics.trust_run.started_at)} · Finished {formatTimestamp(runtimeDiagnostics.trust_run.ended_at ?? null)}</span>
+              </div>
+              {(runtimeDiagnostics.trust_run.report?.recent_cycles ?? []).slice().reverse().map((cycle) => (
+                <div key={`trust-cycle-${cycle.cycle_index}`} className="codex-run-item">
+                  <div className="codex-run-item__meta">
+                    <strong>Cycle {cycle.cycle_index}</strong>
+                    <span>{cycle.new_incidents ?? 0} new incidents</span>
+                  </div>
+                  <span>
+                    {cycle.truth_warning_count ?? 0} truth warnings · {cycle.repair_count ?? 0} repairs · {cycle.blocking_stop_states ?? 0} blocking stop states
+                  </span>
+                  <span>{cycle.workspace_error ?? cycle.delivery_error ?? cycle.workspace_state ?? cycle.delivery_state ?? "No injected surface failure recorded."}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="codex-empty-copy">No trust soak has been recorded yet for this project.</div>
+          )}
         </section>
 
         <section className="codex-panel">

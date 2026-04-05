@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Run a persisted unattended-trust soak for a local MAAS workspace."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from maas.db import connect, project_paths
+from maas.services.projects import resolve_project_id
+from maas.services.trust_runs import execute_trust_run
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(prog="scripts/maas-trust-run")
+    parser.add_argument("--project-root", default=".", help="MAAS workspace root")
+    parser.add_argument("--project-id", default=None, help="Project id to run against; defaults to the selected active project")
+    parser.add_argument("--actor-id", default="agent_allocator")
+    parser.add_argument("--cycles", type=int, default=12)
+    parser.add_argument("--sleep-seconds", type=int, default=60)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    root = Path(args.project_root).resolve()
+    paths = project_paths(str(root))
+    connection = connect(paths)
+    try:
+        project_id = resolve_project_id(connection, args.project_id, include_archived=False)
+        if project_id is None:
+            raise SystemExit("Project not found")
+        payload = execute_trust_run(
+            connection,
+            paths,
+            project_id,
+            actor_id=args.actor_id,
+            cycle_limit=args.cycles,
+            sleep_seconds=args.sleep_seconds,
+        )
+    finally:
+        connection.close()
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

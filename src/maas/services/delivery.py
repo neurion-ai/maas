@@ -9,6 +9,7 @@ import subprocess
 
 from maas.ids import generate_id
 from maas.services.artifacts import artifact_export_bundle_available, build_artifact_export_bundle
+from maas.services.fault_injection import consume_fault_injection
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 from maas.services.verification import fetch_verification_runs, task_verification_commands
@@ -914,6 +915,17 @@ def sync_github_pr(connection, project_paths, task_id, actor_id, project_id=None
         actor_id=actor_id,
         project_id=context["project_id"],
     )
+    injected_fault = consume_fault_injection(
+        connection,
+        context["project_id"],
+        "delivery",
+        "sync",
+        target_resource_type="task",
+        target_resource_id=task_id,
+    )
+    if injected_fault is not None:
+        fault_summary = (injected_fault.get("payload") or {}).get("summary") or "Injected GitHub delivery sync failure."
+        raise RuntimeError(fault_summary)
     existing = _gh_list_pulls(context["source_root"], branch)
     open_pull = next((item for item in existing if (item.get("state") or "").upper() == "OPEN"), None)
     if open_pull is not None:

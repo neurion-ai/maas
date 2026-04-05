@@ -2370,6 +2370,82 @@ export interface CodexSystemDiagnosticsResponse {
       repaired?: boolean;
     }>;
   };
+  trust_run?: {
+    trust_run_id: string;
+    project_id: string;
+    actor_id: string;
+    profile: string;
+    status: "running" | "completed" | "failed" | "cancelled";
+    cycle_limit: number;
+    completed_cycles: number;
+    sleep_seconds: number;
+    started_at: string;
+    ended_at?: string | null;
+    last_cycle_started_at?: string | null;
+    last_cycle_finished_at?: string | null;
+    incident_count: number;
+    summary?: {
+      project_name?: string | null;
+      latest_cycle?: {
+        cycle_index?: number;
+        truth_warning_count?: number;
+        repair_count?: number;
+        blocking_stop_states?: number;
+        duplicate_side_effects?: number;
+        new_incidents?: number;
+      } | null;
+      latest_reconciled_at?: string | null;
+      latest_error?: string | null;
+    };
+    report?: {
+      status?: string | null;
+      cycle_limit?: number;
+      completed_cycles?: number;
+      faults_scheduled?: number;
+      faults_applied?: number;
+      faults_skipped?: number;
+      incident_count?: number;
+      invariant_violations_found?: number;
+      automatic_repairs_attempted?: number;
+      manual_stop_states_raised?: number;
+      unreconciled_truth_mismatches?: number;
+      duplicate_side_effects?: number;
+      recent_cycles?: Array<{
+        cycle_index: number;
+        truth_warning_count?: number;
+        repair_count?: number;
+        blocking_stop_states?: number;
+        duplicate_side_effects?: number;
+        new_incidents?: number;
+        workspace_state?: string | null;
+        workspace_error?: string | null;
+        delivery_state?: string | null;
+        delivery_error?: string | null;
+      }>;
+    };
+    faults?: Array<{
+      injection_id: string;
+      cycle_index?: number | null;
+      domain: string;
+      action: string;
+      status: string;
+      target_resource_type?: string | null;
+      target_resource_id?: string | null;
+      applied_at?: string | null;
+      payload?: Record<string, unknown>;
+    }>;
+    incidents?: Array<{
+      replay_id: string;
+      incident_kind: string;
+      incident_key: string;
+      source_type?: string | null;
+      source_id?: string | null;
+      summary: string;
+      created_at: string;
+      snapshot?: Record<string, unknown>;
+      replay?: Record<string, unknown>;
+    }>;
+  } | null;
 }
 
 export interface CodexRunConsoleActivityItem {

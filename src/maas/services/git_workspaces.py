@@ -5,6 +5,7 @@ import os
 import subprocess
 
 from maas.ids import generate_id
+from maas.services.fault_injection import consume_fault_injection
 from maas.services.security import ensure_board_action_allowed
 
 
@@ -294,6 +295,17 @@ def prepare_task_git_workspace(connection, project_paths, task_id, actor_id, com
     existing = _existing_workspace(connection, task_id)
 
     try:
+        injected_fault = consume_fault_injection(
+            connection,
+            task_row["project_id"],
+            "git_workspace",
+            "prepare",
+            target_resource_type="task",
+            target_resource_id=task_id,
+        )
+        if injected_fault is not None:
+            fault_summary = (injected_fault.get("payload") or {}).get("summary") or "Injected git workspace prepare failure."
+            raise ValueError(fault_summary)
         if os.path.isdir(worktree_path) and os.path.exists(os.path.join(worktree_path, ".git")):
             head_commit = _current_head(worktree_path)
             connection.execute(

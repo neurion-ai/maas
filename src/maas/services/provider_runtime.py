@@ -26,6 +26,7 @@ from maas.services.provider_jobs import (
     next_queued_provider_job_id,
     start_provider_job,
 )
+from maas.services.fault_injection import consume_fault_injection
 from maas.services.lifecycle import end_session, heartbeat, log_activity, produce_artifact, start_session
 from maas.services.memory import build_task_prompt, record_memory_injection, record_memory_outcome
 from maas.services.projects import resolve_project, resolve_project_id
@@ -994,6 +995,22 @@ def run_provider_task(connection, project_paths, project_id, agent_id, task_id, 
             artifact_type=provider["default_artifact_type"],
             **extra_activity_details
         )
+        injected_fault = consume_fault_injection(
+            connection,
+            project_id,
+            "provider",
+            "runtime",
+            target_resource_type="task",
+            target_resource_id=task_id,
+        )
+        if injected_fault is not None:
+            fault_summary = (injected_fault.get("payload") or {}).get("summary") or "Injected provider runtime failure."
+            raise ProviderRuntimeFailure(
+                "injected_fault",
+                fault_summary,
+                fault_domain="provider",
+                fault_action="runtime",
+            )
         if claude_cli_enabled:
             external_result = _run_claude_code_cli(
                 project_paths,

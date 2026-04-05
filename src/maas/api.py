@@ -117,6 +117,7 @@ from maas.services.steering import (
 )
 from maas.services.system_dialogs import pick_directory_via_native_dialog
 from maas.services.theater import fetch_theater
+from maas.services.trust_runs import execute_trust_run
 from maas.supervisor import run_supervisor_once
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs, run_task_verification
@@ -193,6 +194,13 @@ class AgentActionRequest(BaseModel):
 class SystemReconcileRequest(BaseModel):
     actor_id: str = "agent_allocator"
     project_id: Optional[str] = None
+
+
+class SystemTrustRunRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    project_id: Optional[str] = None
+    cycle_limit: int = 6
+    sleep_seconds: int = 0
 
 
 class AlertActionRequest(BaseModel):
@@ -526,6 +534,26 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
                 project_id=_selected_project_id(connection, payload.project_id),
                 actor_id=payload.actor_id,
                 source="manual",
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/system/actions/run-trust-soak")
+    def system_run_trust_soak(payload: SystemTrustRunRequest):
+        connection = connect(paths)
+        try:
+            scoped_project_id = _selected_project_id(connection, payload.project_id)
+            return execute_trust_run(
+                connection,
+                paths,
+                scoped_project_id,
+                actor_id=payload.actor_id,
+                cycle_limit=payload.cycle_limit,
+                sleep_seconds=payload.sleep_seconds,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))

@@ -7,6 +7,7 @@ import sqlite3
 from urllib import error, request
 
 from maas.ids import generate_id
+from maas.services.fault_injection import consume_fault_injection
 from maas.services.projects import resolve_project, resolve_project_id
 from maas.services.security import ensure_board_action_allowed
 
@@ -400,6 +401,17 @@ def _deliver_claimed_notification(connection, row):
         headers={"Content-Type": "application/json"},
     )
     try:
+        injected_fault = consume_fault_injection(
+            connection,
+            row["project_id"],
+            "notification",
+            "deliver",
+            target_resource_type="notification",
+            target_resource_id=row["notification_id"],
+        )
+        if injected_fault is not None:
+            fault_summary = (injected_fault.get("payload") or {}).get("summary") or "Injected notification delivery failure."
+            raise RuntimeError(fault_summary)
         with request.urlopen(http_request, timeout=10) as response:
             status_code = getattr(response, "status", response.getcode())
             response.read()

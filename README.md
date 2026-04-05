@@ -61,6 +61,7 @@ Today MAAS is a substantial local prototype built around:
 - goal intake, issue synthesis, autopilot, review, recovery, retrieval, delivery-prep, and GitHub sync flows
 - reconciliation-backed truth inspection and repair for stale run, task, agent, and delivery linkage
 - retry-safe external effects for notifications, provider jobs, git workspaces, and GitHub PR sync
+- persisted trust runs with deterministic fault injection and replayable incident evidence
 - a GitHub Project-driven execution workflow for tracked issues, PRs, and review state
 - live and simulated Codex execution paths with operator-visible logs, traces, and artifacts
 
@@ -96,6 +97,12 @@ Stop or restart the stack with:
 ```bash
 ./scripts/maas-dev down
 ./scripts/maas-dev restart
+```
+
+Run a persisted local trust soak with deterministic failure injection:
+
+```bash
+PYTHONPATH=src ./scripts/maas-trust-run --project-root /tmp/maas-dev/workspace --cycles 12 --sleep-seconds 60
 ```
 
 If `:8000` or `:5173` is already occupied on your machine, pass explicit overrides such as
@@ -140,6 +147,7 @@ Relevant design and roadmap documents:
 - [Unattended Local Trust v1: Invariants and Reconciliation](docs/implementation/31-unattended-local-trust-invariants-reconciliation.md)
 - [Unattended Local Trust v1: Idempotent Side Effects and Retry Safety](docs/implementation/32-unattended-local-trust-idempotent-side-effects.md)
 - [Unattended Local Trust v1: Stop States and Operator Truth](docs/implementation/33-unattended-local-trust-stop-states-operator-truth.md)
+- [Unattended Local Trust v1: Overnight Soak and Fault Injection](docs/implementation/34-unattended-local-trust-soak-fault-injection.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 

@@ -16,6 +16,7 @@ from maas.services.repo_plan import build_brownfield_grounding
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
 from maas.services.stop_states import issue_stop_state, run_stop_state, stale_agent_stop_state
 from maas.services.timeline import fetch_incident_timeline
+from maas.services.trust_runs import fetch_latest_trust_run_summary
 from maas.services.verification import fetch_verification_runs
 
 
@@ -943,6 +944,7 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
                 "operator_action": item.get("operator_action"),
             }
         )
+    trust_run = fetch_latest_trust_run_summary(connection, project_id)
 
     return {
         "summary": {
@@ -974,6 +976,7 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
             "oldest_running_at": oldest_running_at,
         },
         "truth": truth,
+        "trust_run": trust_run,
     }
 
 

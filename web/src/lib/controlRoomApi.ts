@@ -872,6 +872,13 @@ export async function updateProjectAutopilot(
   });
 }
 
+export async function updateProjectUnattendedMode(projectId: string, enabled: boolean) {
+  return postJson(`/api/projects/${projectId}/actions/update-unattended-mode`, {
+    actor_id: DEFAULT_ACTOR_ID,
+    enabled,
+  });
+}
+
 export function fetchEnvironmentDoctor(
   signal?: AbortSignal,
   onFallback?: () => void,
@@ -1548,6 +1555,7 @@ export function fetchCodexSystemDiagnostics(
         warnings: [],
       },
       trust_run: null,
+      trust_gate: null,
     },
     signal,
     onFallback,

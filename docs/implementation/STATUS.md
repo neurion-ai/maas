@@ -48,6 +48,7 @@ Rules:
 
 `main` now includes the shipped post-`#224` slices through `#234`. Follow-on batch planning now lives in GitHub issues and the project board instead of new active-plan docs.
 The current unattended-local-trust hardening program is tracked in GitHub batches `#129-#133`, with Batch `#129` establishing reconciliation-backed truth inspection and repair, Batch `#130` making notification, provider, git-workspace, and GitHub-sync side effects retry-safe and idempotent, Batch `#131` making stop states and board truth canonical, and Batch `#132` adding persisted trust runs, deterministic fault injection, replayable incidents, and operator-visible soak reports.
+Batch `#133` closes that program by adding the unattended trust gate itself: MAAS now derives explicit overnight eligibility from passing soak evidence plus current launch/truth posture, and it refuses intentional unattended mode until those prerequisites are actually green.
 
 See:
 
@@ -77,6 +78,7 @@ See:
 - [32-unattended-local-trust-idempotent-side-effects.md](32-unattended-local-trust-idempotent-side-effects.md)
 - [33-unattended-local-trust-stop-states-operator-truth.md](33-unattended-local-trust-stop-states-operator-truth.md)
 - [34-unattended-local-trust-soak-fault-injection.md](34-unattended-local-trust-soak-fault-injection.md)
+- [35-unattended-local-trust-final-closure-gate.md](35-unattended-local-trust-final-closure-gate.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract

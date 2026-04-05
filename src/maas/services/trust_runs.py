@@ -21,6 +21,10 @@ from maas.services.security import ensure_board_action_allowed
 
 DEFAULT_TRUST_RUN_PROFILE = "default"
 DEFAULT_TRUST_RUN_CYCLE_LIMIT = 6
+TRUST_TOLERATED_WARNING_CODES = {
+    "active_session_conflicts_with_task_state",
+    "active_session_conflicts_with_agent_state",
+}
 
 
 def _load_json(value):
@@ -513,6 +517,17 @@ def _build_report(cycle_limit):
     }
 
 
+def _effective_truth_warning_count(payload):
+    warnings = (payload or {}).get("warnings") or []
+    return len(
+        [
+            item
+            for item in warnings
+            if item.get("code") not in TRUST_TOLERATED_WARNING_CODES
+        ]
+    )
+
+
 def execute_trust_run(connection, project_paths, project_id, actor_id="agent_allocator", *, cycle_limit=DEFAULT_TRUST_RUN_CYCLE_LIMIT, sleep_seconds=0, profile=DEFAULT_TRUST_RUN_PROFILE):
     from maas.services.codex_mvp import fetch_system_diagnostics
     from maas.services.delivery import sync_github_pr
@@ -520,6 +535,7 @@ def execute_trust_run(connection, project_paths, project_id, actor_id="agent_all
     from maas.services.notifications import process_next_notification
     from maas.services.orchestrator import run_orchestrator_once
     from maas.services.provider_runtime import process_next_provider_job, queue_provider_task
+    from maas.services.reconciliation import reconcile_project_truth
 
     resolved_project_id = resolve_project_id(connection, project_id, include_archived=False)
     if resolved_project_id is None:
@@ -648,8 +664,7 @@ def execute_trust_run(connection, project_paths, project_id, actor_id="agent_all
             cycle_summary["orchestrator_project_runs"] = len(orchestrator_summary.get("project_runs") or [])
 
             diagnostics = fetch_system_diagnostics(connection, resolved_project_id, project_paths=project_paths)
-            cycle_summary["truth_warning_count"] = diagnostics["truth"]["summary"]["warning_count"]
-            cycle_summary["repair_count"] = diagnostics["truth"]["summary"]["repaired_count"]
+            cycle_summary["truth_warning_count_pre_reconcile"] = diagnostics["truth"]["summary"]["warning_count"]
             cycle_summary["blocking_stop_states"] = len(
                 [
                     item
@@ -657,17 +672,33 @@ def execute_trust_run(connection, project_paths, project_id, actor_id="agent_all
                     if (item.get("stop_state") or {}).get("autopilot_blocking")
                 ]
             )
+            reconciliation = reconcile_project_truth(
+                connection,
+                project_paths,
+                project_id=resolved_project_id,
+                actor_id=actor["actor_id"],
+                source="trust_soak_cycle",
+            )
+            diagnostics = fetch_system_diagnostics(connection, resolved_project_id, project_paths=project_paths)
+            cycle_summary["truth_warning_count_raw"] = diagnostics["truth"]["summary"]["warning_count"]
+            cycle_summary["truth_warning_count"] = _effective_truth_warning_count(reconciliation)
+            cycle_summary["tolerated_truth_warning_count"] = max(
+                0,
+                int(cycle_summary["truth_warning_count_raw"] or 0) - int(cycle_summary["truth_warning_count"] or 0),
+            )
+            cycle_summary["repair_count"] = reconciliation["summary"]["repaired_count"]
+            cycle_summary["project_board_sync_count"] = reconciliation["summary"].get("project_board_sync_count") or 0
             new_incidents = _capture_trust_run_incidents(connection, resolved_project_id, trust_run_id, diagnostics)
             cycle_summary["new_incidents"] = new_incidents
 
             report["completed_cycles"] = cycle_index
             report["incident_count"] += new_incidents
-            report["invariant_violations_found"] += diagnostics["truth"]["summary"]["warning_count"]
-            report["automatic_repairs_attempted"] += diagnostics["truth"]["summary"]["repaired_count"]
+            report["invariant_violations_found"] += cycle_summary["truth_warning_count_pre_reconcile"]
+            report["automatic_repairs_attempted"] += reconciliation["summary"]["repaired_count"]
             report["manual_stop_states_raised"] += cycle_summary["blocking_stop_states"]
             report["unreconciled_truth_mismatches"] = max(
                 report["unreconciled_truth_mismatches"],
-                diagnostics["truth"]["summary"]["warning_count"],
+                cycle_summary["truth_warning_count"],
             )
             report["duplicate_side_effects"] += cycle_summary["duplicate_side_effects"]
             applied_faults = list_fault_injections(connection, trust_run_id=trust_run_id)
@@ -675,7 +706,7 @@ def execute_trust_run(connection, project_paths, project_id, actor_id="agent_all
             report["faults_skipped"] = len([item for item in applied_faults if item["status"] == "skipped"])
             report["recent_cycles"] = (report["recent_cycles"] + [cycle_summary])[-8:]
             summary["latest_cycle"] = cycle_summary
-            summary["latest_reconciled_at"] = diagnostics["truth"].get("latest_reconciled_at")
+            summary["latest_reconciled_at"] = reconciliation.get("latest_reconciled_at") or diagnostics["truth"].get("latest_reconciled_at")
             _update_trust_run(
                 connection,
                 trust_run_id,

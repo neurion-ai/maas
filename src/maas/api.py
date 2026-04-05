@@ -117,6 +117,7 @@ from maas.services.steering import (
 )
 from maas.services.system_dialogs import pick_directory_via_native_dialog
 from maas.services.theater import fetch_theater
+from maas.services.trust_gate import update_project_unattended_mode
 from maas.services.trust_runs import execute_trust_run
 from maas.supervisor import run_supervisor_once
 from maas.services.timeline import fetch_incident_timeline
@@ -201,6 +202,11 @@ class SystemTrustRunRequest(BaseModel):
     project_id: Optional[str] = None
     cycle_limit: int = 6
     sleep_seconds: int = 0
+
+
+class ProjectUnattendedModeRequest(BaseModel):
+    actor_id: str = "agent_allocator"
+    enabled: bool
 
 
 class AlertActionRequest(BaseModel):
@@ -733,6 +739,24 @@ def create_app(project_root=".", enable_lifespan_autopilot=True):
                     "max_repeated_failure_incidents": payload.max_repeated_failure_incidents,
                     "max_notification_failures": payload.max_notification_failures,
                 },
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        finally:
+            connection.close()
+
+    @app.post("/api/projects/{project_id}/actions/update-unattended-mode")
+    def projects_update_unattended_mode(project_id: str, payload: ProjectUnattendedModeRequest):
+        connection = connect(paths)
+        try:
+            return update_project_unattended_mode(
+                connection,
+                paths,
+                project_id,
+                payload.actor_id,
+                payload.enabled,
             )
         except PermissionError as exc:
             raise HTTPException(status_code=403, detail=str(exc))

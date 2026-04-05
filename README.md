@@ -148,6 +148,7 @@ Relevant design and roadmap documents:
 - [Unattended Local Trust v1: Idempotent Side Effects and Retry Safety](docs/implementation/32-unattended-local-trust-idempotent-side-effects.md)
 - [Unattended Local Trust v1: Stop States and Operator Truth](docs/implementation/33-unattended-local-trust-stop-states-operator-truth.md)
 - [Unattended Local Trust v1: Overnight Soak and Fault Injection](docs/implementation/34-unattended-local-trust-soak-fault-injection.md)
+- [Unattended Local Trust v1: Final Closure and Trust Gate](docs/implementation/35-unattended-local-trust-final-closure-gate.md)
 
 There is also a standalone product mockup for the current direction in [mockups/maas-codex-mvp/README.md](mockups/maas-codex-mvp/README.md).
 
@@ -160,6 +161,8 @@ Active planning and execution now live in GitHub, not in the numbered implementa
 - history/reference docs: the numbered implementation docs under [docs/implementation](docs/implementation/)
 
 Use one GitHub issue per tracked task or roadmap item, keep project fields truthful, and link the PR once code work starts. Reconciliation now also repairs stale merged-state cards for this repo's own GitHub Project when a tracked issue is already closed by a merged PR.
+
+For unattended local use, rely on the System surface trust gate rather than README prose. MAAS now exposes an explicit unattended-mode gate that only arms after a fresh passing trust soak, clean truth reconciliation, and healthy launch posture.
 
 ## Roadmap and Implementation History
 

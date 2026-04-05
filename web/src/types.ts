@@ -2446,6 +2446,36 @@ export interface CodexSystemDiagnosticsResponse {
       replay?: Record<string, unknown>;
     }>;
   } | null;
+  trust_gate?: {
+    project_id: string;
+    status: "unverified" | "blocked" | "eligible" | "armed" | "armed_blocked";
+    eligible: boolean;
+    unattended_mode_requested: boolean;
+    summary: string;
+    detail: string;
+    checked_at: string;
+    required_passed_cycles: number;
+    max_trust_run_age_hours: number;
+    latest_trust_run_id?: string | null;
+    latest_trust_run_status?: string | null;
+    latest_trust_run_finished_at?: string | null;
+    truth_warning_count: number;
+    project_board?: {
+      enabled: boolean;
+      drift_count: number;
+      updated_count: number;
+      warnings?: Array<{
+        detail?: string | null;
+      }>;
+    };
+    blockers: Array<{
+      code: string;
+      summary: string;
+      detail: string;
+      severity: "info" | "warning" | "critical";
+      operator_actions?: ControlOperatorAction[];
+    }>;
+  } | null;
 }
 
 export interface CodexRunConsoleActivityItem {

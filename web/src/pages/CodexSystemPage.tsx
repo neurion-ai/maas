@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { OperatorLoopPanel } from "../components/OperatorLoopPanel";
 import { CodexRunDetailCard } from "../components/CodexRunDetailCard";
-import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction, runSystemReconciliation, runSystemTrustSoak } from "../lib/controlRoomApi";
+import { fetchActivity, fetchCodexRunDetail, fetchCodexSystemDiagnostics, fetchIncidentTimeline, fetchProviders, runControlOperatorAction, runSystemReconciliation, runSystemTrustSoak, updateProjectUnattendedMode } from "../lib/controlRoomApi";
 import { fetchBoard } from "../lib/boardApi";
 import { boardCounts, formatTimestamp, openBoardTasks, resolvedBoardTasks } from "../lib/codexMvp";
 import type { OperatorLoopItem, OperatorWorkflowState } from "../lib/operatorLoop";
@@ -145,6 +145,25 @@ export function CodexSystemPage({
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Trust soak failed.");
+    } finally {
+      setPendingActionKey(null);
+    }
+  }
+
+  async function handleUpdateUnattendedMode(enabled: boolean) {
+    const projectId = diagnostics?.trust_gate?.project_id ?? selectedProjectId;
+    if (!projectId) {
+      setNotice("Select a project before changing unattended mode.");
+      return;
+    }
+    setPendingActionKey(`system:unattended:${enabled ? "on" : "off"}`);
+    setNotice(null);
+    try {
+      const result = await updateProjectUnattendedMode(projectId, enabled);
+      await loadSystem();
+      setNotice(result.summary);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Updating unattended mode failed.");
     } finally {
       setPendingActionKey(null);
     }
@@ -337,12 +356,80 @@ export function CodexSystemPage({
           <div className="codex-panel__header">
             <div>
               <span className="codex-kicker">Overnight trust</span>
-              <h2>Latest soak report</h2>
+              <h2>Trust gate and latest soak</h2>
             </div>
-            <span className="codex-chip">{runtimeDiagnostics?.trust_run?.report?.status ?? "idle"}</span>
+            <span className="codex-chip">{runtimeDiagnostics?.trust_gate?.status ?? runtimeDiagnostics?.trust_run?.report?.status ?? "idle"}</span>
           </div>
-          {runtimeDiagnostics?.trust_run ? (
+          {runtimeDiagnostics?.trust_gate ? (
             <div className="codex-run-list">
+              <div className="codex-run-item">
+                <div className="codex-run-item__meta">
+                  <strong>{runtimeDiagnostics.trust_gate.summary}</strong>
+                  <span>{runtimeDiagnostics.trust_gate.status.replaceAll("_", " ")}</span>
+                </div>
+                <span>{runtimeDiagnostics.trust_gate.detail}</span>
+                <span>
+                  {runtimeDiagnostics.trust_gate.truth_warning_count} live truth warnings · requires {runtimeDiagnostics.trust_gate.required_passed_cycles} cycle soak within {runtimeDiagnostics.trust_gate.max_trust_run_age_hours}h
+                </span>
+                <div className="codex-detail-actions">
+                  <button
+                    type="button"
+                    className="codex-button"
+                    onClick={() => void handleRunTrustSoak()}
+                    disabled={pendingActionKey === "system:trust-soak"}
+                  >
+                    {pendingActionKey === "system:trust-soak" ? "Running trust soak..." : "Run Trust Soak"}
+                  </button>
+                  <button
+                    type="button"
+                    className="codex-button codex-button--primary"
+                    onClick={() => void handleUpdateUnattendedMode(!runtimeDiagnostics.trust_gate?.unattended_mode_requested)}
+                    disabled={
+                      pendingActionKey === `system:unattended:${runtimeDiagnostics.trust_gate?.unattended_mode_requested ? "off" : "on"}` ||
+                      (!runtimeDiagnostics.trust_gate.unattended_mode_requested && !runtimeDiagnostics.trust_gate.eligible)
+                    }
+                  >
+                    {pendingActionKey === `system:unattended:${runtimeDiagnostics.trust_gate?.unattended_mode_requested ? "off" : "on"}`
+                      ? "Updating..."
+                      : runtimeDiagnostics.trust_gate.unattended_mode_requested
+                        ? "Disarm Unattended Mode"
+                        : runtimeDiagnostics.trust_gate.eligible
+                          ? "Arm Unattended Mode"
+                          : "Arm blocked until eligible"}
+                  </button>
+                </div>
+              </div>
+              {(runtimeDiagnostics.trust_gate.blockers ?? []).map((blocker) => (
+                <div key={`trust-blocker-${blocker.code}`} className="codex-run-item">
+                  <div className="codex-run-item__meta">
+                    <strong>{blocker.summary}</strong>
+                    <span>{blocker.severity}</span>
+                  </div>
+                  <span>{blocker.detail}</span>
+                  {blocker.operator_actions?.length ? (
+                    <div className="codex-detail-actions">
+                      {blocker.operator_actions.slice(0, 2).map((action) => (
+                        <button
+                          key={`${blocker.code}:${action.action}:${action.resource_id}`}
+                          type="button"
+                          className="codex-button"
+                          disabled={pendingActionKey === `${action.action}:${action.resource_id}`}
+                          onClick={() => void handleControlAction(action)}
+                        >
+                          {pendingActionKey === `${action.action}:${action.resource_id}` ? "Running..." : action.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+              {!runtimeDiagnostics.trust_gate.blockers?.length ? (
+                <div className="codex-empty-copy">No unattended trust blockers are active right now.</div>
+              ) : null}
+            </div>
+          ) : null}
+          {runtimeDiagnostics?.trust_run ? (
+            <div className="codex-run-list" style={{ marginTop: runtimeDiagnostics?.trust_gate ? "1rem" : undefined }}>
               <div className="codex-run-item">
                 <div className="codex-run-item__meta">
                   <strong>{runtimeDiagnostics.trust_run.summary?.project_name ?? "Trust run"}</strong>
@@ -366,9 +453,9 @@ export function CodexSystemPage({
                 </div>
               ))}
             </div>
-          ) : (
+          ) : !runtimeDiagnostics?.trust_gate ? (
             <div className="codex-empty-copy">No trust soak has been recorded yet for this project.</div>
-          )}
+          ) : null}
         </section>
 
         <section className="codex-panel">

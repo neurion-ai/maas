@@ -280,6 +280,11 @@ def build_default_project_config(
             "daily_runtime_seconds_limit": 0,
             "max_task_session_attempts": 0,
         },
+        "trust": {
+            "unattended_mode_requested": False,
+            "required_passed_cycles": 6,
+            "max_trust_run_age_hours": 24,
+        },
     }
 
 

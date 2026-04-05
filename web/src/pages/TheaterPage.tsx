@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchTheater } from "../lib/controlRoomApi";
 import { formatTimestamp, priorityLabel, statusLabel } from "../lib/codexMvp";
 import { consumePendingAgentFocus, setPendingAgentFocus } from "../lib/agentFocus";
-import { getSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
+import { setPendingNotificationFocus } from "../lib/notificationFocus";
+import { getSelectedProjectId, setSelectedProjectId as persistSelectedProjectId, subscribeProjectScope } from "../lib/projectScope";
 import { setPendingRunFocus } from "../lib/runFocus";
 import { setPendingTaskFocus } from "../lib/taskFocus";
 import { useLivePulse } from "../lib/useLivePulse";
@@ -489,6 +490,33 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
     setExpandedHistoryGroups((current) => ({ ...current, [baseBranch]: !current[baseBranch] }));
   }
 
+  function openAttentionRoute(item: TheaterResponse["attention"]["items"][number]) {
+    const route = item.route;
+    if (!route) {
+      return;
+    }
+    if (route.projectId) {
+      persistSelectedProjectId(route.projectId);
+      setSelectedProjectId(route.projectId);
+    }
+    if (route.taskId) {
+      setPendingTaskFocus(route.taskId);
+    }
+    if (route.sessionId) {
+      setPendingRunFocus(route.sessionId);
+    }
+    if (route.resourceType === "task" && route.resourceId) {
+      setPendingTaskFocus(route.resourceId);
+    }
+    if (route.resourceType === "session" && route.resourceId) {
+      setPendingRunFocus(route.resourceId);
+    }
+    if (route.resourceType === "notification_digest" && route.resourceId) {
+      setPendingNotificationFocus(route.resourceId);
+    }
+    onNavigate(route.view);
+  }
+
   function renderLineageBranch(branchId: string, mode: "active" | "historical") {
     const branch = branchesById.get(branchId);
     if (!branch) {
@@ -581,6 +609,37 @@ export function TheaterPage({ onNavigate }: { onNavigate: (view: ViewTarget) => 
           </span>
         </div>
       ) : null}
+
+      <section className="codex-panel">
+        <div className="codex-panel__header">
+          <div>
+            <span className="codex-kicker">Stop states</span>
+            <h2>{payload?.attention.headline ?? "Cross-surface stop-state alignment"}</h2>
+          </div>
+        </div>
+        <div className="codex-history-list">
+          {(payload?.attention.items ?? []).map((item) => (
+            <div key={item.id} className="codex-history-item">
+              <div className="codex-history-item__meta">
+                <strong>{item.stop_state?.summary ?? item.title}</strong>
+                <span>{item.stop_state?.reason_key?.replaceAll("_", " ") ?? item.tone ?? "default"}</span>
+              </div>
+              <span>{item.stop_state?.detail ?? item.detail}</span>
+              {item.stop_state?.recommended_action ? <span>{item.stop_state.recommended_action}</span> : null}
+              {item.route ? (
+                <div className="codex-detail-actions">
+                  <button type="button" className="codex-button" onClick={() => openAttentionRoute(item)}>
+                    Open {item.route.view}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+          {!payload?.attention.items?.length ? (
+            <div className="codex-empty-copy">No active stop states are currently highlighted for this project.</div>
+          ) : null}
+        </div>
+      </section>
 
       <div className="codex-theater-summary">
         <article className="codex-metric-card">

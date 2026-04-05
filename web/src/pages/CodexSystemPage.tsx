@@ -122,8 +122,9 @@ export function CodexSystemPage({
             (warning: { repaired?: boolean; code?: string }) => !warning.repaired && warning.code !== "repair_applied"
           ).length
         : 0;
+      const boardSyncCount = result?.project_board_sync?.updated_count ?? 0;
       setNotice(
-        `Reconciliation complete: ${result?.summary?.repaired_count ?? 0} repairs, ${unresolvedWarnings} unresolved warnings.`
+        `Reconciliation complete: ${result?.summary?.repaired_count ?? 0} repairs, ${unresolvedWarnings} unresolved warnings, ${boardSyncCount} board field update${boardSyncCount === 1 ? "" : "s"}.`
       );
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Reconciliation failed.");
@@ -399,8 +400,8 @@ export function CodexSystemPage({
                   <strong>{run.issue_key ?? run.task_title ?? run.session_id}</strong>
                   <span>{run.is_stale ? "stale run" : run.status.replaceAll("_", " ")}</span>
                 </div>
-                <span>{run.diagnostic_summary ?? run.status_message ?? run.provider_type}</span>
-                <span>{run.recommended_action ?? "Open the run page for detail."}</span>
+                <span>{run.stop_state?.summary ?? run.diagnostic_summary ?? run.status_message ?? run.provider_type}</span>
+                <span>{run.stop_state?.recommended_action ?? run.recommended_action ?? "Open the run page for detail."}</span>
               </button>
             ))}
             {(runtimeDiagnostics?.stale_agents ?? []).map((agent) => (
@@ -414,8 +415,8 @@ export function CodexSystemPage({
                   <strong>{agent.display_name}</strong>
                   <span>stale agent</span>
                 </div>
-                <span>{agent.diagnostic_summary ?? "Agent heartbeat is stale."}</span>
-                <span>{agent.recommended_action ?? "Open the agent page for detail."}</span>
+                <span>{agent.stop_state?.summary ?? agent.diagnostic_summary ?? "Agent heartbeat is stale."}</span>
+                <span>{agent.stop_state?.recommended_action ?? agent.recommended_action ?? "Open the agent page for detail."}</span>
               </button>
             ))}
             {!(runtimeDiagnostics?.suspect_runs.length || runtimeDiagnostics?.stale_agents.length) ? (
@@ -438,10 +439,10 @@ export function CodexSystemPage({
               <div key={`${item.kind}:${item.session_id ?? item.task_id ?? index}`} className="codex-history-item">
                 <div className="codex-history-item__meta">
                   <strong>{item.title}</strong>
-                  <span>{item.kind.replaceAll("_", " ")}</span>
+                  <span>{item.stop_state?.reason_key?.replaceAll("_", " ") ?? item.kind.replaceAll("_", " ")}</span>
                 </div>
-                <span>{item.summary ?? "Attention item"}</span>
-                {item.detail ? <span>{item.detail}</span> : null}
+                <span>{item.stop_state?.summary ?? item.summary ?? "Attention item"}</span>
+                {(item.stop_state?.detail ?? item.detail) ? <span>{item.stop_state?.detail ?? item.detail}</span> : null}
                 <div className="codex-detail-actions">
                   {item.session_id ? (
                     <button

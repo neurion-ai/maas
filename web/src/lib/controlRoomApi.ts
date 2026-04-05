@@ -155,6 +155,10 @@ const THEATER_FALLBACK: TheaterResponse = {
     branch_to_pr: [],
     branch_to_base: [],
   },
+  attention: {
+    headline: "No active stop states",
+    items: [],
+  },
   layout: {
     issue_lanes: [
       { key: "planned", label: "Planned" },

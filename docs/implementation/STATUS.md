@@ -75,6 +75,7 @@ See:
 - [30-local-dev-lifecycle-scripts.md](30-local-dev-lifecycle-scripts.md)
 - [31-unattended-local-trust-invariants-reconciliation.md](31-unattended-local-trust-invariants-reconciliation.md)
 - [32-unattended-local-trust-idempotent-side-effects.md](32-unattended-local-trust-idempotent-side-effects.md)
+- [33-unattended-local-trust-stop-states-operator-truth.md](33-unattended-local-trust-stop-states-operator-truth.md)
 - [mockups/maas-codex-mvp/README.md](../../mockups/maas-codex-mvp/README.md)
 
 ## GitHub Project Contract
@@ -99,6 +100,8 @@ Board flow:
 - PR opens: link the PR to the issue, set `PR = Open`, and set `Code Review = Pending`
 - review or validation runs: set `Code Review = Running`, then either `Passed` or `Changes Requested`
 - merge: set `PR = Merged` and `Status = Done`
+
+Reconciliation now also acts as the board-truth repair hook for the MAAS repo itself: when a linked issue is already closed by a merged PR, reconciliation refreshes the project item to `PR = Merged` and `Code Review = Passed` automatically instead of leaving stale merged cards behind.
 
 ## Legend
 

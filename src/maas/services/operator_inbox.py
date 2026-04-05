@@ -22,6 +22,7 @@ from maas.services.projects import resolve_project
 from maas.services.queue_capacity import queue_capacity_snapshot
 from maas.services.recovery_policy import fetch_project_recovery_overview
 from maas.services.repo_plan import _resolve_brownfield_review_status
+from maas.services.stop_states import inbox_stop_state
 
 
 def _load_project_config(raw_config):
@@ -55,8 +56,10 @@ def _inbox_item(
         "recommended_action": recommended_action,
         "metadata": metadata or {},
     }
+    item["stop_state"] = inbox_stop_state(item)
     if operator_actions:
         item["operator_actions"] = dedupe_operator_actions(operator_actions)
+        item["stop_state"]["operator_actions"] = item["operator_actions"]
     return item
 
 
@@ -436,6 +439,7 @@ def _workflow_item(item):
         "title": item.get("title") or "Operator attention required",
         "detail": item.get("summary") or item.get("recommended_action") or "Inspect the current system state.",
         "recommendedAction": item.get("recommended_action"),
+        "stopState": item.get("stop_state"),
         "operatorActions": item.get("operator_actions") or [],
         "route": route,
     }

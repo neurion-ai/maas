@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest import mock
 
 from maas.db import connect, project_paths
 from maas.services.bootstrap import bootstrap_project
@@ -232,6 +233,34 @@ class ReconciliationApiTest(unittest.TestCase):
             self.assertEqual(payload["summary"]["repaired_count"], 2)
             self.assertIsNotNone(diagnostics["truth"]["latest_reconciled_at"])
             self.assertEqual(diagnostics["summary"]["truth_warnings"], 0)
+
+    def test_reconcile_project_truth_reports_project_board_sync(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Board Sync Test", description="board sync", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                with mock.patch(
+                    "maas.services.reconciliation.maybe_sync_github_project_truth",
+                    return_value={
+                        "enabled": True,
+                        "skipped": False,
+                        "updated_count": 2,
+                        "updates": [
+                            {"issue_number": 127, "field_name": "PR", "from": "Open", "to": "Merged"},
+                            {"issue_number": 127, "field_name": "Code Review", "from": "Pending", "to": "Passed"},
+                        ],
+                        "warnings": [],
+                        "synced_at": "2026-04-04T00:00:00Z",
+                    },
+                ):
+                    payload = reconcile_project_truth(connection, paths, project_id=project_id)
+            finally:
+                connection.close()
+
+            self.assertEqual(payload["summary"]["project_board_sync_count"], 2)
+            self.assertEqual(payload["project_board_sync"]["updated_count"], 2)
 
     def test_reconcile_project_truth_does_not_revive_operator_paused_task_from_active_session(self):
         with tempfile.TemporaryDirectory() as tmpdir:

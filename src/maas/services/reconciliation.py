@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 
+from maas.services.github_project_sync import maybe_sync_github_project_truth
 from maas.ids import generate_id
 from maas.services.delivery import refresh_delivery_github_pr_sync_state
 from maas.services.projects import resolve_project_id
@@ -387,6 +388,7 @@ def reconcile_project_truth(connection, project_paths, project_id=None, actor_id
         repaired.append(item)
 
     delivery_refresh = refresh_delivery_github_pr_sync_state(connection, project_paths, resolved_project_id)
+    project_board_sync = maybe_sync_github_project_truth(connection, resolved_project_id)
     refreshed_warnings = list(analysis["warnings"])
     for refresh_warning in delivery_refresh.get("warnings", []):
         refreshed_warnings.append(
@@ -398,13 +400,22 @@ def reconcile_project_truth(connection, project_paths, project_id=None, actor_id
                 task_id=refresh_warning.get("task_id"),
             )
         )
+    for sync_warning in project_board_sync.get("warnings", []):
+        refreshed_warnings.append(
+            _warning(
+                "github_project_sync_failed",
+                "GitHub project truth could not be synchronized.",
+                sync_warning.get("detail") or "MAAS could not synchronize the GitHub project fields for this repo.",
+            )
+        )
 
-    if repaired or refreshed_warnings or delivery_refresh.get("updated"):
+    if repaired or refreshed_warnings or delivery_refresh.get("updated") or project_board_sync.get("updated_count"):
         payload = {
             "source": source,
             "repaired": repaired,
             "warning_codes": [warning["code"] for warning in refreshed_warnings],
             "delivery_refresh": delivery_refresh,
+            "project_board_sync": project_board_sync,
         }
         connection.execute(
             """
@@ -434,6 +445,21 @@ def reconcile_project_truth(connection, project_paths, project_id=None, actor_id
                 "warning" if refreshed_warnings else "info",
             ),
         )
+    if project_board_sync.get("enabled") and not project_board_sync.get("skipped"):
+        connection.execute(
+            """
+            INSERT INTO activity_log (
+                activity_id, project_id, action, category, description, details_json, severity
+            ) VALUES (?, ?, 'github_project_truth_synced', 'system', ?, ?, ?)
+            """,
+            (
+                generate_id("act"),
+                resolved_project_id,
+                "Checked and synchronized GitHub project truth for linked execution issues.",
+                json.dumps(project_board_sync),
+                "warning" if project_board_sync.get("warnings") else "info",
+            ),
+        )
     connection.commit()
 
     return {
@@ -445,6 +471,7 @@ def reconcile_project_truth(connection, project_paths, project_id=None, actor_id
             "repairable_count": len(analysis["fix_plan"]),
             "repaired_count": len(repaired),
             "delivery_refresh_count": len(delivery_refresh.get("updated", [])),
+            "project_board_sync_count": int(project_board_sync.get("updated_count") or 0),
         },
         "warnings": refreshed_warnings
         + [
@@ -462,6 +489,7 @@ def reconcile_project_truth(connection, project_paths, project_id=None, actor_id
             for item in repaired
         ],
         "delivery_refresh": delivery_refresh,
+        "project_board_sync": project_board_sync,
     }
 
 

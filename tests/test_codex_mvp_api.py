@@ -170,6 +170,47 @@ lint = "imported:lint"
                 detail_payload["review_decision"]["grouped_review_packet"]["packet_key"].startswith("low_risk_verified_auto:")
             )
             self.assertEqual(detail_payload["recovery_playbook"]["title"], "Low-risk review should auto-advance")
+            self.assertEqual(detail_payload["stop_state"]["reason_key"], "review_pending")
+
+    def test_issue_detail_exposes_canonical_stop_state_for_blocked_recovery(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Issue Stop State Test", description="issue stop state", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                task = connection.execute(
+                    """
+                    SELECT task_id, project_id, assigned_agent_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'blocked',
+                        review_state = 'session_failed'
+                    WHERE task_id = ?
+                    """,
+                    (task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO failure_log (
+                        failure_id, project_id, task_id, session_id, agent_id, failure_type, summary, detail_json
+                    ) VALUES (?, ?, ?, NULL, ?, 'session_failed', 'Codex run failed', '{}')
+                    """,
+                    (generate_id("fail"), task["project_id"], task["task_id"], task["assigned_agent_id"]),
+                )
+                connection.commit()
+
+                detail = fetch_issue_detail(connection, paths, task["project_id"], task["task_id"])
+            finally:
+                connection.close()
+
+            self.assertEqual(detail["stop_state"]["reason_key"], "recovery_required")
+            self.assertIn("recover", detail["stop_state"]["recommended_action"].lower())
 
     def test_batch_review_endpoint_approves_low_risk_items(self):
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -9,6 +9,7 @@ from maas.db import connect, project_paths
 from maas.ids import generate_id
 from maas.services.bootstrap import bootstrap_project
 from maas.services.notifications import queue_notification_event
+from maas.services.operator_inbox import fetch_operator_inbox
 from testsupport import api_client
 
 
@@ -154,8 +155,8 @@ class OperatorInboxApiTest(unittest.TestCase):
             finally:
                 connection.close()
 
-            client = TestClient(create_app(tmpdir))
-            response = client.get("/api/operator-inbox", params={"project_id": project_id})
+            with api_client(tmpdir) as client:
+                response = client.get("/api/operator-inbox", params={"project_id": project_id})
             self.assertEqual(response.status_code, 200)
             payload = response.json()
 
@@ -186,6 +187,7 @@ class OperatorInboxApiTest(unittest.TestCase):
             self.assertTrue(notification_item["metadata"]["retry_budget_exhausted"])
             self.assertEqual(notification_item["operator_actions"][0]["action"], "process_notification")
             self.assertEqual(notification_item["resource_type"], "notification_digest")
+            self.assertEqual(notification_item["stop_state"]["reason_key"], "notification_delivery_exhausted")
 
             workflow_notification_item = next(
                 item for item in payload["workflow"]["inbox"]["items"] if item["bucket"] == "notification_failures"
@@ -193,10 +195,16 @@ class OperatorInboxApiTest(unittest.TestCase):
             self.assertEqual(workflow_notification_item["route"]["view"], "command")
             self.assertEqual(workflow_notification_item["operatorActions"][0]["action"], "process_notification")
             self.assertEqual(workflow_notification_item["route"]["resourceType"], "notification_digest")
+            self.assertEqual(workflow_notification_item["stopState"]["reason_key"], "notification_delivery_exhausted")
             self.assertEqual(
                 payload["workflow"]["inbox"]["operatorActions"][-1]["action"],
                 "process_next_notification",
             )
+
+            review_item = next(item for item in payload["buckets"]["review"] if item["resource_id"] == review_task["task_id"])
+            self.assertEqual(review_item["stop_state"]["reason_key"], "review_pending")
+            stale_item = next(item for item in payload["buckets"]["stale_runs"] if item["resource_id"] == session_id)
+            self.assertEqual(stale_item["stop_state"]["reason_key"], "stale_run")
 
             autopilot_summary = payload["workflow"]["autopilot"]
             self.assertEqual(autopilot_summary["label"], "Autopilot constrained")
@@ -239,6 +247,66 @@ class OperatorInboxApiTest(unittest.TestCase):
             review_item = next(item for item in payload["buckets"]["review"] if item["resource_id"] == task["task_id"])
             self.assertEqual(review_item["subtype"], "review_requested")
             self.assertFalse(review_item["metadata"]["overdue"])
+
+    def test_fetch_operator_inbox_exposes_canonical_stop_states(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bootstrap_project(tmpdir, name="Operator Stop State Test", description="operator stop state", project_type="custom")
+            paths = project_paths(tmpdir)
+            connection = connect(paths)
+            try:
+                project_id = connection.execute("SELECT project_id FROM projects LIMIT 1").fetchone()["project_id"]
+                tasks = connection.execute(
+                    """
+                    SELECT task_id, assigned_agent_id
+                    FROM tasks
+                    ORDER BY created_at ASC
+                    LIMIT 2
+                    """
+                ).fetchall()
+                review_task = tasks[0]
+                stale_task = tasks[1]
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'review',
+                        review_state = 'review_requested'
+                    WHERE task_id = ?
+                    """,
+                    (review_task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    UPDATE tasks
+                    SET status = 'in_progress'
+                    WHERE task_id = ?
+                    """,
+                    (stale_task["task_id"],),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, project_id, agent_id, task_id, status, provider_type, progress_pct,
+                        status_message, last_heartbeat_at, started_at, ended_at, updated_at
+                    ) VALUES (
+                        ?, ?, ?, ?, 'active', 'openai_codex', 42,
+                        'Heartbeat stalled', DATETIME('now', '-180 seconds'),
+                        CURRENT_TIMESTAMP, NULL, CURRENT_TIMESTAMP
+                    )
+                    """,
+                    (generate_id("sess"), project_id, stale_task["assigned_agent_id"], stale_task["task_id"]),
+                )
+                connection.commit()
+
+                payload = fetch_operator_inbox(connection, project_id, paths)
+            finally:
+                connection.close()
+
+            review_item = next(item for item in payload["buckets"]["review"] if item["resource_id"] == review_task["task_id"])
+            stale_item = next(item for item in payload["buckets"]["stale_runs"] if item["resource_type"] == "session")
+            workflow_item = next(item for item in payload["workflow"]["inbox"]["items"] if item["bucket"] == "review")
+            self.assertEqual(review_item["stop_state"]["reason_key"], "review_pending")
+            self.assertEqual(stale_item["stop_state"]["reason_key"], "stale_run")
+            self.assertEqual(workflow_item["stopState"]["reason_key"], "review_pending")
 
     def test_operator_inbox_normalizes_brownfield_review_status_from_review_task(self):
         with tempfile.TemporaryDirectory() as tmpdir:

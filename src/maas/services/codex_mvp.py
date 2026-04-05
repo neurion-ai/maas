@@ -14,6 +14,7 @@ from maas.services.reconciliation import inspect_project_truth
 from maas.services.recovery_policy import fetch_suppression_summary
 from maas.services.repo_plan import build_brownfield_grounding
 from maas.services.review_policy import evaluate_review_decision_state, fetch_project_review_policy
+from maas.services.stop_states import issue_stop_state, run_stop_state, stale_agent_stop_state
 from maas.services.timeline import fetch_incident_timeline
 from maas.services.verification import fetch_verification_runs
 
@@ -841,7 +842,7 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
         for item in run_payload["items"]
         if item["is_stale"] or item["status"] in {"failed", "timed_out", "cancelled"}
     ]
-    suspect_runs = all_suspect_runs[:10]
+    suspect_runs = [{**item, "stop_state": run_stop_state(item)} for item in all_suspect_runs[:10]]
     suppression = fetch_suppression_summary(connection, project_id=project_id, limit=12)
 
     issue_keys = issue_key_lookup(connection, project_id)
@@ -885,8 +886,10 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
                 "recommended_action": (
                     "Open the live run if one exists, otherwise inspect the agent history and recover the agent if it is no longer progressing."
                 ),
+                "stop_state": None,
             }
         )
+        stale_agents[-1]["stop_state"] = stale_agent_stop_state(stale_agents[-1])
 
     provider_jobs = fetch_provider_jobs(connection, project_id=project_id, limit=200)
     queued_jobs = [job for job in provider_jobs if job["status"] == "queued"]
@@ -898,6 +901,7 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
     )
     attention_items = []
     for run in suspect_runs[:6]:
+        stop_state = run_stop_state(run)
         attention_items.append(
             {
                 "kind": "suspect_run",
@@ -908,9 +912,11 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
                 "task_id": run.get("task_id"),
                 "issue_key": run.get("issue_key"),
                 "operator_action": None,
+                "stop_state": stop_state,
             }
         )
     for agent in stale_agents[:4]:
+        stop_state = stale_agent_stop_state(agent)
         attention_items.append(
             {
                 "kind": "stale_agent",
@@ -921,6 +927,7 @@ def fetch_system_diagnostics(connection, project_id, project_paths=None):
                 "task_id": agent.get("current_task_id"),
                 "issue_key": agent.get("current_issue_key"),
                 "operator_action": None,
+                "stop_state": stop_state,
             }
         )
     for item in suppression["items"][:6]:
@@ -1715,6 +1722,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         latest_run,
         verification_runs,
     )
+    stop_state = issue_stop_state(dict(task_row), recovery_playbook)
 
     return {
         "task": {
@@ -1752,6 +1760,7 @@ def fetch_issue_detail(connection, project_paths, project_id, task_id):
         "verification_runs": verification_runs,
         "review_decision": review_decision,
         "recovery_playbook": recovery_playbook,
+        "stop_state": stop_state,
         "goal_explainability": goal_explainability,
         "brownfield_grounding": brownfield_grounding,
         "memory_context": related_memory,

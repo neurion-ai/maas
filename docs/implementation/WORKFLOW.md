@@ -39,6 +39,8 @@ Board flow:
 4. While review or verification is running, set `Code Review = Running`, then move it to `Passed` or `Changes Requested`.
 5. When the PR merges, set `PR = Merged` and `Status = Done`.
 
+MAAS now also repairs stale merged-state cards during reconciliation for this repo's own execution board. If a tracked issue is already closed by a merged PR, the reconcile path refreshes the project item to `PR = Merged` and `Code Review = Passed`.
+
 ## Lane Guidance
 
 Use these lane defaults unless the issue clearly fits better elsewhere:
